@@ -30,7 +30,7 @@ JourneyHelper.exe를 처음 실행하면 Windows가 "Windows에서 PC를 보호�
 
 이런 동작 특성 때문에 오탐(false positive)이 날 수 있습니다. 걱정되시면 소스코드를
 
-직접 확인하실 수 있습니다: https://github.com/p1021/journeyhelper
+직접 확인하실 수 있습니다.
 
 
 
