@@ -35,10 +35,10 @@ warnings.filterwarnings('ignore')
 
 torch.set_num_threads(max(1, (os.cpu_count() or 4) // 2))
 
-from PyQt5.QtCore import QUrl, Qt, QThread, pyqtSignal, QTimer
+from PyQt5.QtCore import QUrl, Qt, QThread, pyqtSignal, QTimer, QRect, QPoint
 from PyQt5.QtWidgets import (QApplication, QWidget, QLabel, QVBoxLayout, QHBoxLayout, QSystemTrayIcon,
-                              QMenu, QAction, QDialog, QCheckBox, QPushButton, QFrame)
-from PyQt5.QtGui import QCursor, QImage, QPixmap, QPainter, QPen, QColor, QFont, QIcon, QBrush
+                              QMenu, QAction, QDialog, QCheckBox, QPushButton, QFrame, QComboBox)
+from PyQt5.QtGui import QCursor, QImage, QPixmap, QPainter, QPen, QColor, QFont, QIcon, QBrush, QFontMetrics
 
 # ----------------------------------------------------
 # 1. 3D 카드 원근 정밀 보정 (Perspective Transformation)
@@ -357,6 +357,10 @@ DEFAULT_SETTINGS = {
     "file_logging": False,
     "autostart": False,
     "check_update_on_start": True,
+    "show_card_preview": False,
+    "show_region_debug": False,
+    "card_region_override": None,
+    "tooltip_font_scale": 1.0,
 }
 
 def get_settings_dir():
@@ -491,13 +495,15 @@ def is_loading_screen_visible(game_rect=None, screen_w=1920, screen_h=1080, sct=
 REGION_FRACTIONS = {
     "card_art":    {"top": 0.120, "left": 0.050, "width": 0.052, "height": 0.163},
     "event_title": {"top": 0.205, "left": 0.110, "width": 0.240, "height": 0.056},
-    "arcana_label":{"top": 0.172, "left": 0.110, "width": 0.220, "height": 0.042},
+    "arcana_label":{"top": 0.170, "left": 0.110, "width": 0.200, "height": 0.032},
 }
+_DEFAULT_CARD_ART_FRACTION = dict(REGION_FRACTIONS["card_art"])  # 사용자가 "기본값으로" 되돌릴 때 쓰는 원본 스냅샷
+_card_region_manual_override = False  # True면 자동 보정이 card_art 영역을 건드리지 않는다
 _auto_calibration_done = False
 _auto_calibration_attempts = 0
 _last_calibrated_rect = None  
 _calibration_samples = []  
-_CALIBRATION_SAMPLES_NEEDED = 3
+_CALIBRATION_SAMPLES_NEEDED = 1
 
 def try_auto_calibrate_regions(reader, game_rect):
     global _auto_calibration_done, REGION_FRACTIONS, _last_calibrated_rect, _calibration_samples
@@ -578,11 +584,14 @@ def try_auto_calibrate_regions(reader, game_rect):
 
         card_left_px = lx1_px - gw * 0.067
         card_top_px = ly1_px - gh * 0.0556
-        card_region_frac = px_to_frac(card_left_px, card_top_px, gw * 0.060, gh * 0.160)
+        card_region_frac = px_to_frac(card_left_px, card_top_px, gw * 0.051, gh * 0.160)
 
         REGION_FRACTIONS["arcana_label"] = label_region_frac
         REGION_FRACTIONS["event_title"] = title_region_frac
-        REGION_FRACTIONS["card_art"] = card_region_frac
+        if not _card_region_manual_override:
+            REGION_FRACTIONS["card_art"] = card_region_frac
+        else:
+            print("🃏 [카드 영역] 사용자가 직접 지정한 영역이 있어 자동 보정을 건너뜀")
         _auto_calibration_done = True
         _last_calibrated_rect = dict(game_rect)
         _calibration_samples = []
@@ -724,7 +733,155 @@ class RegionDebugOverlay(QWidget):
             painter.setPen(pen)
             painter.drawRect(rect["left"], rect["top"], rect["width"], rect["height"])
             painter.setPen(QColor(color))
-            painter.drawText(rect["left"] + 4, max(14, rect["top"] - 6), label)
+            # 🩹 [OCR 오염 방지] 세 박스(제목/라벨/카드)가 세로로 촘촘히 붙어있어서, 라벨 글자를
+            # 박스 위나 아래에 그리면 바로 인접한 다른 캡처 영역 안으로 들어가 그 영역의 OCR이
+            # 우리 오버레이 글자 자체를 읽어버리는 문제가 있었다(제목 박스의 "제목" 글자가
+            # 라벨 박스 안으로 들어간 사례). 대신 박스 오른쪽 옆에 그려서 세로로 쌓인 다른
+            # 캡처 영역과 겹치지 않게 한다.
+            painter.drawText(rect["left"] + rect["width"] + 6, rect["top"] + 14, label)
+
+class CardRegionAdjustOverlay(QWidget):
+    # 🎯 [카드 인식 영역 직접 조정] 반투명 박스를 드래그로 옮기고 모서리를 끌어 크기를 조절.
+    # 저장하면 콜백으로 fraction(게임 창 기준 비율)을 넘겨준다. None을 넘기면 "기본값으로".
+    HANDLE_SIZE = 10
+
+    def __init__(self, on_save=None, on_cancel=None):
+        super().__init__()
+        self._on_save = on_save
+        self._on_cancel = on_cancel
+        # ⚠️ 이 오버레이는 드래그 조작을 받아야 하므로 다른 오버레이들과 달리
+        # WindowTransparentForInput을 일부러 안 쓴다 (= 조정 중엔 게임 클릭이 막힘, 의도된 동작).
+        self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint | Qt.Tool)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setMouseTracking(True)
+
+        game_rect = get_game_window_rect()
+        if game_rect:
+            self._base_left, self._base_top = game_rect["left"], game_rect["top"]
+            self._base_w, self._base_h = game_rect["width"], game_rect["height"]
+        else:
+            desktop_geo = QApplication.desktop().screenGeometry()
+            self._base_left, self._base_top = 0, 0
+            self._base_w, self._base_h = desktop_geo.width(), desktop_geo.height()
+
+        self.setGeometry(self._base_left, self._base_top, self._base_w, self._base_h)
+
+        rect = compute_region(REGION_FRACTIONS["card_art"], self._base_w, self._base_h)
+        self._box = QRect(rect["left"] - self._base_left, rect["top"] - self._base_top, rect["width"], rect["height"])
+        self._drag_mode = None
+        self._drag_start_pos = None
+        self._drag_start_box = None
+
+        self._build_controls()
+        self.show()
+
+    def _build_controls(self):
+        info = QLabel("박스를 드래그해서 옮기거나, 모서리 점을 끌어 크기를 조절하세요.\n조정 중에는 게임 클릭이 막힙니다.", self)
+        info.setStyleSheet("background-color: rgba(10,14,24,230); color:#00e5ff; font-size:12px; padding:8px 12px; border-radius:6px;")
+        info.move(20, 20)
+        info.adjustSize()
+
+        btn_save = QPushButton("✅ 저장", self)
+        btn_save.setStyleSheet("QPushButton { background-color:#1f5c33; color:white; border-radius:6px; padding:6px 14px; font-weight:bold; } QPushButton:hover { background-color:#28753f; }")
+        btn_save.clicked.connect(self._save)
+        btn_save.move(20, 75)
+        btn_save.adjustSize()
+
+        btn_reset = QPushButton("↩ 기본값으로 고정", self)
+        btn_reset.setStyleSheet("QPushButton { background-color:#3a4453; color:white; border-radius:6px; padding:6px 14px; } QPushButton:hover { background-color:#4a5568; }")
+        btn_reset.clicked.connect(self._reset)
+        btn_reset.move(110, 75)
+        btn_reset.adjustSize()
+
+        btn_cancel = QPushButton("✕ 취소", self)
+        btn_cancel.setStyleSheet("QPushButton { background-color:#4a1f24; color:white; border-radius:6px; padding:6px 14px; } QPushButton:hover { background-color:#6b2a30; }")
+        btn_cancel.clicked.connect(self._cancel)
+        btn_cancel.move(280, 75)
+        btn_cancel.adjustSize()
+
+    def _handle_points(self):
+        r = self._box
+        return [(r.left(), r.top()), (r.right(), r.top()), (r.left(), r.bottom()), (r.right(), r.bottom())]
+
+    def _hit_handle(self, pos):
+        for i, (hx, hy) in enumerate(self._handle_points()):
+            if abs(pos.x() - hx) <= self.HANDLE_SIZE and abs(pos.y() - hy) <= self.HANDLE_SIZE:
+                return i
+        return None
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        pen = QPen(QColor("#ff5599"))
+        pen.setWidth(3)
+        painter.setPen(pen)
+        painter.setBrush(QBrush(QColor(255, 85, 153, 40)))
+        painter.drawRect(self._box)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(QColor("#ff5599")))
+        for hx, hy in self._handle_points():
+            painter.drawEllipse(QPoint(int(hx), int(hy)), self.HANDLE_SIZE // 2, self.HANDLE_SIZE // 2)
+
+    def mousePressEvent(self, event):
+        if event.button() != Qt.LeftButton:
+            return
+        pos = event.pos()
+        handle = self._hit_handle(pos)
+        if handle is not None:
+            self._drag_mode = ('resize', handle)
+        elif self._box.contains(pos):
+            self._drag_mode = ('move', None)
+        else:
+            self._drag_mode = None
+            return
+        self._drag_start_pos = pos
+        self._drag_start_box = QRect(self._box)
+
+    def mouseMoveEvent(self, event):
+        if self._drag_mode is None:
+            return
+        pos = event.pos()
+        delta = pos - self._drag_start_pos
+        mode, handle = self._drag_mode
+        r = QRect(self._drag_start_box)
+        if mode == 'move':
+            r.translate(delta)
+        else:
+            if handle == 0:
+                r.setTopLeft(r.topLeft() + delta)
+            elif handle == 1:
+                r.setTopRight(r.topRight() + delta)
+            elif handle == 2:
+                r.setBottomLeft(r.bottomLeft() + delta)
+            elif handle == 3:
+                r.setBottomRight(r.bottomRight() + delta)
+        if r.width() > 20 and r.height() > 20:
+            self._box = r.normalized()
+        self.update()
+
+    def mouseReleaseEvent(self, event):
+        self._drag_mode = None
+
+    def _save(self):
+        frac = {
+            "top": max(0.0, self._box.top() / self._base_h),
+            "left": max(0.0, self._box.left() / self._base_w),
+            "width": self._box.width() / self._base_w,
+            "height": self._box.height() / self._base_h,
+        }
+        if callable(self._on_save):
+            self._on_save(frac)
+        self.close()
+
+    def _reset(self):
+        if callable(self._on_save):
+            self._on_save(None)
+        self.close()
+
+    def _cancel(self):
+        if callable(self._on_cancel):
+            self._on_cancel()
+        self.close()
 
 class JourneyStatusOverlay(QWidget):
     def __init__(self):
@@ -744,7 +901,8 @@ class JourneyStatusOverlay(QWidget):
         self._last_border = "#ffcc00"
         self._last_text_color = "#ffcc00"
         self.on_settings_requested = None  # 우클릭 시 호출될 콜백 (MouseHoverManager가 나중에 연결)
-        self.setToolTip("좌클릭: 접기/펼치기 · 우클릭: 설정")
+        self.on_reset_requested = None  # 좌클릭(접기/펼치기) 시 호출될 콜백 - 추적 중인 데이터 초기화용
+        self.setToolTip("좌클릭: 접기/펼치기 + 새로고침 · 우클릭: 설정")
 
         layout = QVBoxLayout()
         layout.addWidget(self.label)
@@ -787,15 +945,23 @@ class JourneyStatusOverlay(QWidget):
         if event.button() == Qt.LeftButton:
             self._is_collapsed = not self._is_collapsed
             self._render()
+            if callable(self.on_reset_requested):
+                self.on_reset_requested()
         elif event.button() == Qt.RightButton:
             if callable(self.on_settings_requested):
                 self.on_settings_requested()
         super().mousePressEvent(event)
 
 class SettingsDialog(QDialog):
-    def __init__(self, on_update_check=None, on_quit=None, parent=None):
+    def __init__(self, on_update_check=None, on_quit=None,
+                 on_toggle_card_preview=None, on_toggle_region_debug=None,
+                 on_open_region_adjuster=None, on_font_scale_change=None, parent=None):
         super().__init__(parent)
         self._on_quit = on_quit
+        self._on_toggle_card_preview = on_toggle_card_preview
+        self._on_toggle_region_debug = on_toggle_region_debug
+        self._on_open_region_adjuster = on_open_region_adjuster
+        self._on_font_scale_change = on_font_scale_change
         self.setWindowTitle("JourneyHelper 설정")
         self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
         self.setFixedWidth(360)
@@ -808,6 +974,13 @@ class SettingsDialog(QDialog):
                 border-radius: 6px; padding: 6px 12px; font-size: 12px;
             }
             QPushButton:hover { background-color: #2a3442; }
+            QComboBox {
+                background-color: #1f2733; color: #eeeeee; border: 1px solid #3a4453;
+                border-radius: 6px; padding: 4px 10px; font-size: 12px;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #1f2733; color: #eeeeee; selection-background-color: #2a3442;
+            }
         """)
 
         self._settings = load_settings()
@@ -819,6 +992,22 @@ class SettingsDialog(QDialog):
         title = QLabel("⚙️ 설정")
         title.setStyleSheet("font-size: 16px; font-weight: bold; color: #00e5ff;")
         layout.addWidget(title)
+
+        font_row = QHBoxLayout()
+        font_label = QLabel("왼쪽 툴팁 글자 크기")
+        font_row.addWidget(font_label)
+        font_row.addStretch()
+        self.combo_font_scale = QComboBox()
+        self._font_scale_options = [("작게", 0.85), ("보통", 1.0), ("크게", 1.2), ("아주 크게", 1.4)]
+        for label, _ in self._font_scale_options:
+            self.combo_font_scale.addItem(label)
+        current_scale = self._settings.get("tooltip_font_scale", 1.0)
+        closest_idx = min(range(len(self._font_scale_options)),
+                           key=lambda i: abs(self._font_scale_options[i][1] - current_scale))
+        self.combo_font_scale.setCurrentIndex(closest_idx)
+        self.combo_font_scale.currentIndexChanged.connect(self._on_font_scale_selected)
+        font_row.addWidget(self.combo_font_scale)
+        layout.addLayout(font_row)
 
         self.chk_log = QCheckBox("문제 발생 시 진단용 로그를 파일로 저장")
         self.chk_log.setChecked(self._settings.get("file_logging", False))
@@ -841,6 +1030,38 @@ class SettingsDialog(QDialog):
         line.setFrameShape(QFrame.HLine)
         line.setStyleSheet("background-color: #2a3442;")
         layout.addWidget(line)
+
+        debug_title = QLabel("🔧 카드 인식 디버그 도구")
+        debug_title.setStyleSheet("font-size: 13px; font-weight: bold; color: #ff9800;")
+        layout.addWidget(debug_title)
+
+        self.chk_card_preview = QCheckBox("카드 인식 미리보기 표시 (원본 / 보정 후 비교)")
+        self.chk_card_preview.setChecked(self._settings.get("show_card_preview", False))
+        self.chk_card_preview.stateChanged.connect(
+            lambda state: self._on_toggle_card_preview(state != 0) if callable(self._on_toggle_card_preview) else None
+        )
+        layout.addWidget(self.chk_card_preview)
+
+        self.chk_region_debug = QCheckBox("캡처 영역 박스 표시 (카드 영역)")
+        self.chk_region_debug.setChecked(self._settings.get("show_region_debug", False))
+        self.chk_region_debug.stateChanged.connect(
+            lambda state: self._on_toggle_region_debug(state != 0) if callable(self._on_toggle_region_debug) else None
+        )
+        layout.addWidget(self.chk_region_debug)
+
+        debug_hint = QLabel("카드 인식이 잘 안 되거나 캡처 위치가 어긋나는 것 같을 때, 실제로 어느 영역을\n찍고 있는지 눈으로 바로 확인할 수 있습니다. 체크 즉시 화면에 반영됩니다.")
+        debug_hint.setStyleSheet("color: #888888; font-size: 10px;")
+        debug_hint.setWordWrap(True)
+        layout.addWidget(debug_hint)
+
+        btn_adjust_region = QPushButton("🎯 카드 인식 영역 직접 조정...")
+        btn_adjust_region.clicked.connect(self._open_region_adjuster)
+        layout.addWidget(btn_adjust_region)
+
+        line2 = QFrame()
+        line2.setFrameShape(QFrame.HLine)
+        line2.setStyleSheet("background-color: #2a3442;")
+        layout.addWidget(line2)
 
         version_row = QHBoxLayout()
         version_label = QLabel(f"현재 버전: {APP_VERSION}")
@@ -872,6 +1093,9 @@ class SettingsDialog(QDialog):
         # 종료 전에 지금까지 바꾼 설정도 같이 저장해준다
         self._settings["file_logging"] = self.chk_log.isChecked()
         self._settings["check_update_on_start"] = self.chk_update.isChecked()
+        self._settings["show_card_preview"] = self.chk_card_preview.isChecked()
+        self._settings["show_region_debug"] = self.chk_region_debug.isChecked()
+        self._settings["tooltip_font_scale"] = self._current_font_scale()
         save_settings(self._settings)
         set_autostart(self.chk_autostart.isChecked())
         self.accept()
@@ -882,9 +1106,25 @@ class SettingsDialog(QDialog):
         if callable(self._on_update_check):
             self._on_update_check()
 
+    def _open_region_adjuster(self):
+        if callable(self._on_open_region_adjuster):
+            self._on_open_region_adjuster()
+        self.close()  # 조정 오버레이가 게임 화면을 덮으니, 설정창은 닫아서 안 겹치게 함
+
+    def _on_font_scale_selected(self, index):
+        scale = self._font_scale_options[index][1]
+        if callable(self._on_font_scale_change):
+            self._on_font_scale_change(scale)
+
+    def _current_font_scale(self):
+        return self._font_scale_options[self.combo_font_scale.currentIndex()][1]
+
     def _save_and_close(self):
         self._settings["file_logging"] = self.chk_log.isChecked()
         self._settings["check_update_on_start"] = self.chk_update.isChecked()
+        self._settings["show_card_preview"] = self.chk_card_preview.isChecked()
+        self._settings["show_region_debug"] = self.chk_region_debug.isChecked()
+        self._settings["tooltip_font_scale"] = self._current_font_scale()
         save_settings(self._settings)
         set_autostart(self.chk_autostart.isChecked())
         self.accept()
@@ -896,17 +1136,54 @@ class FixedLeftTooltip(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.label = QLabel("💡 선택지에 마우스를 올려보세요", self)
         self.label.setTextFormat(Qt.RichText)
-        self.label.setStyleSheet("""
-            QLabel { background-color: rgba(10, 12, 18, 250); border: 2px solid #00e5ff; border-radius: 12px; color: #ffffff; font-size: 13px; font-weight: bold; padding: 14px 18px; line-height: 150%; }
-        """)
+        self._base_font_px = 13
+        self._base_width = 400
+        self._current_scale = 1.0
+        self._is_wide = False
+        self._current_min_width = None
+        # 🖼️ [가로 2단 배치 폭 배율] 표(<table>)로 옆에 한 컬럼이 더 붙으므로, 기본 폭의
+        # 약 1.9배로 넓혀야 두 번째 컬럼 내용과 오른쪽 테두리가 잘리지 않는다.
+        self._wide_multiplier = 1.9
+        self.label.setStyleSheet(self._build_stylesheet(self._base_font_px))
         self.label.setWordWrap(True)
-        self.setFixedWidth(400)
+        self.setFixedWidth(self._base_width)
         layout = QVBoxLayout()
         layout.addWidget(self.label)
         layout.setContentsMargins(0, 0, 0, 0)
         self.setLayout(layout)
 
         self.reposition()
+
+    def _build_stylesheet(self, font_px):
+        return f"""
+            QLabel {{ background-color: rgba(10, 12, 18, 250); border: 2px solid #00e5ff; border-radius: 12px; color: #ffffff; font-size: {font_px}px; font-weight: bold; padding: 14px 18px; line-height: 150%; }}
+        """
+
+    def _apply_width(self, wide, min_width=None):
+        # ⚙️ [폭 재계산] 가로모드일 땐 smart_format_reward가 실측해서 넘겨준 min_width를
+        # 그대로 우선 사용한다(대충 정한 배율보다 정확함). min_width가 없을 때만
+        # 배율 기반 폴백을 쓴다. 일반(세로) 모드는 기존처럼 배율만 적용.
+        self._is_wide = wide
+        if wide and min_width:
+            new_width = max(round(self._base_width * self._current_scale), min_width)
+        elif wide:
+            new_width = round(self._base_width * self._current_scale * self._wide_multiplier)
+        else:
+            new_width = round(self._base_width * self._current_scale)
+        if new_width != getattr(self, '_current_width', None):
+            self._current_width = new_width
+            self.setFixedWidth(new_width)
+
+    def set_font_scale(self, scale):
+        # ⚙️ [설정에서 글자 크기 조정] 기본(13px)에 배율을 곱해서 반영. 실시간 반영을 위해
+        # 즉시 스타일시트를 다시 적용한다. 글자가 커지는데 박스 너비는 그대로면 텍스트가
+        # 테두리를 침범하므로, 너비도 같은 배율로 같이 늘려준다.
+        px = max(9, round(self._base_font_px * scale))
+        self.label.setStyleSheet(self._build_stylesheet(px))
+        self._current_scale = scale
+        self._apply_width(self._is_wide, getattr(self, '_current_min_width', None))
+        self.label.adjustSize()
+        self.adjustSize()
 
     def reposition(self):
         game_rect = get_game_window_rect()
@@ -919,14 +1196,34 @@ class FixedLeftTooltip(QWidget):
             self.fixed_y = int(screen_h * 0.30)
         self.move(self.fixed_x, self.fixed_y)
 
-    def show_info(self, text):
+    def show_info(self, text, wide=False, min_width=None):
         self.reposition()
+        self._current_min_width = min_width
+        self._apply_width(wide, min_width)
         self.label.setText(text)
         self.label.adjustSize()
         self.adjustSize()
         self.resize(self.sizeHint())
         self.move(self.fixed_x, self.fixed_y)
         self.show()
+
+    def hide_and_clear(self):
+        # 🛡️ [컴포지팅 잔상 방어] 이 위젯은 FramelessWindowHint + WA_TranslucentBackground +
+        # WindowStaysOnTopHint 조합이라, 일부 Windows 환경에서 hide()를 호출해도 DWM
+        # 컴포지팅이 해당 영역을 즉시 다시 안 그려서 이전에 표시하던 내용이 화면에 잔상처럼
+        # 남는 경우가 실제로 확인됐다(로그상 정리 로직은 정상 실행됐는데도 화면엔 옛날
+        # 툴팁 내용이 계속 보임). hide() 하나만 믿지 않고, 내용을 비우고 화면 밖으로
+        # 치운 뒤 숨겨서, 설령 잔상이 남더라도 최소한 "틀린 옛날 정보"가 보이는 일은 없게 한다.
+        #
+        # 🔍 [진단용 로그] 다음에 또 재현되면, 그 시점 로그에 이 줄이 찍혀 있는지로
+        # "코드는 지우라고 명령했는데 화면에서 실제로 안 지워진 것"인지, 아니면
+        # "애초에 hide 명령 자체가 이 순간엔 안 내려간 것"(다른 코드 경로 문제)인지
+        # 구분할 수 있다.
+        if self.isVisible():
+            print(f"🫥 [툴팁 숨김] hide_and_clear() 호출됨 (직전 내용: '{self.label.text()[:30]}...')")
+        self.label.setText("")
+        self.move(-10000, -10000)
+        self.hide()
 
 
 # ----------------------------------------------------
@@ -1053,12 +1350,23 @@ class EventTitleOCRThread(QThread):
                         print(f"📌 [OCR 감지] {combined}")
                         self.event_detected.emit(combined)
                 else:
-                    self.empty_count += 1
                     self.pending_event = ""
                     self.pending_count = 0
-                    if self.empty_count >= 8:
-                        self.journey_status_changed.emit(False)
-                        self.last_event = ""
+                    if self.is_waiting_for_next_event:
+                        # 🔒 [선택 후 대화 연출 보호] 선택 직후엔 대화창이 뜨면서 제목 영역이
+                        # 일부러 비어 보이는 게 정상이다. 메인 스레드(on_choice_selected_action,
+                        # 2617~2619줄)는 이 기간 동안 이전 선택지 툴팁/좌표를 일부러 유지해두는데,
+                        # 이 스레드가 "제목이 안 보이니 여정 이탈"이라고 오판해서
+                        # journey_status_changed(False)를 쏘면 update_journey_status가 그 유지된
+                        # 상태를 전부 지워버려, 대화 연출 중에도 상단엔 "헬퍼 대기 중"이 뜨고
+                        # 좌측 툴팁만 지워지지 않고 남는 등 상태가 서로 어긋나는 원인이 됐다.
+                        # 잠금 중엔 "이탈 아님"으로 보고 empty_count를 쌓지 않는다.
+                        self.empty_count = 0
+                    else:
+                        self.empty_count += 1
+                        if self.empty_count >= 8:
+                            self.journey_status_changed.emit(False)
+                            self.last_event = ""
 
                 try:
                     label_monitor = compute_region(REGION_FRACTIONS["arcana_label"], self.screen_w, self.screen_h)
@@ -1078,6 +1386,15 @@ class EventTitleOCRThread(QThread):
                         label_resized = cv2.resize(label_gray, None, fx=1.5, fy=1.5, interpolation=cv2.INTER_LINEAR)
                         label_results = self.reader.readtext(label_resized, detail=0, decoder='greedy')
                         label_text = " ".join(label_results).strip()
+                        # 🩹 [상자 위치는 그대로, 텍스트만 필터링] arcana_label과 event_title
+                        # 캡처 영역이 화면상 서로 인접해 있어서(사람이 눈으로 정밀 보정해둔
+                        # 좌표라 건드리지 않음) 라벨 쪽 OCR이 "제목"이라는 title 영역의 UI
+                        # 글자를 같이 집어오는 경우가 있다. 좌표를 옮기는 대신, 여기서
+                        # "제목"이라는 문구와 그로 인해 떨어져 나온 한 글자짜리 잔상("제" 등)을
+                        # 텍스트 단계에서 지워버려서 판정/로그에 섞여 들어가지 않게 한다.
+                        label_text = label_text.replace("제목", "").strip()
+                        label_text = re.sub(r'(^|\s)제(\s|$)', r'\1\2', label_text).strip()
+                        label_text = re.sub(r'\s+', ' ', label_text)
                         self._cached_label_text = label_text
 
                     now_l = time.time()
@@ -1085,15 +1402,26 @@ class EventTitleOCRThread(QThread):
                         self._last_label_raw_log = now_l
                         print(f"🏷️ [라벨 영역 원본 OCR] '{label_text}' (캘리브레이션 확인용, 캡처영역 top={label_monitor['top']} left={label_monitor['left']} w={label_monitor['width']} h={label_monitor['height']})")
 
-                    if "아르카나" in label_text:
+                    # 🩹 [OCR 오탈자 대응] "아르카나"를 완전 일치 부분문자열로만 찾으면
+                    # "똑르카나"처럼 OCR이 흔들려서 오인식한 경우 계속 놓친다. 이미 카드
+                    # 매칭용으로 등록돼 있던 NOISE_EVENT_WORDS의 아르카나 오탈자 변형들을
+                    # 재사용해서 라벨 판정도 그 변형들 중 하나라도 포함되면 아르카나로 인정한다.
+                    _ARCANA_VARIANTS = ("아르카나", "알카나", "알카", "아드가나", "아드카나", "아르가나")
+                    is_arcana_hit = any(v in label_text for v in _ARCANA_VARIANTS)
+
+                    if is_arcana_hit:
                         if not self.is_arcana_label and now_l - self._last_label_log > 2:
                             self._last_label_log = now_l
-                            print("🏷️ [라벨] '아르카나 이벤트'로 전환 → 카드 스캔 재개")
+                            print(f"🏷️ [라벨] '아르카나 이벤트'로 전환 (인식문구:'{label_text}') → 카드 스캔 재개")
                         self.is_arcana_label = True
-                    elif "여정" in label_text:
+                    elif label_text:
+                        # 🩹 [상태 유지 버그 수정] 예전에는 "여정"이 아니면(예: "훈련" 이벤트,
+                        # 혹은 위 변형에도 안 걸리는 다른 오인식) 아무 것도 안 하고 넘어가서
+                        # is_arcana_label이 이전 값 그대로 남아있었다. 아르카나가 아닌 라벨이
+                        # 무엇이든(여정/훈련/기타) 확실히 False로 내려서 카드 스캔을 멈춘다.
                         if self.is_arcana_label and now_l - self._last_label_log > 2:
                             self._last_label_log = now_l
-                            print("🏷️ [라벨] '여정 이벤트'로 전환 → 카드 스캔 일시중지")
+                            print(f"🏷️ [라벨] '{label_text}'(비-아르카나)로 전환 → 카드 스캔 일시중지")
                         self.is_arcana_label = False
                     self.arcana_label_detected.emit(self.is_arcana_label)
                 except Exception:
@@ -1108,7 +1436,7 @@ class EventCardArtThread(QThread):
     preview_signal = pyqtSignal(np.ndarray)
     raw_preview_signal = pyqtSignal(np.ndarray)
 
-    def __init__(self, screen_w, screen_h, hash_cache_getter, pause_getter=None):
+    def __init__(self, screen_w, screen_h, hash_cache_getter, pause_getter=None, lenient_getter=None):
         super().__init__()
         self.sct = mss.MSS()
         self.screen_w, self.screen_h = screen_w, screen_h
@@ -1117,7 +1445,12 @@ class EventCardArtThread(QThread):
         self.pending_count = 0
         self.last_matched_id = ""
         self.pause_getter = pause_getter or (lambda: False)
+        # 🃏 [널널 모드] "이격 아르카나"처럼 후보가 이미 소수의 카드로 좁혀진 상황에서는
+        # score/pdist 문턱값을 따질 필요 없이 그중 가장 점수 좋은 후보를 바로 채택한다.
+        self.lenient_getter = lenient_getter or (lambda: False)
         self._last_heartbeat = 0
+        self._fail_streak_start = None  # 🩹 [자동 재보정] 연속 실패가 시작된 시각
+        self._recalib_triggered_this_streak = False
 
     def run(self):
         print("🃏 [카드 인식 스레드 시작] 화면 감시 중...")
@@ -1171,16 +1504,26 @@ class EventCardArtThread(QThread):
                         best_color_corr = color_corr
                         best_pdist = p_dist
 
-                if best_id is not None and (best_score < 7.1 and best_pdist <= 35):
+                if best_id is not None and (self.lenient_getter() or (best_score < 7.1 and best_pdist <= 35)):
+                    # 🩹 [자동 재보정] 그럴듯한 후보가 하나라도 잡혔다는 건 영역 자체는 대체로
+                    # 맞다는 신호이므로, 연속 실패 스트릭을 리셋한다.
+                    self._fail_streak_start = None
+                    self._recalib_triggered_this_streak = False
+
                     if best_id == self.pending_id:
                         self.pending_count += 1
                     else:
                         self.pending_id = best_id
                         self.pending_count = 1
 
-                    if self.pending_count >= 3 and best_id != self.last_matched_id:
+                    if self.pending_count >= 1 and best_id != self.last_matched_id:
                         self.last_matched_id = best_id
-                        print(f"🃏 [3D 정밀 보정 카드 매칭 성공!] 카드: '{best_name}' (점수: {best_score:.1f})")
+                         # 📌 이격 아르카나 매칭 적용 여부에 따라 깔끔하게 1줄만 출력
+                        if self.lenient_getter():
+                            print(f"🃏 [이격 아르카나 매칭] 카드: '{best_name}' (점수: {best_score:.1f} /)")
+                        else:
+                            print(f"🃏 [카드 매칭 성공] 카드: '{best_name}' (점수: {best_score:.1f})")
+
                         self.card_matched.emit(best_id, best_name)
                 else:
                     self.pending_id = None
@@ -1191,9 +1534,30 @@ class EventCardArtThread(QThread):
                         top3 = sorted(all_scores, key=lambda x: x[0])[:3]
                         top3_str = ", ".join([f"'{n}'({s:.1f})" for s, n, p in top3])
                         print(f"🃏 [카드 판독 중] 상위 3개 후보: {top3_str} — 임계값 미달, 확정 안 함")
+
+                    # 🩹 [자동 재보정] "아르카나 이벤트" 화면인데도(=이 스레드가 돌고 있다는 것
+                    # 자체가 그 뜻) 카드를 계속 못 찾으면, 캡처 영역 자체가 잘못됐을 가능성을
+                    # 의심해서 자동 보정을 처음부터 다시 시도한다. 사람이 직접 고정해둔 영역이
+                    # 있으면 존중해서 건드리지 않는다. 짧은 화면 전환 등과 혼동하지 않도록
+                    # 충분히 오래(10초) 연속으로 실패했을 때만 한 번 트리거한다.
+                    if self._fail_streak_start is None:
+                        self._fail_streak_start = now
+                    elif not self._recalib_triggered_this_streak and now - self._fail_streak_start > 10:
+                        self._recalib_triggered_this_streak = True
+                        self._trigger_recalibration()
             except Exception:
                 pass
             self.msleep(150)  # ⚡ 카드 인식 확정 속도 개선 (300ms→150ms)
+
+    def _trigger_recalibration(self):
+        global _auto_calibration_done, _calibration_samples, _auto_calibration_attempts, _card_region_manual_override
+        if _card_region_manual_override:
+            print("🃏 [카드 인식 실패 지속] 사용자가 직접 고정한 영역이 있어 자동 재보정을 건너뜀")
+            return
+        print("🃏 [카드 인식 실패 지속(10초+)] 캡처 영역이 잘못됐을 가능성 → 자동 보정을 처음부터 다시 시도")
+        _auto_calibration_done = False
+        _calibration_samples = []
+        _auto_calibration_attempts = 0
 
 class ChoiceScannerThread(QThread):
     # ⚡ [실제 화면 글자 Y좌표 정밀 스캔] 이벤트 진입 시 선택지 글자의 Bounding Box(실제 Y 픽셀)를 단 1번 스캔하여 100% 정확하게 등록
@@ -1360,6 +1724,14 @@ class ChoiceScannerThread(QThread):
                 # ⚡ 1차: 수평 밀도 프로젝션 검출 시도
                 proj_zones = self.detect_button_zones_projection(gray, monitor["top"], options, base_top, base_h)
                 if proj_zones:
+                    # 🛡️ [스캔 중 이벤트 전환 감지] 이 스캔을 시작한 이후 current_event_options가
+                    # 바뀌었다면(제목 재매칭 등으로), 지금 손에 든 결과는 이미 낡은 이벤트 기준이라
+                    # 버린다 — 그대로 emit하면 방금 정상적으로 고쳐진 좌표를 도로 덮어써버린다.
+                    if options is not (self.options_getter() or []):
+                        print("🗑️ [스캔 결과 폐기] 스캔 도중 이벤트가 바뀌어 낡은 결과를 버림 (1차 프로젝션)")
+                        self.has_scanned_current_event = False
+                        self.msleep(50)
+                        continue
                     self.has_scanned_current_event = True
                     print(f"📊 [1차 프로젝션 검출 성공] 총 {len(proj_zones)}개 선택지 위치 확정")
                     self.choices_scanned.emit(proj_zones)
@@ -1459,6 +1831,13 @@ class ChoiceScannerThread(QThread):
                     zones = restored_zones
 
                 if zones:
+                    # 🛡️ [스캔 중 이벤트 전환 감지] 위와 동일한 이유로, 2차(EasyOCR) 결과도
+                    # 스캔 시작 이후 이벤트가 바뀌었으면 낡은 결과이니 버린다.
+                    if options is not (self.options_getter() or []):
+                        print("🗑️ [스캔 결과 폐기] 스캔 도중 이벤트가 바뀌어 낡은 결과를 버림 (2차 OCR)")
+                        self.has_scanned_current_event = False
+                        self.msleep(50)
+                        continue
                     self.has_scanned_current_event = True
                     print(f"📝 [2차 OCR 텍스트 매칭 성공] 총 {len(zones)}개 선택지 위치 확정")
                     self.choices_scanned.emit(zones)
@@ -1703,6 +2082,7 @@ def build_caches_from_all_json(arcanas_data, journeys_data, journey_buffs_map, p
     resolved_card_events = {}
     card_id_map = {}
     title_to_cards = {}  # 🃏 cleanTitle -> 그 제목을 가진 카드 이름들의 집합 (동명 이벤트 충돌 감지용)
+    title_to_events = {}  # 🔍 [진단용] cleanTitle -> 그 제목의 파싱된 이벤트(옵션/보상 포함) 목록
 
     # 1. 아르카나 카드 전용 이벤트 파싱
     for card in (arcanas_data or []):
@@ -1721,6 +2101,7 @@ def build_caches_from_all_json(arcanas_data, journeys_data, journey_buffs_map, p
                     db_event_cache.append(parsed)
                     if parsed.get('cleanTitle'):
                         title_to_cards.setdefault(parsed['cleanTitle'], set()).add(card_name)
+                        title_to_events.setdefault(parsed['cleanTitle'], []).append(parsed)
 
             card_event_history[card_name] = events
             if events:
@@ -1731,8 +2112,37 @@ def build_caches_from_all_json(arcanas_data, journeys_data, journey_buffs_map, p
     # 🃏 [동명 이벤트 카드 목록] 같은 제목을 여러 카드가 공유하는 경우 → 제목만으로는 어느 카드인지
     # 구분이 불가능하므로, 이런 제목은 카드 그림 인식이 확인해주기 전까지 "강한 확정"을 걸지 않는다.
     ambiguous_arcana_titles = {t for t, cards in title_to_cards.items() if len(cards) > 1}
+
+    # 🔍 [진단용] "동명 이벤트"라고 해서 다 카드마다 보상이 다른 건 아니다(제목만 우연히 같고
+    # 선택지/보상까지 완전히 같을 수도 있음 — 이 경우는 카드가 뭐든 상관없어서 사진 강제확인이
+    # 사실상 무의미하다). 카드별 실제 보상 내용(choice+reward 조합)이 서로 다른 제목만
+    # "진짜 이격"으로 따로 집계해서 알려준다.
+    # 📌 선택지가 1개뿐인 이벤트(그냥 지나가는 안내성 이벤트)는 애초에 "고를 게" 없어서
+    # 카드 구분 자체가 의미 없으므로 이 비교에서 제외하고, 선택지가 2개 이상인 이벤트만 본다.
+    def _event_signature(ev):
+        return tuple(sorted((o.get('choice', ''), o.get('reward', '')) for o in ev.get('options', [])))
+
+    reward_diff_titles = set()
+    for t in ambiguous_arcana_titles:
+        evs = [e for e in title_to_events.get(t, []) if len(e.get('options', [])) >= 2]
+        sigs = {_event_signature(ev) for ev in evs}
+        if len(sigs) > 1:
+            reward_diff_titles.add(t)
+
     if ambiguous_arcana_titles:
         print(f"🃏 [동명 이벤트 감지] {len(ambiguous_arcana_titles)}개 제목이 2개 이상의 카드에서 공유됨 → 카드 인식 확인 전까지 약한 매칭으로만 처리")
+        same_reward_count = len(ambiguous_arcana_titles) - len(reward_diff_titles)
+        print(f"   └ 🔀 [진짜 이격] {len(reward_diff_titles)}개는 카드마다 보상 내용이 실제로 다름 (사진 확인 꼭 필요)")
+        print(f"   └ 🟰 [보상 동일] {same_reward_count}개는 제목만 겹치고 보상까지 동일함 (카드 구분 실익 적음)")
+        if reward_diff_titles:
+            sample_names = []
+            for t in list(reward_diff_titles)[:8]:
+                evs = title_to_events.get(t, [])
+                if evs:
+                    sample_names.append(evs[0].get('rawTitle', t))
+            print(f"   └ 🔀 [진짜 이격 예시] {sample_names}")
+
+
 
     # 2. ⚡ [핵심 통합] 일반 여정 이벤트(journeys.json - 이벤트이름:난이도별변형리스트 딕셔너리) 완벽 파싱!
     journey_count = 0
@@ -1776,6 +2186,9 @@ def build_caches_from_all_json(arcanas_data, journeys_data, journey_buffs_map, p
         'resolved_card_events': resolved_card_events,
         'card_id_map': card_id_map,
         'ambiguous_arcana_titles': ambiguous_arcana_titles,
+        # 🃏 [카드 검색 범위 축소용] cleanTitle -> 그 제목을 가진 카드 이름 집합. "이격 아르카나"처럼
+        # 강제 사진 확인 대상인 이벤트는, 이 매핑으로 후보 카드를 좁혀서 인식 정확도를 높인다.
+        'title_to_cards': title_to_cards,
     }
 
 class JsonDataLoadThread(QThread):
@@ -1895,6 +2308,9 @@ class MouseHoverManager(QWidget):
         self.resolved_card_events = {}
         self.card_event_history = {}
         self.ambiguous_arcana_titles = set()
+        # 🃏 [카드 검색 범위 축소] cleanTitle -> 그 제목을 가진 카드 이름 집합. JSON 로드가 끝나면
+        # on_json_data_loaded에서 실제 값으로 채워진다.
+        self.title_to_cards = {}
 
         self.pending_card_search = None
         self._search_verify_retried = False
@@ -1905,9 +2321,24 @@ class MouseHoverManager(QWidget):
         self.app_started_at = time.time()
         self.STARTUP_GRACE_SECONDS = 12
 
+        # 🎯 [카드 영역 사용자 지정 값 적용] 저장된 오버라이드가 있으면 캡처 스레드들이
+        # 시작되기 전에 미리 반영해서, 첫 캡처부터 바로 사용자가 지정한 영역을 쓰게 한다.
+        global _card_region_manual_override
+        _saved_region_settings = load_settings()
+        _region_override = _saved_region_settings.get("card_region_override")
+        if _region_override:
+            REGION_FRACTIONS["card_art"] = _region_override
+            _card_region_manual_override = True
+            print(f"🎯 [카드 영역] 저장된 사용자 지정 영역 적용: {_region_override}")
+
         self.status_overlay = JourneyStatusOverlay()
         self.status_overlay.on_settings_requested = self.open_settings_dialog
+        self.status_overlay.on_reset_requested = self.reset_tracking_state
         self.tooltip = FixedLeftTooltip()
+
+        # 🔤 [왼쪽 툴팁 글자 크기] 저장된 배율을 바로 적용
+        self.tooltip_font_scale = _saved_region_settings.get("tooltip_font_scale", 1.0)
+        self.tooltip.set_font_scale(self.tooltip_font_scale)
 
         # 🖌️ [즉시 렌더링 강제] EasyOCR 모델 로딩처럼 무거운 초기화가 곧바로 이어지면
         # Qt 이벤트 루프가 아직 안 돌고 있어서 방금 만든 배지가 화면에 실제로 그려질 틈이
@@ -1919,6 +2350,7 @@ class MouseHoverManager(QWidget):
         self._region_debug_timer = QTimer()
         self._region_debug_timer.timeout.connect(self.status_overlay.reposition)
         self._region_debug_timer.timeout.connect(self.tooltip.reposition)
+        self._region_debug_timer.timeout.connect(self._refresh_debug_overlays)
         self._region_debug_timer.start(500)
 
         # ⚡ Y좌표 저장소, 소요시간 측정을 위한 타임스탬프 & 클릭 차단 타이머
@@ -1945,10 +2377,23 @@ class MouseHoverManager(QWidget):
         self.choice_scanner = ChoiceScannerThread(self.screen_w, pause_getter=lambda: self.is_searching, options_getter=lambda: self.current_event_options)
         self.choice_scanner.choices_scanned.connect(self.on_choices_scanned)
 
-        self.card_art_ocr = EventCardArtThread(self.screen_w, self.screen_h, lambda: self.card_hash_cache,
-                                                pause_getter=lambda: self.is_searching or not self.is_arcana_event_screen)
+        self.card_art_ocr = EventCardArtThread(self.screen_w, self.screen_h, lambda: self._card_search_pool(),
+                                                pause_getter=lambda: self.is_searching or not self.is_arcana_event_screen,
+                                                lenient_getter=lambda: self._is_force_confirm_active())
         self.card_art_ocr.start()
         self.card_art_ocr.card_matched.connect(self.on_card_art_matched)
+
+        # 🔧 [디버그 오버레이] 카드 인식 미리보기 / 캡처 영역 박스. 기본은 꺼져있고,
+        # 설정창에서 켜면 그때 만들어서 보여준다 (처음부터 만들면 괜히 리소스만 씀).
+        self.card_preview_overlay = None
+        self.region_debug_overlay = None
+        self.card_art_ocr.raw_preview_signal.connect(self._on_card_raw_preview)
+        self.card_art_ocr.preview_signal.connect(self._on_card_warped_preview)
+        _saved_settings = load_settings()
+        if _saved_settings.get("show_card_preview"):
+            self.set_card_preview_enabled(True)
+        if _saved_settings.get("show_region_debug"):
+            self.set_region_debug_enabled(True)
 
         # ⚡ [즉시 반응 툴팁 타이머] 30ms 마다 마우스 위치 & 선택지 고름(클릭/숫자키) 감지
         self.instant_hover_timer = QTimer()
@@ -1988,8 +2433,77 @@ class MouseHoverManager(QWidget):
         QApplication.quit()
 
     def open_settings_dialog(self):
-        dlg = SettingsDialog(on_update_check=self._manual_check_update, on_quit=self.quit_app)
+        dlg = SettingsDialog(
+            on_update_check=self._manual_check_update,
+            on_quit=self.quit_app,
+            on_toggle_card_preview=self.set_card_preview_enabled,
+            on_toggle_region_debug=self.set_region_debug_enabled,
+            on_open_region_adjuster=self.open_card_region_adjuster,
+            on_font_scale_change=self.set_tooltip_font_scale,
+        )
         dlg.exec_()
+
+    def set_tooltip_font_scale(self, scale):
+        self.tooltip_font_scale = scale
+        self.tooltip.set_font_scale(scale)
+
+    def open_card_region_adjuster(self):
+        self._region_adjust_overlay = CardRegionAdjustOverlay(
+            on_save=self._on_card_region_adjusted,
+            on_cancel=lambda: None,
+        )
+
+    def _on_card_region_adjusted(self, frac):
+        global _card_region_manual_override
+        settings = load_settings()
+        if frac is None:
+            # "기본값으로" → 내장된 정적 기본값에 고정한다. 자동 보정을 다시 켜면 몇 초 뒤
+            # 자동 계산이 다시 돌면서 카드를 벗어난 위치로 덮어써버릴 수 있으므로, 여기서도
+            # "사용자 지정 값"과 동일하게 취급해서 자동 보정이 더는 못 건드리게 고정한다.
+            settings["card_region_override"] = dict(_DEFAULT_CARD_ART_FRACTION)
+            save_settings(settings)
+            REGION_FRACTIONS["card_art"] = dict(_DEFAULT_CARD_ART_FRACTION)
+            _card_region_manual_override = True
+            print("↩️ [카드 영역] 기본값으로 되돌리고 고정 (자동 보정이 더 이상 건드리지 않음)")
+        else:
+            settings["card_region_override"] = frac
+            save_settings(settings)
+            REGION_FRACTIONS["card_art"] = frac
+            _card_region_manual_override = True
+            print(f"✅ [카드 영역] 사용자 지정 영역 저장됨: {frac}")
+
+    def set_card_preview_enabled(self, enabled):
+        if enabled:
+            if self.card_preview_overlay is None:
+                self.card_preview_overlay = CardPreviewOverlay()
+            else:
+                self.card_preview_overlay.show()
+        elif self.card_preview_overlay is not None:
+            self.card_preview_overlay.hide()
+
+    def set_region_debug_enabled(self, enabled):
+        if enabled:
+            if self.region_debug_overlay is None:
+                self.region_debug_overlay = RegionDebugOverlay(self.screen_w, self.screen_h)
+            else:
+                self.region_debug_overlay.show()
+            self.region_debug_overlay.refresh()
+        elif self.region_debug_overlay is not None:
+            self.region_debug_overlay.hide()
+
+    def _refresh_debug_overlays(self):
+        if self.card_preview_overlay is not None and self.card_preview_overlay.isVisible():
+            self.card_preview_overlay.reposition()
+        if self.region_debug_overlay is not None and self.region_debug_overlay.isVisible():
+            self.region_debug_overlay.refresh()
+
+    def _on_card_raw_preview(self, cv_bgr_img):
+        if self.card_preview_overlay is not None and self.card_preview_overlay.isVisible():
+            self.card_preview_overlay.update_raw(cv_bgr_img)
+
+    def _on_card_warped_preview(self, cv_bgr_img):
+        if self.card_preview_overlay is not None and self.card_preview_overlay.isVisible():
+            self.card_preview_overlay.update_image(cv_bgr_img)
 
     def _manual_check_update(self):
         try:
@@ -2000,6 +2514,37 @@ class MouseHoverManager(QWidget):
                 ctypes.windll.user32.MessageBoxW(0, f"업데이트 확인 중 오류가 발생했습니다.\n{e}", "업데이트 확인 실패", 0x30)
             except Exception:
                 pass
+
+    def reset_tracking_state(self):
+        # 🔄 [수동 새로고침] 상단 배지를 클릭(접기/펼치기)할 때마다, 인식이 꼬였거나 막힌 것
+        # 같을 때 사용자가 직접 초기화할 수 있도록 지금까지 추적 중이던 이벤트/카드 정보를
+        # 전부 지우고 다시 찾기 시작한다. 로딩 화면 감지 시 정리하는 로직과 동일하게 처리.
+        print("🔄 [수동 새로고침] 상단 배지 클릭 → 추적 중이던 이벤트/카드 정보 초기화")
+        self.active_choice_zones = []
+        self.current_event_options = []
+        self.current_event_title = ""
+        self.matched_db_title = ""
+        self.event_confirmed = False
+        self.event_confirmed_strong = False
+        self.current_matched_card_id = None
+        self._card_symbol_retry_done = False
+        if hasattr(self, 'card_art_ocr'):
+            self.card_art_ocr.last_matched_id = ""
+            self.card_art_ocr.pending_id = None
+            self.card_art_ocr.pending_count = 0
+        self.tooltip.hide_and_clear()
+        self.click_block_until = 0
+        if hasattr(self, 'choice_scanner'):
+            self.choice_scanner.reset_cache()
+        if hasattr(self, 'event_ocr'):
+            self.event_ocr.is_waiting_for_next_event = False
+            self.event_ocr.completed_event_title = ""
+            self.event_ocr.pending_event = ""
+            self.event_ocr.last_event = ""
+            self.event_ocr._last_title_gray = None
+        if hasattr(self, '_lock_verify_timer'):
+            self._lock_verify_timer.stop()
+        self.status_overlay.set_custom_status("🔄 [새로고침됨] 여정 이벤트 화면을 다시 찾고 있습니다...", "#888888", "#aaaaaa")
 
     def _poll_global_loading_state(self):
         if not is_game_hovered_or_active():
@@ -2032,7 +2577,7 @@ class MouseHoverManager(QWidget):
                 self.card_art_ocr.last_matched_id = ""
                 self.card_art_ocr.pending_id = None
                 self.card_art_ocr.pending_count = 0
-            self.tooltip.hide()
+            self.tooltip.hide_and_clear()
             self.click_block_until = 0
             if hasattr(self, 'choice_scanner'):
                 self.choice_scanner.reset_cache()
@@ -2214,16 +2759,16 @@ class MouseHoverManager(QWidget):
                         return
 
         if not self.is_in_journey or not is_game_hovered_or_active():
-            self.tooltip.hide()
+            self.tooltip.hide_and_clear()
             return
 
         if getattr(self, '_is_loading_global', False):
             # 🌕 로딩 화면이 확인된 동안에는 어떤 경우에도 툴팁을 띄우지 않는다.
-            self.tooltip.hide()
+            self.tooltip.hide_and_clear()
             return
 
         if not self.active_choice_zones:
-            self.tooltip.hide()
+            self.tooltip.hide_and_clear()
             return
 
         pos = QCursor.pos()
@@ -2238,7 +2783,7 @@ class MouseHoverManager(QWidget):
         x_max = base_left + int(base_w * 0.95)
 
         if not (x_min <= pos.x() <= x_max):
-            self.tooltip.hide()
+            self.tooltip.hide_and_clear()
             return
 
         # Y좌표 범위 검사 (0.00초 즉시 반응)
@@ -2256,11 +2801,11 @@ class MouseHoverManager(QWidget):
             opt = hovered_zone['option']
             choice_name = re.sub(r'[\.\s]+$', '', opt.get('choice', ''))
             raw_reward = opt.get('reward', '')
-            formatted_text = self.smart_format_reward(raw_reward, choice_name)
-            self.tooltip.show_info(formatted_text)
+            formatted_text, is_wide, min_width = self.smart_format_reward(raw_reward, choice_name)
+            self.tooltip.show_info(formatted_text, wide=is_wide, min_width=min_width)
         else:
             self._last_logged_hover_text = ""
-            self.tooltip.hide()
+            self.tooltip.hide_and_clear()
 
     def _on_arcana_label_changed(self, is_arcana):
         self.is_arcana_event_screen = is_arcana
@@ -2281,6 +2826,7 @@ class MouseHoverManager(QWidget):
         self.resolved_card_events = result['resolved_card_events']
         self.card_id_map = result['card_id_map']
         self.ambiguous_arcana_titles = result.get('ambiguous_arcana_titles', set())
+        self.title_to_cards = result.get('title_to_cards', {})
         for c in result['cards']:
             self.known_card_names.add(c['name'])
 
@@ -2325,6 +2871,32 @@ class MouseHoverManager(QWidget):
             print(f"🆕 [신규 카드 자동 등록] {len(hash_cache)}개 카드가 인식 대상에 추가됨 (누적 {len(self.card_hash_cache)}개)")
         self._incremental_indexer = None
 
+    def _is_force_confirm_active(self):
+        # 🃏 지금 매칭된 이벤트가 강제 사진 확인 대상인지 여부.
+        # "이격"이 가리키는 실제 대상은 "같은 제목의 이벤트가 여러 카드에 걸쳐 있고 카드마다
+        # 보상이 다른 상황" 그 자체이므로, 이미 감지돼 있는 ambiguous_arcana_titles
+        # (동명 이벤트 목록)를 그대로 체크한다. 이렇게 하면 동명 이벤트로 판정된 모든 경우에
+        # 카드 후보 풀 좁히기 + lenient 모드(임계값 무시하고 최고점 후보 즉시 채택)가 적용된다.
+        if not self.matched_db_title:
+            return False
+        clean_title = re.sub(r'[^가-힣0-9a-zA-Z]', '', self.matched_db_title)
+        return clean_title in self.ambiguous_arcana_titles
+
+    def _card_search_pool(self):
+        # 🃏 [카드 검색 범위 축소] 동명 이벤트라 강제 사진 확인 대상인 이벤트가 현재
+        # 매칭돼 있으면(matched_db_title), 그 이벤트를 가진 카드들로만 비교 후보를 좁힌다.
+        # 전체 카드와 비교하는 것보다 후보가 적을수록 phash/색상 유사도 오차로 엉뚱한 카드가
+        # 뽑힐 확률이 줄어든다. 대상이 아니거나 카드 목록이 아직 비어있으면 평소처럼 전체
+        # 캐시를 그대로 사용한다.
+        if self._is_force_confirm_active():
+            clean_title = re.sub(r'[^가-힣0-9a-zA-Z]', '', self.matched_db_title)
+            allowed_names = self.title_to_cards.get(clean_title)
+            if allowed_names:
+                pool = [c for c in self.card_hash_cache if c.get('name') in allowed_names]
+                if pool:
+                    return pool
+        return self.card_hash_cache
+
     def _debug_reward_snippet(self):
         # 🔍 [디버그용] 현재 등록된 첫 선택지의 보상 원문 일부를 요약해서 로그에 남긴다.
         # 선택지 "이름"만으로는 동명 이벤트 오염 여부를 구분할 수 없어서, 실제 보상 내용까지
@@ -2355,10 +2927,23 @@ class MouseHoverManager(QWidget):
         if self.current_event_title:
             clean_ocr_ev = re.sub(r'[^가-힣0-9]', '', self.current_event_title)
             clean_ocr_ev = re.sub(r'여정|이벤트|아르카나|알카|노아|NOA', '', clean_ocr_ev)
+            # 🛡️ [사진 오인식 방어] 예전엔 hist_best가 있기만 하면 유사도 점수를 안 보고
+            # 그냥 받아들였다. 카드 사진 인식(phash/색상) 자체가 비슷하게 생긴 다른 카드로
+            # 잘못 매칭됐을 때, 그 잘못된 카드의 과거 기록 중 "그나마 제일 가까운" 걸 골라서
+            # 아무 검증 없이 확정해버리는 게 오매칭의 원인이었다. 최소 유사도 기준을 둬서
+            # 지금 화면 제목과 정말 무관한 기록은 걸러낸다.
             hist_best, hist_score = self._pick_closest_card_history(card_name, clean_ocr_ev)
-            if hist_best:
+            if hist_best and hist_score >= 0.35:
                 best_guess = hist_best
-        if best_guess is None:
+            if best_guess is None:
+                cand = self.resolved_card_events.get(card_name)
+                # 🛡️ [사진 오인식 방어] 카드별 기본 이벤트(resolved_card_events)도 마찬가지로
+                # 지금 화면 제목과 아예 무관하면 신뢰하지 않는다. 여기서 그냥 받아들이면,
+                # 카드 인식이 엉뚱한 카드로 튄 순간 그 카드의 완전히 다른 이벤트 데이터가
+                # "확정"으로 표시돼버린다.
+                if cand and self._score_event_match(clean_ocr_ev, cand.get('cleanTitle', '')) >= 0.35:
+                    best_guess = cand
+        else:
             best_guess = self.resolved_card_events.get(card_name)
 
         if best_guess:
@@ -2444,6 +3029,21 @@ class MouseHoverManager(QWidget):
                 best = ev
         return best, best_score
 
+    def _fallback_ambiguous_event(self, snapshot_title, fallback_event, score):
+        # 지금까지도 여전히 같은(다른 이벤트로 안 넘어간) 제목이고, 아직 강하게 확정이 안 됐다면
+        # → 카드 인식이 끝내 실패한 것으로 보고, "확인 안 됨" 표시를 단 채로 최선의 추정치를 보여준다.
+        if self.current_event_title != snapshot_title or self.event_confirmed_strong:
+            return  # 이미 다른 이벤트로 넘어갔거나, 그 사이 정상적으로 카드가 확인됨 → 개입 불필요
+
+        self.current_event_options = fallback_event.get('options', [])
+        self.status_overlay.set_custom_status(
+            f"⚠️ [카드 확인 실패 - 추정치] {self.matched_db_title} (동명 이벤트, 다른 카드일 수 있음)",
+            "#ff9800", "#ff9800"
+        )
+        print(f"⚠️ [동명 이벤트 - 카드 확인 실패, 추정치로 대체 표시] '{snapshot_title}' ➔ DB: '{self.matched_db_title}' (점수:{score:.2f}) | 보상요약: {self._debug_reward_snippet()}")
+        self.register_instant_estimated_zones()
+        self.choice_scanner.reset_cache()
+
     def match_current_event_from_cache(self):
         if not self.current_event_title: return
         clean_ocr_ev = re.sub(r'[^가-힣0-9]', '', self.current_event_title)
@@ -2469,7 +3069,13 @@ class MouseHoverManager(QWidget):
                 return
 
             card_cached = self.resolved_card_events.get(self.current_matched_card_id)
-            if card_cached:
+            # 🛡️ [사진 오인식 방어] 위와 동일한 이유로, 카드 인식 결과가 가리키는 "카드별 기본
+            # 이벤트"도 지금 화면에 뜬 제목(clean_ocr_ev)과 아예 무관하면 신뢰하지 않는다.
+            # 예전엔 여기서 검증 없이 바로 event_confirmed_strong=True로 확정해버려서, 사진
+            # 인식이 비슷하게 생긴 다른 카드로 오인식됐을 때 그 카드의 완전히 다른 이벤트가
+            # 표시되는 사고가 있었다("동명 이벤트" 목록에 걸려 카드 확인 대기 중이었는데도
+            # 카드 결과 자체가 틀려서 그대로 통과돼버린 경우).
+            if card_cached and self._score_event_match(clean_ocr_ev, card_cached.get('cleanTitle', '')) >= 0.35:
                 self.matched_db_title = card_cached.get('rawTitle', '')
                 self.current_event_options = card_cached.get('options', [])
                 self.event_confirmed = True
@@ -2479,14 +3085,18 @@ class MouseHoverManager(QWidget):
                 self.register_instant_estimated_zones()
                 self.choice_scanner.reset_cache()
                 return
+            elif card_cached:
+                print(f"⚠️ [카드 인식 불일치 의심] 카드 '{self.current_matched_card_id}'의 기본 이벤트('{card_cached.get('rawTitle','')}')가 현재 제목('{self.current_event_title}')과 안 맞음 → 이 카드 매칭은 무시하고 제목 기반 매칭으로 폴백")
 
         STRONG_TITLE_MATCH_THRESHOLD = 0.5
         if best_event and best_score >= STRONG_TITLE_MATCH_THRESHOLD:
-            # 🃏 [동명 이벤트 카드 방어] 이 제목을 여러 카드가 공유한다면, 점수가 아무리 높아도
-            # 제목만으로는 어느 카드인지 알 수 없다. "강한 확정"을 걸지 않는 것은 물론,
-            # 아예 좌표/툴팁도 등록하지 않는다 — 카드 미확인 상태에서 아무 카드에서나 가져온
-            # 추정 데이터를 화면에 잠깐이라도 보여주면, 그 틈에 호버해서 잘못된 보상을 볼 수 있다.
-            # 카드 인식이 도착할 때까지는 "확인 중"이라고만 표시하고 실제로 확인된 뒤에만 보여준다.
+            # 🃏 [동명 이벤트 카드 방어] 이 제목을 여러 카드가 공유한다면(ambiguous_arcana_titles),
+            # 제목만으로는 어느 카드인지 알 수 없다. 이 경우 제목 유사도 매칭이 다른 카드의
+            # 이벤트와 우연히 비슷하게 걸려 잘못 확정되는 사고를 막기 위해, "강한 확정"을
+            # 걸지 않는 것은 물론, 아예 좌표/툴팁도 등록하지 않는다 — 카드 미확인 상태에서
+            # 아무 카드에서나 가져온 추정 데이터를 화면에 잠깐이라도 보여주면, 그 틈에 호버해서
+            # 잘못된 보상을 볼 수 있다. 카드 인식이 도착할 때까지는 "확인 중"이라고만 표시하고
+            # 실제로 확인된 뒤에만 보여준다.
             is_ambiguous_title = best_event.get('cleanTitle', '') in self.ambiguous_arcana_titles
             self.matched_db_title = best_event.get('rawTitle', '')
             self.event_confirmed = True
@@ -2498,6 +3108,13 @@ class MouseHoverManager(QWidget):
                 self.status_overlay.set_custom_status(f"🟣 [카드 확인 중] {self.matched_db_title} (동명 이벤트, 카드 인식 대기)", "#c084fc", "#c084fc")
                 print(f"🃏 [동명 이벤트 - 카드 확인 대기, 좌표 미등록] '{self.current_event_title}' ➔ DB: '{self.matched_db_title}' (점수:{best_score:.2f})")
                 self.choice_scanner.reset_cache()
+                # 🛡️ [폴백] 카드 인식이 애초에 실패하는 카드(예: 새로 추가되어 이미지 특징이
+                # 아직 없는 카드)일 경우, 이 상태로 영원히 아무것도 안 뜰 수 있다. 정확성을
+                # 위해 만든 안전장치가 오히려 "아예 못 씀"이 되는 걸 막기 위해, 일정 시간
+                # 기다려도 카드가 확정되지 않으면 "확인 안 됨" 표시를 달고 최선의 추정치를
+                # 대신 보여준다 (틀릴 수 있음을 명시).
+                snapshot_title = self.current_event_title
+                QTimer.singleShot(1200, lambda: self._fallback_ambiguous_event(snapshot_title, best_event, best_score))
                 return
 
             self.current_event_options = best_event.get('options', [])
@@ -2510,6 +3127,7 @@ class MouseHoverManager(QWidget):
             return
 
         if best_event:
+            # 🃏 [약한 매칭도 동일하게 동명 이벤트 강제 확인 적용]
             is_ambiguous_title = best_event.get('cleanTitle', '') in self.ambiguous_arcana_titles
             self.matched_db_title = best_event.get('rawTitle', '')
             self.event_confirmed = True
@@ -2522,6 +3140,8 @@ class MouseHoverManager(QWidget):
                 self.status_overlay.set_custom_status(f"🟣 [카드 확인 중] {self.matched_db_title} (동명 이벤트, 카드 인식 대기)", "#c084fc", "#c084fc")
                 print(f"🃏 [동명 이벤트(약한 매칭) - 카드 확인 대기, 좌표 미등록] '{self.current_event_title}' ➔ DB: '{self.matched_db_title}' (점수:{best_score:.2f})")
                 self.choice_scanner.reset_cache()
+                snapshot_title = self.current_event_title
+                QTimer.singleShot(1200, lambda: self._fallback_ambiguous_event(snapshot_title, best_event, best_score))
                 return
 
             self.current_event_options = best_event.get('options', [])
@@ -2540,7 +3160,29 @@ class MouseHoverManager(QWidget):
                 self.status_overlay.set_custom_status(f"🔵 [이벤트 확인 중] {title_display}...", "#00aaff", "#00aaff")
         else:
             self.status_overlay.set_custom_status("⚪ [헬퍼 대기 중] 여정 이벤트 화면을 찾고 있습니다...", "#888888", "#aaaaaa")
-            self.tooltip.hide()
+            self.tooltip.hide_and_clear()
+            # 🛡️ [스태일 데이터 방지] 여기서 툴팁만 숨기고 좌표/선택지 데이터를 안 지우면,
+            # 나중에 is_in_journey가 (OCR 오탐 등으로) 잠깐이라도 다시 True가 되는 순간
+            # 이미 남아있던 예전 데이터가 그대로 다시 튀어나올 수 있다. 여정을 벗어났다고
+            # 판단되는 시점엔 확실하게 다 같이 정리한다.
+            self.active_choice_zones = []
+            self.current_event_options = []
+            self.current_event_title = ""
+            self.matched_db_title = ""
+            self.event_confirmed = False
+            self.event_confirmed_strong = False
+            # 🛡️ [OCR 스레드 기억도 같이 리셋] 여기서 우리 쪽 상태만 지우고 제목 OCR 스레드가
+            # "직전에 본 제목"을 계속 기억하고 있으면, 나중에 같은 제목이 다시 떠도 "중복이네"
+            # 하고 무시해버려서 우리 상태가 텅 빈 채로 영원히 안 채워지는 문제가 있었다
+            # (다른 화면 봤다가 돌아왔을 때 재현됨). 스레드의 기억도 같이 지워서, 이후엔
+            # 어떤 제목이 뜨든 "새로운 제목"으로 취급해 반드시 다시 매칭이 일어나게 한다.
+            if hasattr(self, 'event_ocr'):
+                self.event_ocr.last_event = ""
+                self.event_ocr.pending_event = ""
+                self.event_ocr.pending_count = 0
+                self.event_ocr.completed_event_title = ""
+                self.event_ocr.is_waiting_for_next_event = False
+                self.event_ocr._last_title_gray = None
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape or event.key() == Qt.Key_F12:
@@ -2555,7 +3197,7 @@ class MouseHoverManager(QWidget):
 
     def smart_format_reward(self, raw_reward, choice_name):
         esc = html_escape.escape
-        if not raw_reward: return f"💡 <b>{esc(choice_name)}</b>"
+        if not raw_reward: return f"💡 <b>{esc(choice_name)}</b>", False, None
 
         lines = [l.strip() for l in raw_reward.strip().split('\n') if l.strip()]
         has_failure = any('[FAIL]' in l for l in lines)
@@ -2591,6 +3233,7 @@ class MouseHoverManager(QWidget):
             outcome_blocks.append({'type': current_type or 'NORMAL', 'lines': current_block})
 
         formatted_outcomes = []
+        column_content_widths = []  # 🖼️ 각 블록의 실제 텍스트 폭(px) — 가로 2단 배치 시 폭 계산에 사용
         pure_stat_words = {"잠재력 포인트", "컨디션", "스태미나", "오래된 동전", "오래된 주화", "힘", "체력", "인내", "집중", "보호", "선택"}
 
         for block in outcome_blocks:
@@ -2644,20 +3287,52 @@ class MouseHoverManager(QWidget):
                 return " &nbsp; ".join(f"{cond_icon(c)} {esc(c)}" for c in conds)
 
             html_parts = []
+            _scale = getattr(self, 'tooltip_font_scale', 1.0)
+            _badge_px = max(9, round(12 * _scale))
+            _cond_px = max(9, round(12 * _scale))
+            _bullet_px = max(10, round(14 * _scale))
+
+            # 📏 [실제 텍스트 폭 측정] 대충 정한 배율로 폭을 넓히면 글자가 길 때 여전히
+            # 잘려서 줄바꿈될 수 있다. 이 블록에서 실제로 렌더링될 줄들(배지+조건 한 줄,
+            # 그리고 불릿마다 한 줄씩) 중 가장 긴 줄의 실제 픽셀 폭을 측정해두고, 나중에
+            # 가로 2단 배치 폭을 정할 때 이 값을 기준으로 정확히 맞춘다.
+            _measure_font = QFont()
+            _measure_font.setBold(True)
+            _measure_font.setPixelSize(max(_badge_px, _cond_px, _bullet_px))
+            _metrics = QFontMetrics(_measure_font)
+
+            def _text_px(t):
+                try:
+                    return _metrics.horizontalAdvance(t)
+                except AttributeError:
+                    return _metrics.width(t)
+
+            _candidate_lines = []
+            if local_diff_marker:
+                _line = local_diff_marker
+                if local_conds:
+                    _line += "   " + "    ".join(f"{cond_icon(c)} {c}" for c in local_conds)
+                _candidate_lines.append(_line)
+            elif local_conds:
+                _candidate_lines.append("    ".join(f"{cond_icon(c)} {c}" for c in local_conds))
+            for _item in final_bullets:
+                _candidate_lines.append("• " + _item)
+            column_content_widths.append(max((_text_px(t) for t in _candidate_lines), default=0))
+
             if local_diff_marker:
                 color = self.DIFF_BADGE_COLORS.get(local_diff_marker, "#00e5ff")
                 header = (f'<span style="background-color:{color}; color:#111111; '
-                          f'padding:2px 9px; border-radius:6px; font-weight:bold; font-size:12px;">'
+                          f'padding:2px 9px; border-radius:6px; font-weight:bold; font-size:{_badge_px}px;">'
                           f'{esc(local_diff_marker)}</span>')
                 if local_conds:
-                    header += (f'&nbsp;&nbsp;<span style="color:#ffb454; font-size:12px;">'
+                    header += (f'&nbsp;&nbsp;<span style="color:#ffb454; font-size:{_cond_px}px;">'
                                f'{render_conds(local_conds)}</span>')
                 html_parts.append(header)
             elif local_conds:
-                html_parts.append(f'<span style="color:#ffb454; font-size:12px;">{render_conds(local_conds)}</span>')
+                html_parts.append(f'<span style="color:#ffb454; font-size:{_cond_px}px;">{render_conds(local_conds)}</span>')
 
             for item in final_bullets:
-                html_parts.append(f'<span style="color:#ffffff; font-size:14px;">• {esc(item)}</span>')
+                html_parts.append(f'<span style="color:#ffffff; font-size:{_bullet_px}px;">• {esc(item)}</span>')
 
             inner_html = "<br>".join(html_parts)
 
@@ -2671,11 +3346,52 @@ class MouseHoverManager(QWidget):
             formatted_outcomes.append(text)
 
         if formatted_outcomes:
-            block_divider = '<hr style="border:none;border-top:1px solid #333333;margin:6px 0;">'
-            body = block_divider.join(f'<div style="margin-bottom:2px;">{o}</div>' for o in formatted_outcomes)
-            return f'💡 <b>{esc(choice_name)}</b><hr style="border:none;border-top:1px solid #444444;margin:4px 0;">{body}'
+            _scale = getattr(self, 'tooltip_font_scale', 1.0)
+            # 🖼️ [가로 2단 배치] 폰트가 "보통"(1.0)을 초과(크게/아주 크게)하는 상태에서
+            # 이지/노말/하드처럼 보상 블록이 여러 개면, 세로로 계속 쌓았을 때 툴팁이
+            # 화면 아래로 뚫고 나가기 쉽다. 이 경우 세로 나열 대신 표(<table>)로 옆에
+            # 나란히 배치해서 아래 대신 옆으로 늘어나게 한다. 블록이 1개뿐이거나
+            # 폰트가 보통 이하면 기존처럼 세로로 쌓는 게 더 읽기 편하므로 그대로 둔다.
+            use_columns = _scale > 1.0 and len(formatted_outcomes) > 1
+            min_width = None
+            if use_columns:
+                cell_parts = []
+                # 📏 [정밀 폭 계산] 대충 정한 배율 대신, 컬럼별로 실측한 텍스트 폭
+                # (column_content_widths)을 그대로 더해서 필요한 최소 폭을 계산한다.
+                # 각 셀의 좌우 padding(16px×2, 첫 칸은 왼쪽 패딩 없음), 구분선 셀(1px + 여백),
+                # 실패 배경 블록의 자체 padding(8px×2), 라벨 외곽 padding/테두리까지 전부 반영해
+                # "잠재력 포인트 +30"처럼 긴 줄도 잘리지 않게 한다.
+                CELL_SIDE_PADDING = 16
+                FAIL_BLOCK_PADDING = 16 if has_failure else 0  # div padding:4px 8px 의 좌우 8px×2
+                DIVIDER_WIDTH = 1 + CELL_SIDE_PADDING * 2
+                LABEL_OUTER = 18 * 2 + 2 * 2  # QLabel padding(14px 18px)의 좌우 18px×2 + border 2px×2
+                SAFETY_MARGIN = 20  # 이모지/아이콘 폭 오차 보정 여유
+
+                total = LABEL_OUTER + SAFETY_MARGIN
+                for i, outcome in enumerate(formatted_outcomes):
+                    left_pad = 0 if i == 0 else CELL_SIDE_PADDING
+                    right_pad = CELL_SIDE_PADDING
+                    total += column_content_widths[i] + left_pad + right_pad + FAIL_BLOCK_PADDING
+                    cell_parts.append(
+                        f'<td style="vertical-align:top; white-space:nowrap; padding:2px {right_pad}px 2px {left_pad}px;">{outcome}</td>'
+                    )
+                    if i < len(formatted_outcomes) - 1:
+                        # 컬럼 사이 구분선: Qt 리치텍스트는 td에 border-left를 안정적으로
+                        # 못 그리는 경우가 있어, 1px짜리 배경색 셀로 확실하게 그린다.
+                        cell_parts.append('<td width="1" style="background-color:#3a3a3a;">&nbsp;</td>')
+                        total += DIVIDER_WIDTH
+                min_width = round(total)
+                body = (
+                    '<table cellspacing="0" cellpadding="0" style="border-collapse:collapse;">'
+                    f'<tr>{"".join(cell_parts)}</tr></table>'
+                )
+            else:
+                block_divider = '<hr style="border:none;border-top:1px solid #333333;margin:6px 0;">'
+                body = block_divider.join(f'<div style="margin-bottom:2px;">{o}</div>' for o in formatted_outcomes)
+            html = f'💡 <b>{esc(choice_name)}</b><hr style="border:none;border-top:1px solid #444444;margin:4px 0;">{body}'
+            return html, use_columns, min_width
         else:
-            return f'💡 <b>{esc(choice_name)}</b>'
+            return f'💡 <b>{esc(choice_name)}</b>', False, None
 
 
 if __name__ == '__main__':
