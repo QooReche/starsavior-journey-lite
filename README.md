@@ -94,9 +94,7 @@ https://aka.ms/vs/17/release/vc_redist.x64.exe
 
 ------------------
 
-버그를 발견하시면 챈 댓글이나 GitHub 저장소에 알려주세요:
-
-https://github.com/p1021/journeyhelper
+버그를 발견하시면 GitHub 저장소에 알려주세요
 
 
 
