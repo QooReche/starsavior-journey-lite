@@ -793,8 +793,9 @@ class JourneyStatusOverlay(QWidget):
         super().mousePressEvent(event)
 
 class SettingsDialog(QDialog):
-    def __init__(self, on_update_check=None, parent=None):
+    def __init__(self, on_update_check=None, on_quit=None, parent=None):
         super().__init__(parent)
+        self._on_quit = on_quit
         self.setWindowTitle("JourneyHelper 설정")
         self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
         self.setFixedWidth(360)
@@ -855,6 +856,10 @@ class SettingsDialog(QDialog):
         layout.addWidget(btn_github)
 
         button_row = QHBoxLayout()
+        btn_quit = QPushButton("🛑 프로그램 종료")
+        btn_quit.setStyleSheet("QPushButton { background-color: #4a1f24; border-color: #7a2f36; } QPushButton:hover { background-color: #6b2a30; }")
+        btn_quit.clicked.connect(self._quit_program)
+        button_row.addWidget(btn_quit)
         button_row.addStretch()
         btn_close = QPushButton("닫기")
         btn_close.clicked.connect(self._save_and_close)
@@ -862,6 +867,16 @@ class SettingsDialog(QDialog):
         layout.addLayout(button_row)
 
         self.setLayout(layout)
+
+    def _quit_program(self):
+        # 종료 전에 지금까지 바꾼 설정도 같이 저장해준다
+        self._settings["file_logging"] = self.chk_log.isChecked()
+        self._settings["check_update_on_start"] = self.chk_update.isChecked()
+        save_settings(self._settings)
+        set_autostart(self.chk_autostart.isChecked())
+        self.accept()
+        if callable(self._on_quit):
+            self._on_quit()
 
     def _check_update_now(self):
         if callable(self._on_update_check):
@@ -1973,7 +1988,7 @@ class MouseHoverManager(QWidget):
         QApplication.quit()
 
     def open_settings_dialog(self):
-        dlg = SettingsDialog(on_update_check=self._manual_check_update)
+        dlg = SettingsDialog(on_update_check=self._manual_check_update, on_quit=self.quit_app)
         dlg.exec_()
 
     def _manual_check_update(self):
