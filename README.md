@@ -32,13 +32,7 @@ https://github.com/p1021/journeyhelper/releases JourneyHelper 1.0.0 다운로드
 
 이런 동작 특성 때문에 오탐(false positive)이 날 수 있습니다. 
 
-PyInstaller YARA 룰: "PyInstaller로 변환된 실행파일" 자체를 그냥 식별만 하는 룰이고, 룰 설명에도 "이것만으로는 악성이라는 뜻이 아니다"라고 명시돼 있음.
-"Potential Python DLL Sideloading" Sigma 룰: --onefile 모드가 실행 시 임시 폴더에 DLL들을 풀어놓는 방식이라 "DLL 사이드로딩" 패턴과 겉모습이 비슷해서 걸림. 실제 사이드로딩 공격이 아니라 PyInstaller onefile의 정상 동작 방식임.
-Bkav/Microsoft/SecureAge: 구체적 악성코드 패밀리명이 아니라 범용 ML/휴리스틱 탐지(W32.Malware.3F5F7E70, Trojan:Win32/Wacatac.B!ml 등 .B!ml은 Microsoft의 머신러닝 오탐이 잦기로 유명한 태그). 서명 안 된, 배포 이력(prevalence)이 없는 신규 실행파일에 이런 게 잘 붙습니다.
-
-또한 PyInstaller로 만든 프로그램이기 때문에 보통 2~5개 정도 오탐이 뜨는 경우가 있을 수 있습니다. 
-
-걱정되시면 소스코드를 직접 확인하실 수 있습니다.
+걱정되시면 소스코드를 직접 확인하실 수 있으며
 
 만약, 백신이 파일을 지울 경우 백신에서 보호 제외 후 실행 가능합니다.
 
