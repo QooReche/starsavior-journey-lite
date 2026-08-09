@@ -8,6 +8,20 @@ import traceback
 # 설정해두면 중복 로드를 허용해서 이 문제를 막을 수 있다. (아래 import보다 반드시 먼저 와야 함)
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
+# 🔐 [SSL 인증서 경로 고정] 일부 유저 PC(회사망/백신의 SSL 검사, 손상된 루트 인증서 저장소 등)에서
+# exe가 시스템 인증서 저장소를 제대로 못 찾아 "certificate verify failed: unable to get local
+# issuer certificate" 에러로 OCR 모델 다운로드(easyocr, requests 등 모든 HTTPS 요청)가 실패하는
+# 사례가 있다. certifi가 제공하는 인증서 번들 경로를 SSL/requests가 보게 될 환경변수에 명시적으로
+# 심어두면, 시스템 인증서 저장소 상태와 무관하게 항상 검증에 성공한다.
+# (반드시 easyocr/requests 등 네트워크 관련 모듈을 import하기 전에 와야 함)
+try:
+    import certifi
+    os.environ.setdefault("SSL_CERT_FILE", certifi.where())
+    os.environ.setdefault("REQUESTS_CA_BUNDLE", certifi.where())
+except Exception:
+    # certifi가 없는 극히 예외적인 환경이면 그냥 기존 방식(시스템 인증서)으로 폴백
+    pass
+
 import time
 import datetime
 import random
@@ -31,6 +45,15 @@ import concurrent.futures
 from PIL import Image
 import imagehash
 import torch
+import builtins
+
+_original_print = builtins.print
+
+def _timestamped_print(*args, **kwargs):
+    current_time = datetime.datetime.now().strftime("[%H:%M:%S.%f]")[:-3] + "]"
+    _original_print(current_time, *args, **kwargs)
+
+builtins.print = _timestamped_print
 
 # 불필요한 시스템 경고 콘솔 난립 억제 필터
 warnings.filterwarnings('ignore')
@@ -372,7 +395,7 @@ def ensure_single_instance():
 # ----------------------------------------------------
 # ⚙️ 설정 저장/불러오기 (상단 배지 우클릭 → 설정창)
 # ----------------------------------------------------
-APP_VERSION = "1.0.4"
+APP_VERSION = "1.0.6"
 
 DEFAULT_SETTINGS = {
     "low_spec_mode": False,  # ⚡ [최적화/CPU 절약 모드] 기본값 OFF
@@ -539,12 +562,15 @@ def is_loading_screen_visible(game_rect=None, screen_w=1920, screen_h=1080, sct=
     except Exception:
         return False
 
+#영역 기본값
 REGION_FRACTIONS = {
     "card_art":    {"top": 0.120, "left": 0.050, "width": 0.052, "height": 0.163},
     "event_title": {"top": 0.205, "left": 0.110, "width": 0.240, "height": 0.056},
     "arcana_label":{"top": 0.170, "left": 0.110, "width": 0.200, "height": 0.032},
 }
 _DEFAULT_CARD_ART_FRACTION = dict(REGION_FRACTIONS["card_art"])
+_DEFAULT_ARCANA_LABEL_FRACTION = dict(REGION_FRACTIONS["arcana_label"])
+_DEFAULT_EVENT_TITLE_FRACTION = dict(REGION_FRACTIONS["event_title"])
 _card_region_manual_override = False
 _auto_calibration_done = False
 _auto_calibration_attempts = 0
@@ -552,15 +578,73 @@ _last_calibrated_rect = None
 _calibration_samples = []  
 _CALIBRATION_SAMPLES_NEEDED = 1
 
+# 🛑 [보정 결과 검증] 자동 보정이 계산한 영역이 상식적인 범위를 벗어나면
+# (예: 화면 속 엉뚱한 텍스트를 라벨/제목으로 오인식해서 좌표가 통째로 틀어진 경우)
+# 적용하지 않고 거부한다. 기준은 일부러 타이트하게 잡음 — 정상적인 해상도/창
+# 배치 차이는 이 정도로 크게 벌어지지 않고, 오히려 잘못된 값이 그대로 적용돼서
+# 화면 전체를 뒤덮는 부작용이 훨씬 크기 때문.
+_REGION_SANITY_POS_TOLERANCE = 0.06      # 기본 위치 대비 ±6%p까지만 허용
+_REGION_SANITY_SIZE_RATIO = (0.7, 1.35)  # 기본 크기 대비 70%~135%까지만 허용 (OCR 실측 바운딩박스 기반이라 텍스트 내용에 따라 약간의 흔들림이 있음)
+# 🏷️ [라벨 폭 전용 완화] arcana_label의 width만은 실제 라벨 글자 수(아르카나=4자 vs 여정/훈련=2자)에
+# 직접 비례해서, 어떤 라벨이 떴는지에 따라 정상적으로도 폭이 최대 2배 가까이 달라질 수 있다.
+# (반면 event_title의 width는 글자 높이에서만 파생되고, card_art의 width는 아예 고정값이라
+# 텍스트 내용과 무관하게 항상 일정하므로 이 둘은 기존의 타이트한 기준을 그대로 유지한다.)
+_REGION_SANITY_LABEL_WIDTH_RATIO = (0.35, 1.3)
+
+def _is_region_frac_sane(frac, default_frac, size_ratio=None):
+    top, left = frac.get("top", -1), frac.get("left", -1)
+    width, height = frac.get("width", -1), frac.get("height", -1)
+
+    if not (0.0 <= top <= 1.0 and 0.0 <= left <= 1.0):
+        return False, f"top/left가 화면 범위를 벗어남 (top={top:.3f}, left={left:.3f})"
+    if width <= 0 or height <= 0:
+        return False, f"width/height가 0 이하 (width={width:.3f}, height={height:.3f})"
+    if top + height > 1.05 or left + width > 1.05:
+        return False, f"영역이 화면 하단/우측 밖으로 벗어남 (top+height={top + height:.3f}, left+width={left + width:.3f})"
+
+    dt, dl = default_frac["top"], default_frac["left"]
+    dw, dh = default_frac["width"], default_frac["height"]
+    width_min, width_max = size_ratio or _REGION_SANITY_SIZE_RATIO
+    height_min, height_max = _REGION_SANITY_SIZE_RATIO
+
+    if abs(top - dt) > _REGION_SANITY_POS_TOLERANCE or abs(left - dl) > _REGION_SANITY_POS_TOLERANCE:
+        return False, (f"기본 위치 대비 편차가 너무 큼 (top: {dt:.3f}→{top:.3f}, "
+                        f"left: {dl:.3f}→{left:.3f}, 허용치 ±{_REGION_SANITY_POS_TOLERANCE})")
+    if not (dw * width_min <= width <= dw * width_max) or not (dh * height_min <= height <= dh * height_max):
+        return False, (f"기본 크기 대비 편차가 너무 큼 (width: {dw:.3f}→{width:.3f}, "
+                        f"height: {dh:.3f}→{height:.3f}, 허용 비율 width {width_min}~{width_max}배 / height {height_min}~{height_max}배)")
+
+    return True, None
+
+_KNOWN_JOURNEY_LABELS = ("아르카나 이벤트", "여정 이벤트", "훈련 이벤트")
+_LABEL_FUZZY_CUTOFF = 0.55
+
+def _label_fuzzy_score(text):
+    """OCR이 읽은 텍스트가 3종 라벨(아르카나/여정/훈련 이벤트) 중 하나와 얼마나 비슷한지 계산.
+    보정 단계에선 어떤 라벨인지 정확히 구분할 필요가 없고 위치만 알면 되므로,
+    셋 중 가장 비슷한 값과의 유사도만 반환한다. 단, '이벤트'처럼 세 라벨에 공통으로
+    들어가는 짧은 조각만 읽혔을 땐 실제로 뭘 오인식한 건지 알 수 없어 오히려 화면의
+    다른 엉뚱한 '이벤트' 텍스트를 잘못 붙잡을 수 있으므로, 공백 제외 4자 이하는 애초에
+    비교하지 않는다 (실제 라벨은 짧아도 6자 이상이라 안전한 하한선)."""
+    text = text.strip()
+    if len(text.replace(" ", "")) < 5:
+        return 0.0
+    return max(difflib.SequenceMatcher(None, text, cand).ratio() for cand in _KNOWN_JOURNEY_LABELS)
+
 def try_auto_calibrate_regions(reader, game_rect):
     global _auto_calibration_done, REGION_FRACTIONS, _last_calibrated_rect, _calibration_samples
     try:
         sct = mss.MSS()
+        # 🪶 [스캔 낭비 축소] 상단 HUD("목표까지", "평가전 승리", "N월 초순" 등)는 라벨보다
+        # 훨씬 위쪽에 고정적으로 나오는 요소라 매번 같이 읽을 필요가 없음. 다만 창 크기가
+        # 다양할 수 있으니 기본 라벨 위치 추정치(arcana_label 기본 top=0.170)보다 확실히
+        # 위쪽인 12%까지만 건너뛰어 안전 마진을 둔다.
+        _SCAN_TOP_SKIP = 0.12
         scan_region = {
-            "top": game_rect["top"],
+            "top": game_rect["top"] + int(game_rect["height"] * _SCAN_TOP_SKIP),
             "left": game_rect["left"],
             "width": int(game_rect["width"] * 0.45),
-            "height": int(game_rect["height"] * 0.42),
+            "height": int(game_rect["height"] * (0.42 - _SCAN_TOP_SKIP)),
         }
         img = np.array(sct.grab(scan_region))
         gray = cv2.cvtColor(img, cv2.COLOR_BGRA2GRAY)
@@ -568,15 +652,23 @@ def try_auto_calibrate_regions(reader, game_rect):
 
         label_box = None
         for bbox, text, conf in results:
-            if "아르카나" in text or "여정" in text:
+            is_exact = "아르카나" in text or "여정" in text or "훈련" in text
+            fuzzy_score = 0.0 if is_exact else _label_fuzzy_score(text)
+            if is_exact or fuzzy_score >= _LABEL_FUZZY_CUTOFF:
                 bx1, by1 = bbox[0]
                 if by1 < scan_region["height"] * 0.06:
                     print(f"🪟 [자동 보정] '{text}' 후보는 화면 맨 위쪽이라 저희 앱 자신의 UI로 의심 → 건너뜀")
                     continue
+                if not is_exact:
+                    print(f"🪟 [자동 보정] '{text}' 텍스트가 정확히 일치하진 않지만 라벨과 유사해 인정함 (유사도 {fuzzy_score:.2f})")
                 label_box = bbox
                 break
         if not label_box:
-            print("🪟 [자동 보정] 화면에서 '아르카나 이벤트'/'여정 이벤트' 글자를 못 찾음 → 기본값 사용")
+            if results:
+                _raw_texts = ", ".join(f"'{t}'({c:.2f})" for _, t, c in results)
+                print(f"🪟 [자동 보정] 화면에서 '아르카나 이벤트'/'여정 이벤트'/'훈련 이벤트' 글자를 못 찾음 (대신 인식된 것: {_raw_texts}) → 기본값 사용")
+            else:
+                print("🪟 [자동 보정] 스캔 영역에서 텍스트가 아예 하나도 인식되지 않음 → 기본값 사용")
             return False
 
         lx1, ly1 = label_box[0]
@@ -589,11 +681,21 @@ def try_auto_calibrate_regions(reader, game_rect):
             bx1, by1 = bbox[0]
             bx2, by2 = bbox[2]
             bh = by2 - by1
-            if by1 > ly1 and by1 < ly2 + label_h * 5 and bh > label_h * 1.15:
+            # ⚠️ [임계값 근접 실패 보정] 실측 UI 비율은 label_h 대비 title_h가 약 1.14배 정도라
+            # 기존 1.15배 기준은 OCR 측정 오차 몇 픽셀 차이로도 계속 턱걸이 탈락하는 문제가 있었음.
+            # 1.05배로 낮춰서 여유를 두되, 라벨과 같은 크기의 텍스트(오탐)는 여전히 걸러낸다.
+            if by1 > ly1 and by1 < ly2 + label_h * 5 and bh > label_h * 1.05:
                 if title_box is None or by1 < title_box[0][1]:
                     title_box = bbox
         if not title_box:
-            print("🪟 [자동 보정] 라벨은 찾았지만 이벤트 제목으로 보이는 큰 글씨를 못 찾음 → 기본값 사용")
+            if len(results) > 1:
+                _raw_texts = ", ".join(
+                    f"'{t}'(y={bbox[0][1]:.0f}, h={(bbox[2][1]-bbox[0][1]):.0f})" for bbox, t, c in results
+                )
+                print(f"🪟 [자동 보정] 라벨은 찾았음(label_h={label_h:.0f}, 제목 조건: label_h*1.15={label_h*1.15:.0f} 이상) "
+                      f"이지만 조건에 맞는 큰 글씨가 없음 (스캔된 전체 텍스트: {_raw_texts}) → 기본값 사용")
+            else:
+                print("🪟 [자동 보정] 라벨은 찾았지만 스캔 영역에서 그 외 텍스트가 아예 인식되지 않음 → 기본값 사용")
             return False
 
         tx1, ty1 = title_box[0]
@@ -629,9 +731,24 @@ def try_auto_calibrate_regions(reader, game_rect):
             lx1_px - title_h_px * 0.3, ly1_px + label_h_px * 1.1,
             title_h_px * 11.0, title_h_px * 1.9)
 
-        card_left_px = lx1_px - gw * 0.067
+        card_left_px = lx1_px - gw * 0.070
         card_top_px = ly1_px - gh * 0.0556
         card_region_frac = px_to_frac(card_left_px, card_top_px, gw * 0.051, gh * 0.160)
+
+        _sanity_checks = [
+            ("arcana_label", label_region_frac, _DEFAULT_ARCANA_LABEL_FRACTION),
+            ("event_title", title_region_frac, _DEFAULT_EVENT_TITLE_FRACTION),
+        ]
+        if not _card_region_manual_override:
+            _sanity_checks.append(("card_art", card_region_frac, _DEFAULT_CARD_ART_FRACTION))
+
+        for _region_name, _region_frac, _region_default in _sanity_checks:
+            _width_ratio = _REGION_SANITY_LABEL_WIDTH_RATIO if _region_name == "arcana_label" else None
+            _ok, _reason = _is_region_frac_sane(_region_frac, _region_default, size_ratio=_width_ratio)
+            if not _ok:
+                print(f"🛑 [자동 보정 거부] '{_region_name}' 계산 결과가 상식적인 범위를 벗어나 적용을 취소함 — {_reason}")
+                _calibration_samples = []
+                return False
 
         REGION_FRACTIONS["arcana_label"] = label_region_frac
         REGION_FRACTIONS["event_title"] = title_region_frac
@@ -715,6 +832,7 @@ class CardPreviewOverlay(QWidget):
 
         self.reposition()
         self.show()
+        exclude_window_from_capture(self)
 
     def reposition(self):
         game_rect = get_game_window_rect()
@@ -756,6 +874,7 @@ class RegionDebugOverlay(QWidget):
         self.setGeometry(full_rect)
         self.regions = {}  
         self.show()
+        exclude_window_from_capture(self)
 
     def refresh(self):
         colors = {
@@ -2791,7 +2910,7 @@ class MouseHoverManager(QWidget):
         self.card_art_ocr = EventCardArtThread(
             self.screen_w, self.screen_h,
             lambda: self._card_search_pool(),
-            pause_getter=lambda: self.is_searching or not self.is_arcana_event_screen or self._is_paused(),
+            pause_getter=lambda: self.is_searching or not self.is_in_journey or not self.is_arcana_event_screen or self._is_paused(),
             lenient_getter=lambda: self._is_force_confirm_active(),
             low_spec_getter=lambda: self.is_low_spec_mode
         )
@@ -2989,6 +3108,24 @@ class MouseHoverManager(QWidget):
 
     def reset_tracking_state(self, greeting_mode="none"):
         print("🔄 [수동 새로고침] 상단 배지 클릭 → 추적 중이던 이벤트/카드 정보 초기화")
+
+        # 🎯 [영역 자동 보정 초기화] 접었다 펼 때(수동 클릭 토글, 게임 감지 시 자동 펼침 둘 다 여기로 옴)
+        # 그동안 자동 보정으로 틀어져 있던 제목/라벨 캡처 영역을 기본값으로 되돌리고, 자동 보정을
+        # 처음부터 다시 시도하게 한다. 자동 보정이 한 번 잘못된 위치를 학습해버리면 이후 계속 그
+        # 틀린 위치를 기준으로 삼아서 스스로는 못 벗어나는 경우가 있는데, 유저가 수동으로 리셋할
+        # 수 있는 탈출구를 만들어주는 목적.
+        global _auto_calibration_done, _auto_calibration_attempts, _last_calibrated_rect, _calibration_samples
+        if _auto_calibration_done or _calibration_samples:
+            print("🎯 [영역 보정 초기화] 제목/라벨 캡처 영역을 기본값으로 되돌리고 자동 재보정을 다시 시작합니다.")
+        _auto_calibration_done = False
+        _auto_calibration_attempts = 0
+        _last_calibrated_rect = None
+        _calibration_samples = []
+        REGION_FRACTIONS["event_title"] = dict(_DEFAULT_EVENT_TITLE_FRACTION)
+        REGION_FRACTIONS["arcana_label"] = dict(_DEFAULT_ARCANA_LABEL_FRACTION)
+        # card_art는 별도의 "카드 인식 영역 직접 조정" 수동 설정(_card_region_manual_override)이
+        # 있는 영역이라 이 초기화 대상에서 제외한다 — 유저가 직접 맞춰둔 값을 건드리지 않기 위함.
+
         self.active_choice_zones = []
         self.current_event_options = []
         self.current_event_title = ""
@@ -3451,7 +3588,7 @@ class MouseHoverManager(QWidget):
             self.known_card_names.add(c['name'])
 
         self.page_loaded = True
-        self.is_in_journey = True
+        self.is_in_journey = False
 
         self.arcana_indexer = ArcanaCardIndexThread(cards=result['cards'])
         self.arcana_indexer.finished_signal.connect(self.on_arcana_indexed)
@@ -4011,6 +4148,22 @@ class MouseHoverManager(QWidget):
 
 
 if __name__ == '__main__':
+    # 🖥️ [DPI 스케일링 대응] Windows 디스플레이 배율이 100%가 아닌 경우(125%, 150% 등 —
+    # 특히 고해상도 노트북/모니터 유저에게 흔함), DPI-aware 선언이 없으면 Windows가 이
+    # 프로세스를 "구식 프로그램"으로 보고 좌표를 가짜로 축소해서 넘겨준다. 그러면 mss가
+    # 캡처하는 실제 물리 픽셀 좌표와 Qt가 인식하는 화면 크기(screen_w/screen_h)가 서로
+    # 어긋나서, 그 비율로 계산되는 카드/제목/선택지 캡처 영역이 통째로 틀어질 수 있다.
+    # QApplication을 만들기 전에 프로세스를 Per-Monitor DPI Aware로 선언해두면 Windows가
+    # 더 이상 좌표를 축소해서 주지 않으므로, mss와 Qt가 항상 같은 좌표계(실제 물리 픽셀)를
+    # 보게 되어 이 어긋남 자체가 원천적으로 발생하지 않는다.
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PROCESS_PER_MONITOR_DPI_AWARE (Windows 8.1+)
+    except Exception:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()  # Windows 7 폴백 (System DPI Aware)
+        except Exception:
+            pass
+
     # 🔒 [중복 실행 방지] 이미 켜져 있으면 새 인스턴스는 알림만 띄우고 바로 종료
     if not ensure_single_instance():
         try:
