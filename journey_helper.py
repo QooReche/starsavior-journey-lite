@@ -1,5 +1,6 @@
 import sys
 import os
+import traceback
 
 # ⚠️ [PyTorch + OpenCV OpenMP 충돌 방지] torch와 opencv가 각자 다른 OpenMP 런타임 DLL을
 # 들고 있어서, exe로 패키징하면 둘 다 같은 폴더에 들어가며 충돌해 "DLL 초기화 루틴을
@@ -62,8 +63,8 @@ def _order_corner_points(pts):
 def _detect_card_corners(cv_bgr_img):
     try:
         hsv = cv2.cvtColor(cv_bgr_img, cv2.COLOR_BGR2HSV)
-        lower = np.array([5, 40, 25])
-        upper = np.array([40, 255, 225])
+        lower = np.array([8, 60, 30])
+        upper = np.array([35, 255, 200])
         mask = cv2.inRange(hsv, lower, upper)
         mask = cv2.dilate(mask, np.ones((3, 3), np.uint8), iterations=2)
         mask = cv2.erode(mask, np.ones((3, 3), np.uint8), iterations=1)
@@ -75,30 +76,28 @@ def _detect_card_corners(cv_bgr_img):
         best, best_area = None, 0
         rejected_by_area, rejected_by_aspect = 0, 0
         rejected_aspect_values = []
-        rejected_area_ratios = []
         for c in contours:
             area = cv2.contourArea(c)
-            if area < img_area * 0.06 or area > img_area * 0.80:
+            if area < img_area * 0.08 or area > img_area * 0.75:
                 rejected_by_area += 1
-                rejected_area_ratios.append(round(area / img_area * 100, 1))
                 continue
             rect = cv2.minAreaRect(c)
             rw, rh = rect[1]
             if rw == 0 or rh == 0: continue
             aspect = max(rw, rh) / min(rw, rh)
-            if not (1.1 <= aspect <= 2.9):
+            if not (1.2 <= aspect <= 2.6):
                 rejected_by_aspect += 1
                 rejected_aspect_values.append(round(aspect, 2))
                 continue
             fill_ratio = area / (rw * rh) if (rw * rh) > 0 else 0
-            if fill_ratio < 0.35: continue
+            if fill_ratio < 0.45: continue
             if rw > w * 0.97 or rh > h * 0.97: continue
 
             if area > best_area:
                 best_area = area
                 best = rect
         if best is None:
-            reason = f"조건 통과한 후보 없음 (면적탈락:{rejected_by_area} 면적비{rejected_area_ratios}%, 비율탈락:{rejected_by_aspect} {rejected_aspect_values}, 전체윤곽선:{len(contours)}, 허용범위:6~80%)"
+            reason = f"조건 통과한 후보 없음 (면적탈락:{rejected_by_area}, 비율탈락:{rejected_by_aspect} {rejected_aspect_values}, 전체윤곽선:{len(contours)})"
             return None, reason
         box = cv2.boxPoints(best)
         raw_min_x, raw_max_x = box[:, 0].min(), box[:, 0].max()
@@ -373,7 +372,7 @@ def ensure_single_instance():
 # ----------------------------------------------------
 # ⚙️ 설정 저장/불러오기 (상단 배지 우클릭 → 설정창)
 # ----------------------------------------------------
-APP_VERSION = "1.0.2"
+APP_VERSION = "1.0.4"
 
 DEFAULT_SETTINGS = {
     "low_spec_mode": False,  # ⚡ [최적화/CPU 절약 모드] 기본값 OFF
@@ -391,6 +390,10 @@ DEFAULT_SETTINGS = {
     "user_birthday_month": 0,
     "user_birthday_day": 1,
     "custom_birthday_messages": [],
+    "try_gpu_ocr": True,  # 기존 방식(GPU 우선 시도, 실패 시 CPU 폴백) 유지가 기본값.
+                            # ⚠️ 드물게 게임이 GPU를 붙잡은 타이밍과 겹쳐 드라이버 레벨에서
+                            # 죽는(=프로그램이 조용히 종료되는) 사례가 보고됨 — 그런 증상이
+                            # 있으면 설정에서 이 옵션을 꺼서 CPU 강제로 우회 가능.
     "status_badge_locked": True,
     "auto_expand_on_launch": False,
     "auto_expand_include_hidden": False,
@@ -427,6 +430,32 @@ def get_settings_path():
 
 def get_log_path():
     return os.path.join(get_settings_dir(), "log.txt")
+
+def get_crash_log_path():
+    return os.path.join(get_settings_dir(), "crash_log.txt")
+
+# 🩹 [크래시 로깅] PyQt5는 5.5부터 슬롯(타이머 콜백 등) 안에서 잡히지 않은 예외가 나면
+# 기본적으로 크래시 창도 없이 프로세스를 즉시 abort() 시켜버린다. sys.excepthook을 직접
+# 설치해두면 이 기본 동작이 비활성화되어, 앱이 죽는 대신 예외 내용이 crash_log.txt에 남고
+# 프로그램은 계속 살아있게 된다. "file_logging" 설정과 무관하게 항상 켜둔다 —
+# 죽는 순간의 원인을 못 남기면 진단 자체가 불가능하기 때문.
+def install_crash_logger():
+    crash_log_path = get_crash_log_path()
+
+    def _log_uncaught_exception(exc_type, exc_value, exc_tb):
+        try:
+            with open(crash_log_path, "a", encoding="utf-8") as f:
+                f.write(f"\n===== [예외 발생] {time.strftime('%Y-%m-%d %H:%M:%S')} =====\n")
+                traceback.print_exception(exc_type, exc_value, exc_tb, file=f)
+        except Exception:
+            pass
+        try:
+            traceback.print_exception(exc_type, exc_value, exc_tb)
+        except Exception:
+            pass
+
+    sys.excepthook = _log_uncaught_exception
+    return crash_log_path
 
 def load_settings():
     path = get_settings_path()
@@ -1156,6 +1185,14 @@ class SettingsDialog(QDialog):
         low_spec_hint.setWordWrap(True)
         layout.addWidget(low_spec_hint)
 
+        self.chk_gpu_ocr = QCheckBox("OCR 모델 로딩 시 GPU 가속 시도 (기본: 켜짐)")
+        self.chk_gpu_ocr.setChecked(self._settings.get("try_gpu_ocr", True))
+        layout.addWidget(self.chk_gpu_ocr)
+        gpu_ocr_hint = QLabel("게임 감지 시 OCR 모델을 GPU로 먼저 로딩합니다. 대부분 환경에서 문제 없지만,\n드물게 일부 환경(그래픽 드라이버/VRAM 여유 부족 등)에서는 게임과 GPU를 동시에\n잡으려다 프로그램이 예고 없이 종료될 수 있습니다. 그런 증상이 있다면 꺼보세요.")
+        gpu_ocr_hint.setStyleSheet("color: #b0b0b0; font-size: 11px;")
+        gpu_ocr_hint.setWordWrap(True)
+        layout.addWidget(gpu_ocr_hint)
+
         # --------- 시작 ---------
         layout.addWidget(_section_label("🚀 시작"))
 
@@ -1457,6 +1494,7 @@ class SettingsDialog(QDialog):
 
     def _persist_settings(self):
         self._settings["low_spec_mode"] = self.chk_low_spec.isChecked()
+        self._settings["try_gpu_ocr"] = self.chk_gpu_ocr.isChecked()
         self._settings["file_logging"] = self.chk_log.isChecked()
         self._settings["show_card_preview"] = self.chk_card_preview.isChecked()
         self._settings["show_region_debug"] = self.chk_region_debug.isChecked()
@@ -1596,7 +1634,7 @@ class EventTitleOCRThread(QThread):
 
     model_loading_started = pyqtSignal()
 
-    def __init__(self, screen_w, screen_h, pause_getter=None, low_spec_getter=None):
+    def __init__(self, screen_w, screen_h, pause_getter=None, low_spec_getter=None, gpu_ocr_getter=None):
         super().__init__()
         self.reader = None
         self.sct = mss.MSS()
@@ -1605,15 +1643,9 @@ class EventTitleOCRThread(QThread):
         self.empty_count = 0
         self.pending_event = ""
         self.pending_count = 0
+        self.gpu_ocr_getter = gpu_ocr_getter or (lambda: True)
         self.pause_getter = pause_getter or (lambda: False)
         self.low_spec_getter = low_spec_getter or (lambda: False)
-        # ⚠️ [기본값=아르카나] 새 이벤트가 뜬 직후, 아직 라벨 OCR이 '아르카나'인지
-        # '여정 이벤트'인지 한 번도 못 읽은 짧은 구간에는 일단 True(아르카나)로 간주한다.
-        # 그래서 카드가 아예 없는 여정 이벤트라도 시작 직후 몇 초간은 카드 스캔 스레드가
-        # 계속 켜져 있어 색상 기반 카드 감지 실패 로그(윤곽선 없음/면적탈락 등)가 정상적으로
-        # 찍힐 수 있다 — 실제 오탐이 아니라 "라벨을 아직 못 읽어서" 생기는 과도기 로그다.
-        # 아래 라벨 인식 루프에서 '여정 이벤트' 문구가 잡히는 순간 False로 바뀌며
-        # → run() 루프의 pause_getter가 이를 확인해 카드 스캔을 실제로 멈춘다.
         self.is_arcana_label = True 
         self._last_label_log = 0
         self._last_label_raw_log = 0
@@ -1652,9 +1684,16 @@ class EventTitleOCRThread(QThread):
             if self.reader is None:
                 self.model_loading_started.emit()
                 print("🪶 [지연 로딩] 게임 감지됨 → 제목 인식용 OCR 모델 로딩 시작...")
-                try:
-                    self.reader = easyocr.Reader(['ko'], gpu=True)
-                except Exception:
+                # ⚠️ [GPU 크래시 이슈] 게임이 전체화면으로 GPU를 붙잡고 있는 바로 그 타이밍에
+                # CUDA 컨텍스트를 새로 잡으려다 드라이버 레벨에서 죽는(=앱 전체가 조용히
+                # 사라지는) 사례가 있어 기본은 CPU. 설정에서 GPU 가속을 켠 유저만 시도하고,
+                # 실패하면 CPU로 폴백한다 (단, 드라이버 레벨 크래시는 이 try/except로도 못 막음).
+                if self.gpu_ocr_getter():
+                    try:
+                        self.reader = easyocr.Reader(['ko'], gpu=True)
+                    except Exception:
+                        self.reader = easyocr.Reader(['ko'], gpu=False)
+                else:
                     self.reader = easyocr.Reader(['ko'], gpu=False)
                 print("🪶 [지연 로딩] 제목 인식용 OCR 모델 로딩 완료")
 
@@ -1758,15 +1797,6 @@ class EventTitleOCRThread(QThread):
                         label_text = re.sub(r'\s+', ' ', label_text)
                         self._cached_label_text = label_text
 
-                    # 🏷️ [아르카나 vs 여정 이벤트 판별] 이 라벨 문구가 카드 스캔 스레드의
-                    # on/off 스위치다. '아르카나' 계열 문구가 잡히면 카드가 있는 이벤트로
-                    # 보고 스캔을 켜고(is_arcana_label=True), 그 외 문구(예: '여정 이벤트')가
-                    # 잡히면 카드 없는 이벤트로 보고 끈다(False). 이 값은
-                    # arcana_label_detected 시그널로 전달되어 카드 스캔 스레드의
-                    # pause_getter(= not self.is_arcana_event_screen)에서 실제 정지 여부를 결정한다.
-                    # 단, 이벤트 전환 직후 라벨을 아직 못 읽은 짧은 순간에는 위 __init__ 기본값
-                    # (True)이 그대로 유지되므로, 그 구간의 카드 감지 실패 로그는 "카드 없는
-                    # 여정 이벤트라서" 나는 게 맞고 별도 버그가 아니다.
                     now_l = time.time()
                     _ARCANA_VARIANTS = ("아르카나", "알카나", "알카", "아드가나", "아드카나", "아르가나")
                     is_arcana_hit = any(v in label_text for v in _ARCANA_VARIANTS)
@@ -1936,13 +1966,14 @@ class EventCardArtThread(QThread):
 class ChoiceScannerThread(QThread):
     choices_scanned = pyqtSignal(list)
 
-    def __init__(self, screen_w, pause_getter=None, options_getter=None, low_spec_getter=None):
+    def __init__(self, screen_w, pause_getter=None, options_getter=None, low_spec_getter=None, gpu_ocr_getter=None):
         super().__init__()
         self.reader = None
         self.sct = mss.MSS()
         self.screen_w = screen_w
         self.pause_getter = pause_getter or (lambda: False)
         self.options_getter = options_getter or (lambda: [])
+        self.gpu_ocr_getter = gpu_ocr_getter or (lambda: True)
         self.low_spec_getter = low_spec_getter or (lambda: False)
         self.has_scanned_current_event = False
         self._last_proj_fail_log = 0
@@ -1983,23 +2014,20 @@ class ChoiceScannerThread(QThread):
             if _std < 8:
                 return None, f"영역 전체가 균일함(대비 낮음, std={_std:.1f}) → 선택지 UI가 아닌 것으로 추정"
 
-            # ⚡ [행별 최빈값 기반 검출 - v2] 반투명 선택지 패널 뒤로 하늘/건물 등 배경이
-            # 그대로 비치기 때문에, 크롭 전체에서 뽑은 "전역" 최빈값 하나로는 위쪽 옵션
-            # (밝은 하늘이 비침)과 아래쪽 옵션(어두운 건물이 비침)의 실제 박스 톤이 서로
-            # 달라서 둘 다 정확히 못 맞는 문제가 있었다 (실제 게임 스크린샷으로 확인:
-            # 4개 선택지 중 우연히 전역 최빈값과 맞아떨어진 맨 아래 1개만 검출됨).
-            # → 행(row)마다 "그 행 자신의" 최빈값을 기준으로 삼아, 행별로 뒤에 비치는
-            # 배경이 달라도 각 행 내에서 텍스트(배경과 크게 다른 톤)만 골라낸다.
-            _row_box_tone = np.array([
-                np.argmax(np.bincount(row, minlength=256)) for row in text_strip
-            ], dtype=np.int16)
-            diff = np.abs(text_strip.astype(np.int16) - _row_box_tone[:, None])
+            # ⚡ [최빈값 기반 검출] 고정 밝기(110)나 Otsu 2분할 대신, 크롭 영역에서 가장 많이
+            # 나오는 톤(=반투명 선택지 박스의 배경색)을 기준으로 삼는다. 캡처 영역을 이미
+            # 박스 위치에 맞춰 좁혀뒀기 때문에 박스 배경이 크롭의 대부분을 차지하므로,
+            # 이 톤에서 크게 벗어나는 픽셀(=글자)이 일정 비율 섞인 행만 "텍스트 행"으로 판단.
+            # 배경이 낮/밤 어느 쪽으로 바뀌어도(박스가 배경보다 밝든 어둡든) 동일하게 동작한다.
+            _hist = np.bincount(text_strip.flatten(), minlength=256)
+            box_fill = int(np.argmax(_hist))
+            diff = np.abs(text_strip.astype(np.int16) - box_fill)
             row_box_ratio = (diff < 15).sum(axis=1) / float(text_strip.shape[1])
             row_text_ratio = (diff > 50).sum(axis=1) / float(text_strip.shape[1])
-            active_rows = (row_box_ratio > 0.22) & (row_text_ratio > 0.007)
+            active_rows = (row_box_ratio > 0.3) & (row_text_ratio > 0.02)
 
             if not active_rows.any():
-                return None, f"행별 배경톤 대비 텍스트로 볼 만한 행 없음 (최대 텍스트 비율={row_text_ratio.max()*100:.1f}%, 기준 0.7%, 최대 박스비율={row_box_ratio.max()*100:.1f}%, 기준 22%)"
+                return None, f"박스 배경톤({box_fill}) 대비 텍스트로 볼 만한 행 없음 (최대 텍스트 비율={row_text_ratio.max()*100:.1f}%)"
 
             rects = []
             in_block = False
@@ -2011,84 +2039,35 @@ class ChoiceScannerThread(QThread):
                     start_y = y
                 elif not is_active and in_block:
                     in_block = False
-                    if (y - start_y) >= 5:
+                    if (y - start_y) >= 10:
                         rects.append((start_y, y))
-            if in_block and (h_img - start_y) >= 5:
+            if in_block and (h_img - start_y) >= 10:
                 rects.append((start_y, h_img))
 
-            # ⚡ [그룹 단위 병합 - 구성원 보존] 병합 간격(14px) 안에 든 조각들을 그룹으로
-            # 묶되, 나중에 다시 쪼갤 수 있도록 그룹의 구성원(raw rects)을 그대로 갖고 있는다.
-            # 실제 게임 화면에서 옵션 하나의 블록 높이가 44~93px로 편차가 커서, 병합
-            # 간격을 더 좁히면 반대로 옵션 하나가 여러 조각으로 쪼개지는 문제가 생긴다.
-            groups = []
+            merged = []
             for r in rects:
-                if not groups:
-                    groups.append([r])
+                if not merged:
+                    merged.append(r)
                 else:
-                    prev_end = groups[-1][-1][1]
-                    if r[0] <= prev_end + 14:
-                        groups[-1].append(r)
+                    prev_y1, prev_y2 = merged[-1]
+                    if r[0] <= prev_y2 + 22:
+                        merged[-1] = (prev_y1, max(prev_y2, r[1]))
                     else:
-                        groups.append([r])
+                        merged.append(r)
 
-            groups = [g for g in groups if (g[-1][1] - g[0][0]) >= 6]
-            merged = [(g[0][0], g[-1][1]) for g in groups]
-
-            # ⚡ [부족분 재분할] 선택지 개수보다 병합된 블록이 적으면(=일부가 억지로
-            # 합쳐졌으면), 각 그룹 내부에서 조각 사이 간격이 가장 큰 "이음매"부터
-            # 우선적으로 다시 잘라낸다 — 간격이 클수록 원래 별개였을 확률이 높으므로
-            # 전역 임계값을 더 좁히는 것보다 안전하게 부족분만큼만 복원할 수 있다.
-            if len(merged) < len(options):
-                deficit = len(options) - len(merged)
-                seams = []
-                for gi, g in enumerate(groups):
-                    for mi in range(1, len(g)):
-                        gap = g[mi][0] - g[mi - 1][1]
-                        seams.append((gap, gi, mi))
-                seams.sort(key=lambda s: -s[0])
-                splits_by_group = {}
-                for gap, gi, mi in seams[:deficit]:
-                    splits_by_group.setdefault(gi, []).append(mi)
-
-                new_merged = []
-                for gi, g in enumerate(groups):
-                    split_points = sorted(splits_by_group.get(gi, []))
-                    start = 0
-                    for sp in split_points:
-                        sub = g[start:sp]
-                        new_merged.append((sub[0][0], sub[-1][1]))
-                        start = sp
-                    sub = g[start:]
-                    new_merged.append((sub[0][0], sub[-1][1]))
-                new_merged.sort(key=lambda r: r[0])
-                merged = new_merged
+            merged = [r for r in merged if (r[1] - r[0]) >= 12]
 
             if len(merged) == len(options):
                 if base_top is not None and base_h is not None:
-                    # ⚡ [정합성 검사 - v2: 전체 스팬 기준] 기존엔 옵션마다 고정 간격
-                    # (pitch_px)으로 정확히 배치되어 있다고 가정하고 인덱스 하나하나를
-                    # 검사했는데, 실제로는 2줄로 줄바꿈되는 선택지가 있으면 그 아래
-                    # 옵션들이 통째로 밀려서 개별 간격이 62~89px처럼 들쭉날쭉해진다
-                    # (실측 로그로 확인). 반면 "첫 옵션~마지막 옵션 전체 거리"는 옵션
-                    # 개수 × 평균 간격과 거의 정확히 맞아떨어지므로, 개별 간격이 아니라
-                    # 전체 스팬 하나만 검사해서 텍스트 줄바꿈에 흔들리지 않게 한다.
                     bottom_anchor_y = base_top + int(base_h * 0.724)
                     pitch_px = int(base_h * 0.07037)
+                    y_sanity_tolerance = max(12, int(base_h * 0.015))
                     count = len(options)
-
-                    first_cy = monitor_top + (merged[0][0] + merged[0][1]) // 2
-                    last_cy = monitor_top + (merged[-1][0] + merged[-1][1]) // 2
-                    actual_span = last_cy - first_cy
-                    expected_span = (count - 1) * pitch_px
-                    span_tolerance = max(30, int(expected_span * 0.45))
-                    if abs(actual_span - expected_span) > span_tolerance:
-                        return None, f"블록 {len(merged)}개는 찾았지만 전체 스팬이 예상과 어긋남(실측:{actual_span}px, 예상:{expected_span}px, 허용:±{span_tolerance}px)"
-
-                    # 완전히 엉뚱한 영역(크롭 오정렬 등)을 잡은 경우까지 걸러내기 위해,
-                    # 맨 아래 블록 위치만 느슨하게(±60px) 기준 앵커와 대조한다.
-                    anchor_tolerance = max(40, int(base_h * 0.055))
-                    if abs(last_cy - bottom_anchor_y) > anchor_tolerance:
-                        return None, f"블록 {len(merged)}개는 찾았지만 기준 위치와 크게 어긋남(맨 아래 블록:{last_cy}, 기준:{bottom_anchor_y}, 허용:±{anchor_tolerance}px)"
+                    for i, (y1, y2) in enumerate(merged):
+                        center_y_abs = monitor_top + (y1 + y2) // 2
+                        expected_cy = bottom_anchor_y - (count - 1 - i) * pitch_px
+                        if abs(center_y_abs - expected_cy) > y_sanity_tolerance:
+                            return None, f"블록 {len(merged)}개는 찾았지만 예상 Y좌표와 어긋남(임계값 {y_sanity_tolerance}px 초과)"
 
                 zones = []
                 btn_half = 34
@@ -2101,8 +2080,7 @@ class ChoiceScannerThread(QThread):
                         'text': options[i].get('choice', '')
                     })
                 return zones, "성공"
-            _pre_merge_count = len(rects)
-            return None, f"검출된 텍스트 블록 {len(merged)}개 ≠ 선택지 {len(options)}개 (병합전:{_pre_merge_count}개, 블록범위={merged}, 최대텍스트비율={row_text_ratio.max()*100:.1f}%, 최대박스비율={row_box_ratio.max()*100:.1f}%)"
+            return None, f"검출된 텍스트 블록 {len(merged)}개 ≠ 선택지 {len(options)}개"
         except Exception as e:
             return None, f"예외 발생: {e}"
 
@@ -2120,9 +2098,13 @@ class ChoiceScannerThread(QThread):
 
             if self.reader is None:
                 print("🪶 [지연 로딩] 게임 감지됨 → 선택지 정밀 스캔용 OCR 모델 로딩 시작...")
-                try:
-                    self.reader = easyocr.Reader(['ko'], gpu=True)
-                except Exception:
+                # ⚠️ [GPU 크래시 이슈] 위 제목 인식 스레드와 동일한 이유 — 설정에서 켠 유저만 시도.
+                if self.gpu_ocr_getter():
+                    try:
+                        self.reader = easyocr.Reader(['ko'], gpu=True)
+                    except Exception:
+                        self.reader = easyocr.Reader(['ko'], gpu=False)
+                else:
                     self.reader = easyocr.Reader(['ko'], gpu=False)
                 print("🪶 [지연 로딩] 선택지 정밀 스캔용 OCR 모델 로딩 완료")
 
@@ -2235,11 +2217,7 @@ class ChoiceScannerThread(QThread):
                 expected_cy_by_option_id = {}
                 for idx, opt in enumerate(options):
                     expected_cy_by_option_id[id(opt)] = bottom_anchor_y - (count_opts - 1 - idx) * est_pitch_px
-                # ⚡ [보조 안전장치] 여기는 이미 OCR 텍스트 내용으로 1차 확인이 끝난 뒤라
-                # (find_matching_option), 위치 검사는 "완전히 엉뚱한 곳의 동일 텍스트"를
-                # 걸러내는 보조 역할일 뿐이다. 텍스트 줄바꿈으로 인한 간격 변동을 감안해
-                # 1차 프로젝션의 정합성 검사보다 더 넉넉하게 잡는다.
-                y_sanity_tolerance = max(35, int(base_h * 0.045))
+                y_sanity_tolerance = max(12, int(base_h * 0.015))
 
                 for cluster in clusters:
                     cluster.sort(key=lambda p: p['x_center'])
@@ -2791,19 +2769,13 @@ class MouseHoverManager(QWidget):
         self.event_ocr = EventTitleOCRThread(
             self.screen_w, self.screen_h,
             pause_getter=lambda: self.is_searching or getattr(self.choice_scanner, 'is_capturing', False) or self._is_paused(),
-            low_spec_getter=lambda: self.is_low_spec_mode
+            low_spec_getter=lambda: self.is_low_spec_mode,
+            gpu_ocr_getter=lambda: load_settings().get("try_gpu_ocr", True)
         )
         self.event_ocr.event_detected.connect(self.update_event_title)
         self.event_ocr.journey_status_changed.connect(self.update_journey_status)
         self.event_ocr.model_loading_started.connect(self._on_model_loading_started)
 
-        # ⚠️ [기본값=아르카나] 여기도 앱 시작 시점엔 아직 라벨을 못 읽었으므로 일단 True.
-        # event_ocr(라벨 OCR 스레드)가 '아르카나'/'여정 이벤트' 문구를 읽어낼 때마다
-        # _on_arcana_label_changed()를 거쳐 이 값이 갱신되고, 바로 아래 card_art_ocr의
-        # pause_getter(`not self.is_arcana_event_screen`)가 이 값을 보고 카드 스캔
-        # 스레드를 실제로 멈춘다. 즉 "카드 없는 여정 이벤트"는 이 값이 False가 되어야만
-        # 카드 스캔이 멎는데, 이벤트 전환 직후 라벨을 아직 못 읽은 짧은 구간엔 True가
-        # 남아있어 카드 감지 실패 로그가 정상적으로 몇 줄 찍힐 수 있다.
         self.is_arcana_event_screen = True
         self.event_ocr.arcana_label_detected.connect(self._on_arcana_label_changed)
 
@@ -2811,7 +2783,8 @@ class MouseHoverManager(QWidget):
             self.screen_w,
             pause_getter=lambda: self.is_searching or self._is_paused(),
             options_getter=lambda: self.current_event_options,
-            low_spec_getter=lambda: self.is_low_spec_mode
+            low_spec_getter=lambda: self.is_low_spec_mode,
+            gpu_ocr_getter=lambda: load_settings().get("try_gpu_ocr", True)
         )
         self.choice_scanner.choices_scanned.connect(self.on_choices_scanned)
 
@@ -3136,11 +3109,7 @@ class MouseHoverManager(QWidget):
             print(f"📐 [1차 비율 추정 Y좌표 등록] 총 {len(estimated_zones)}개 선택지 (소요시간: {elapsed_ms:.1f}ms)")
 
     def on_choices_scanned(self, zones):
-        if zones:
-            self.active_choice_zones = zones
-            if self._event_matched_timestamp > 0:
-                elapsed_ms = (time.time() - self._event_matched_timestamp) * 1000
-                print(f"🎯 [실제 화면 글자 Y좌표 정밀 보정 완료] 총 {len(zones)}개 선택지 (소요시간: {elapsed_ms:.1f}ms)")
+        return  # 👈 2차 정밀 보정 완전 무시 (1차 정적 좌표만 유지)
 
     def on_choice_selected_action(self, option=None):
         self._transition_baseline_gray = self._capture_choice_panel_gray(get_game_window_rect())
@@ -3489,7 +3458,7 @@ class MouseHoverManager(QWidget):
         self.arcana_indexer.start()
 
         if not self.event_ocr.isRunning(): self.event_ocr.start()
-        if not self.choice_scanner.isRunning(): self.choice_scanner.start()
+        # if not self.choice_scanner.isRunning(): self.choice_scanner.start() 쓰지 않으니 주석처리함
 
         done_msg = f"🟢 [통합 DB 완료] 총 {len(self.db_event_cache)}개 이벤트 로딩 완료"
         self.status_overlay.set_custom_status(done_msg, "#00e5ff", "#00e5ff")
@@ -4049,6 +4018,10 @@ if __name__ == '__main__':
         except Exception:
             pass
         sys.exit(0)
+
+    # 🩹 [크래시 로깅] 다른 초기화보다 먼저 걸어야 이후 어떤 단계에서 죽어도 잡힌다.
+    _crash_log_path = install_crash_logger()
+    print(f"🩹 [크래시 로깅 활성화] {_crash_log_path}")
 
     # ⚙️ [설정 반영] 로그 파일 저장 여부는 설정창에서 바꾼 값을 따른다.
     _user_settings = load_settings()
