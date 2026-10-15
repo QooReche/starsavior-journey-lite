@@ -187,6 +187,9 @@ _TRANSLATIONS_EN = {
     "🔼 상단바 펼치기": "🔼 Expand top bar",
     "🔽 상단바 접기": "🔽 Collapse top bar",
     "🔄 DB 새로고침 (10분 쿨다운)": "🔄 Refresh DB (10 min cooldown)",
+    "🎯 인식 상태 초기화": "🎯 Reset recognition state",
+    "🔄 [새로고침됨] 여정 이벤트 화면을 다시 찾고 있습니다...": "🔄 [Refreshed] Looking for the Journey event screen again...",
+    "🔵 [선택 반응 확인 중] 화면 전환 여부 확인 중...": "🔵 [Checking Choice] Checking whether the screen changed...",
     "▶️ 헬퍼 재개": "▶️ Resume helper",
     "⏸️ 헬퍼 일시정지": "⏸️ Pause helper",
     "🛑 프로그램 종료": "🛑 Quit Program",
@@ -507,6 +510,73 @@ class LeaveGrace:
         if self._since is None:
             self._since = now
         return now - self._since >= self.grace
+
+
+CHOICE_KEYS = {0x31: 1, 0x32: 2, 0x33: 3, 0x34: 4, 0x61: 1, 0x62: 2, 0x63: 3, 0x64: 4}   # 숫자 1~4, 숫자패드 1~4
+VK_LBUTTON = 0x01
+TRANSITION_POLL_MS = 120      # 선택 후 선택지 패널 변화 확인 주기 (원작 값)
+TRANSITION_DIFF = 18          # 64x36 축소 gray 평균 차이가 이 값을 넘는 프레임이 2번 연속이면 '화면 전환' (원작 값)
+CLICK_BLOCK_SEC = 2.5         # 선택 직후 추가 입력 무시 (원작 값)
+
+
+def detect_choice_input(pressed, prev_pressed, cursor_idx, n_zones):
+    """선택지 선택 입력 판정 (원작 1.0.6/1.1.3 check_instant_hover 와 같은 키 구성).
+    pressed/prev_pressed: 지금/직전에 눌려 있던 가상 키 코드 집합. 새로 눌린 키만 본다(누르고 있는 동안 반복 안 함).
+    cursor_idx: 마우스가 올라가 있는 선택지 번호(0부터) 또는 None. 반환: 선택된 선택지 번호(0부터) 또는 None."""
+    new = set(pressed) - set(prev_pressed)
+    if VK_LBUTTON in new and cursor_idx is not None:
+        return cursor_idx
+    for vk in sorted(new):
+        n = CHOICE_KEYS.get(vk)
+        if n and n <= n_zones:
+            return n - 1
+    return None
+
+
+def panel_diff(base, cur):
+    """선택지 패널 축소 이미지(64x36 gray) 두 장의 평균 밝기 차이. 크기가 다르면 None."""
+    if base is None or cur is None or base.shape != cur.shape:
+        return None
+    return float(np.mean(np.abs(cur.astype(np.int16) - base.astype(np.int16))))
+
+
+class ChoiceLock:
+    """선택지를 고른 뒤 '완료된 이벤트' 제목을 잠가 같은 이벤트를 다시 인식·표시하지 않게 한다.
+    원작의 completed_event_title / is_waiting_for_next_event / LOCK_RECOVERY_MAX_WAIT_SEC 과 같은 규칙:
+    - 잠긴 동안 유사도 0.70 이상인 제목은 무시, 다른 제목이 보이거나 로딩 화면이 오면 해제
+    - MAX_WAIT_SEC 동안 해제되지 않으면 '선택이 안 먹힌 것'으로 보고 해제(호출 측이 상태 초기화 후 재인식)"""
+    SAME_RATIO = 0.70
+    MAX_WAIT_SEC = 8.0
+    CONFIRMED_MAX_SEC = 60.0    # (경량판 추가) 화면 전환으로 선택이 확정된 잠금은 더 오래 유지 - 결과 대화가 길어도 재표시 안 함
+
+    def __init__(self, clock=time.monotonic):
+        self.clock, self.title, self.since, self.confirmed = clock, "", None, False
+
+    def lock(self, title):
+        self.title, self.since, self.confirmed = title or "", self.clock(), False
+
+    def confirm(self):
+        if self.active:
+            self.confirmed = True
+
+    def release(self):
+        self.title, self.since, self.confirmed = "", None, False
+
+    @property
+    def active(self):
+        return bool(self.title)
+
+    def expired(self):
+        limit = self.CONFIRMED_MAX_SEC if self.confirmed else self.MAX_WAIT_SEC
+        return self.active and self.clock() - self.since >= limit
+
+    def blocks(self, titles):
+        """titles(문자열 또는 후보 리스트) 중 하나라도 잠긴 제목과 같은 이벤트로 보이면 True."""
+        if not self.active:
+            return False
+        lst = [titles] if isinstance(titles, str) else list(titles or [])
+        lk = self.title.replace(" ", "")
+        return any(t and difflib.SequenceMatcher(None, t.replace(" ", ""), lk).ratio() >= self.SAME_RATIO for t in lst)
 
 
 class TitleMemo:
@@ -948,6 +1018,13 @@ class MouseHoverManager(QWidget):
         self._game_focus_was_active = False
         self._db_threads = []
         self._sct = None
+        self.choice_lock = ChoiceLock()
+        self._prev_keys = set()
+        self._click_block_until = 0.0
+        self._transition_base = None
+        self._transition_hits = 0
+        self._transition_sct = None
+        self._transition_timer = None
         self.reset_event_state()
 
         self.status = StatusBadge(self.settings)
@@ -971,6 +1048,8 @@ class MouseHoverManager(QWidget):
             t = QTimer(self)
             t.timeout.connect(fn)
             t.start(interval)
+        self._transition_timer = QTimer(self)                # 선택 후 화면 전환 확인 (원작: 120ms 간격)
+        self._transition_timer.timeout.connect(self._poll_transition)
 
         self.status.set_status(tr("🟡 [DB 불러오는 중] 이벤트 데이터를 가져오는 중..."), "#ffcc00")
         self.start_db(manual=False)
@@ -986,8 +1065,98 @@ class MouseHoverManager(QWidget):
         self.options = []
         self.card_id = None
         self._card_threads = getattr(self, "_card_threads", [])
+        self._stop_transition_check()
         if hasattr(self, "tooltip"):
             self.tooltip.hide_and_clear()
+
+    def manual_reset(self):
+        """메뉴 '인식 상태 초기화' (원작: 상단 배지 클릭 새로고침). 잠금·이벤트 상태를 비우고 라벨부터 다시 확인한다."""
+        log("[수동 새로고침] 추적 중이던 이벤트/선택 잠금 초기화")
+        self.choice_lock.release()
+        self.reset_event_state()
+        self.watcher.request_reverify()
+        self.status.set_status(tr("🔄 [새로고침됨] 여정 이벤트 화면을 다시 찾고 있습니다..."), "#888888", flash=True)
+
+    # --- 선택지 선택 감지 (원작 on_choice_selected_action / _poll_click_transition / 잠금 자동 복구) ---
+    def _read_input_keys(self):
+        try:
+            gaks = ctypes.windll.user32.GetAsyncKeyState
+            return {vk for vk in (VK_LBUTTON, *CHOICE_KEYS) if gaks(vk) & 0x8000}
+        except Exception:
+            return set()
+
+    def _zone_index_at(self, pos, rect):
+        x0, x1 = (rect["left"] + int(rect["width"] * self.HOVER_X[0]), rect["left"] + int(rect["width"] * self.HOVER_X[1])) \
+            if rect else (int(self.screen_w * self.HOVER_X[0]), int(self.screen_w * self.HOVER_X[1]))
+        if x0 <= pos.x() <= x1:
+            for z in self.zones:
+                if z["y_min"] <= pos.y() <= z["y_max"]:
+                    return z["idx"]
+        return None
+
+    def _capture_choice_panel(self):
+        """선택지 버튼 영역(가로 0.64~0.95, 세로 선택지 범위)을 64x36 gray 로 축소 캡처 (원작과 같은 크기)."""
+        try:
+            rect = get_game_window_rect()
+            if not rect or not self.zones:
+                return None
+            if self._transition_sct is None:
+                self._transition_sct = mss.mss()
+            y0, y1 = min(z["y_min"] for z in self.zones), max(z["y_max"] for z in self.zones)
+            x0, x1 = rect["left"] + int(rect["width"] * self.HOVER_X[0]), rect["left"] + int(rect["width"] * self.HOVER_X[1])
+            mon = {"left": int(x0), "top": int(y0), "width": max(1, int(x1 - x0)), "height": max(1, int(y1 - y0))}
+            gray = cv2.cvtColor(np.array(self._transition_sct.grab(mon)), cv2.COLOR_BGRA2GRAY)
+            return cv2.resize(gray, (64, 36), interpolation=cv2.INTER_AREA)
+        except Exception:
+            return None
+
+    def _stop_transition_check(self):
+        if self._transition_timer is not None:
+            self._transition_timer.stop()
+        self._transition_base, self._transition_hits = None, 0
+
+    def on_choice_selected(self, idx):
+        if idx is None or idx >= len(self.zones):
+            return
+        option = self.zones[idx]["option"]
+        title = self.current_title or (self.matched or {}).get("rawTitle", "")
+        log(f"[선택지 선택 감지] '{title}' {idx + 1}번 '{option.get('choice', '')}' -> 완료 이벤트 잠금")
+        self.choice_lock.lock(title)
+        self._click_block_until = time.monotonic() + CLICK_BLOCK_SEC
+        base = self._capture_choice_panel()
+        if not option.get("has_condition", True):
+            log("[조건 없는 선택지] 항상 성공하는 선택지로 판단 -> 툴팁 즉시 숨김")
+            self.choice_lock.confirm()
+            self.reset_event_state()
+            self.status.set_status(self._idle_text(), "#888888")
+            return
+        self.status.set_status(tr("🔵 [선택 반응 확인 중] 화면 전환 여부 확인 중..."), "#00aaff")
+        if base is not None and self._transition_timer is not None:
+            self._transition_base, self._transition_hits = base, 0
+            self._transition_timer.start(TRANSITION_POLL_MS)
+
+    def _poll_transition(self):
+        if not self.choice_lock.active or self._transition_base is None:
+            self._stop_transition_check()
+            return
+        d = panel_diff(self._transition_base, self._capture_choice_panel())
+        if d is None or d <= TRANSITION_DIFF:
+            self._transition_hits = 0
+            return
+        self._transition_hits += 1
+        if self._transition_hits >= 2:
+            log(f"[화면 전환 감지] 선택지 영역 변화량 {d:.1f} -> 선택 확정으로 판단, 즉시 정리")
+            self.choice_lock.confirm()
+            self.reset_event_state()
+            self.status.set_status(self._idle_text(), "#888888")
+
+    def _check_lock_expiry(self):
+        if self.choice_lock.expired():
+            log(f"[잠긴 선택지 자동 복구] {ChoiceLock.MAX_WAIT_SEC:.0f}초간 다음 이벤트/로딩이 없음 -> 잠금 해제 후 재인식")
+            self.choice_lock.release()
+            self.reset_event_state()
+            self.watcher.request_reverify()
+            self.status.set_status(self._idle_text(), "#888888")
 
     def _idle_text(self):
         return tr("⚪ [헬퍼 대기 중] 여정 이벤트 화면을 찾고 있습니다...")
@@ -1041,6 +1210,12 @@ class MouseHoverManager(QWidget):
         title = cands_txt[0] if cands_txt else ""
         if title == self.current_title:
             return
+        if self.choice_lock.active:
+            if self.choice_lock.blocks(cands_txt):
+                log(f"[완료 이벤트 잠금] {cands_txt} 는 방금 선택을 마친 '{self.choice_lock.title}' 와 같아 무시")
+                return
+            log(f"[완료 이벤트 잠금 해제] 다른 제목 {cands_txt}")
+            self.choice_lock.release()
         self.current_title, self.matched, self.zones, self.options, self.ambig = title, None, [], [], []
         self.not_found = ""
         self.tooltip.hide_and_clear()
@@ -1118,6 +1293,8 @@ class MouseHoverManager(QWidget):
         self._load_miss = self._load_miss + 1 if not now else 0
         if not self._loading_screen and self._load_hits >= 2:
             self._loading_screen = True
+            log("[전역 로딩 화면 감지] 이전 이벤트 상태 전체 초기화")
+            self.choice_lock.release()
             self.reset_event_state()
             self.status.set_status(tr("🌕 [로딩 중] 다음 화면으로 이동하는 중..."), "#ffcc00")
         elif self._loading_screen and self._load_miss >= 2:
@@ -1132,6 +1309,7 @@ class MouseHoverManager(QWidget):
             reassert_topmost(self.status)
             reassert_topmost(self.tooltip)
         self._game_focus_was_active = active
+        self._check_lock_expiry()
         if not self._hidden:
             self.status.reposition()
 
@@ -1146,18 +1324,23 @@ class MouseHoverManager(QWidget):
             return
         scale, show_info = self.settings["tooltip_font_scale"], self.settings["show_info"]
         if len(self.options) == 1:                      # 선택지가 하나(자동 진행)면 호버 없이 바로 표시
+            self._prev_keys = set()
             self.tooltip.show_html(self._option_html(0, self.options[0], scale, show_info))
             return
         rect, pos = get_game_window_rect(), QCursor.pos()
-        if rect:
-            x0, x1 = rect["left"] + int(rect["width"] * self.HOVER_X[0]), rect["left"] + int(rect["width"] * self.HOVER_X[1])
-        else:
-            x0, x1 = int(self.screen_w * self.HOVER_X[0]), int(self.screen_w * self.HOVER_X[1])
-        if x0 <= pos.x() <= x1:
-            for z in self.zones:
-                if z["y_min"] <= pos.y() <= z["y_max"]:
-                    self.tooltip.show_html(self._option_html(z["idx"], z["option"], scale, show_info))
+        idx = self._zone_index_at(pos, rect)
+        keys = self._read_input_keys() if self.zones else set()
+        prev, self._prev_keys = self._prev_keys, keys
+        if self.zones and time.monotonic() >= self._click_block_until:
+            sel = detect_choice_input(keys, prev, idx, len(self.zones))
+            if sel is not None:
+                self.on_choice_selected(sel)
+                if not self.zones:                      # 조건 없는 선택지 -> 이미 정리됨
                     return
+        if idx is not None:
+            z = self.zones[idx]
+            self.tooltip.show_html(self._option_html(z["idx"], z["option"], scale, show_info))
+            return
         self.tooltip.hide_and_clear()
 
     # --- 메뉴: 좌클릭(상단바 조작) / 우클릭(설정) / 트레이(둘 다) ---
@@ -1176,6 +1359,7 @@ class MouseHoverManager(QWidget):
     def build_main_menu(self):
         m = QMenu()
         m.addAction(tr("🔼 상단바 펼치기") if self.status.collapsed else tr("🔽 상단바 접기"), self._toggle_collapsed)
+        m.addAction(tr("🎯 인식 상태 초기화"), self.manual_reset)
         m.addAction(tr("🔄 DB 새로고침 (10분 쿨다운)"), self.refresh_db)
         m.addAction(tr("▶️ 헬퍼 재개") if self._hidden else tr("⏸️ 헬퍼 일시정지"), self._toggle_hidden)
         m.addSeparator()
