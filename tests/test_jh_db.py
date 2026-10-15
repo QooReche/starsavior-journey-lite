@@ -298,7 +298,13 @@ class ItemLinkTests(unittest.TestCase):
 
     def test_no_later_use_and_limit(self):
         o = {"choice": "x", "reward": "a", "item_use": [{"item": "Z", "uses": []}]}
-        self.assertIn("확인 안 됨", jh_db.format_option_html(o))
+        self.assertNotIn("확인 안 됨", jh_db.format_option_html(o))       # 사용처 없는 아이템은 숨김
+        self.assertNotIn("이후 사용처", jh_db.format_option_html(o))
+        one = {"event": "E", "timing": "1월 초순", "choice": "c", "result": "r"}
+        h = jh_db.format_option_html({"choice": "x", "reward": "a", "item_use": [
+            {"item": "스탯 인자 힘 상승 Ⅱ - 힘 15", "uses": [one]}, {"item": "Q", "uses": [one]}]})
+        self.assertNotIn("스탯 인자", h)                                  # 스탯 인자 숨김
+        self.assertIn(">Q<", h)
         uses = [{"event": f"E{i}", "timing": "1월 초순", "choice": "c", "result": "r"} for i in range(5)]
         t = self._plain(jh_db.format_option_html({"choice": "x", "reward": "a", "item_use": [{"item": "Z", "uses": uses}]}))
         self.assertIn("E2", t)

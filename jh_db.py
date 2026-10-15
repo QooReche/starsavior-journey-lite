@@ -785,6 +785,7 @@ def format_ambiguous_html(items, scale=1.0, show_info=True, lang="ko"):
 
 
 MAX_USES = 3
+HIDDEN_ITEM_PREFIX = "스탯 인자"
 MAX_ITEM_GROUPS = 2
 
 
@@ -805,7 +806,9 @@ def _render_item_sections(option, scale, s):
     esc = _html.escape
     small = max(9, round(12 * scale))
     out = ""
-    groups = option.get("item_use") or []
+    # 스탯 인자(II/III 등)는 인자 계승 단계에서 고르는 항목이라 숨기고, 이후 사용처가 없는 아이템도 표시하지 않는다
+    groups = [g for g in (option.get("item_use") or [])
+              if g.get("uses") and not g.get("item", "").startswith(HIDDEN_ITEM_PREFIX)]
     if groups:
         lines = [f'<span style="color:#ffd27f; font-size:{small}px;"><b>{esc(s["use_head"])}</b></span>']
         for g in groups[:MAX_ITEM_GROUPS]:
