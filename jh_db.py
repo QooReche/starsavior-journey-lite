@@ -956,8 +956,16 @@ def filter_by_kind(events, kind):
     return events
 
 
+IGNORED_TITLE_WORD = "평가전"   # cleanTitle(공백 제거) 기준
+
+
 def match_title(queries, events, kind=None):
     """OCR 후보 -> (candidates, ambiguous). candidates=[(event, score)...] 상위 5개, ambiguous=1등과 구분이 안 되는 이벤트 리스트
     (길이 1이면 확신, 0이면 DB 에 없음 = NOT-FOUND). kind 로 라벨 종류에 맞는 이벤트만 후보로 삼는다."""
-    cands = find_event_candidates(queries, filter_by_kind(events, kind))
+    # 평가전 계열은 DB 에 3개뿐이라 '원정/토벌 평가전' 같은 미등록 제목이 오매칭되므로 아예 다루지 않는다
+    qs = [queries] if isinstance(queries, str) else list(queries)
+    if any(IGNORED_TITLE_WORD in q for q in qs):
+        return [], []
+    pool = [e for e in filter_by_kind(events, kind) if IGNORED_TITLE_WORD not in e.get("cleanTitle", "")]
+    cands = find_event_candidates(queries, pool)
     return cands, [ev for ev, _ in ambiguous_set(cands)]
