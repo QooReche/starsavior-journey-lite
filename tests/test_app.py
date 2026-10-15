@@ -25,6 +25,27 @@ class LabelTests(unittest.TestCase):
         for t in ("이벤트", "이벤트 보상", "장비", "능력치", "스킬 이벤트", "", "캐릭터 정보", "일일 이벤트"):
             self.assertIsNone(jhm.match_event_label(t), t)
 
+    def test_english_labels_only_in_en_mode(self):
+        self.assertIsNone(jhm.match_event_label("Journey Event"))
+        self.assertIsNotNone(jhm.match_event_label("Journey Event", lang="en"))
+        self.assertIsNotNone(jhm.match_event_label("Arcana  Event", lang="en"))
+        self.assertIsNotNone(jhm.match_event_label("Trainlng Event", lang="en"))
+        for t in ("Event", "Daily Event", "Equipment", "Stats", "Event Shop"):
+            self.assertIsNone(jhm.match_event_label(t, lang="en"), t)
+
+    def test_tr(self):
+        jhm.set_language("en")
+        try:
+            self.assertEqual(jhm.tr("🔽 여정 시 펼쳐주세요"), "🔽 Expand during Journey")
+            self.assertEqual(jhm.tr("번역 없는 문구"), "번역 없는 문구")
+        finally:
+            jhm.set_language("ko")
+        self.assertEqual(jhm.tr("🔽 여정 시 펼쳐주세요"), "🔽 여정 시 펼쳐주세요")
+
+    def test_defaults(self):
+        self.assertEqual(jhm.DEFAULT_SETTINGS["startup_state"], "collapsed")
+        self.assertEqual(jhm.DEFAULT_SETTINGS["language"], "ko")
+
     def test_clean_title(self):
         self.assertEqual(jhm.clean_ocr_title("제목 살롱 인 더 애프터눈!"), "살롱인더애프터눈")
 
@@ -52,6 +73,12 @@ class OcrTests(unittest.TestCase):
             self.assertGreater(conf, 0.7, (t, text))
             self.assertGreaterEqual(
                 __import__("difflib").SequenceMatcher(None, jhm.clean_ocr_title(text), t.replace(" ", "")).ratio(), 0.85, (t, text))
+
+    def test_english_text(self):             # 한국어 rec 모델의 사전에는 영문자도 포함되어 있다
+        text, conf = self.ocr.read_line(self.render("Journey Event"))
+        self.assertEqual(jhm.match_event_label(text, lang="en"), "journeyevent", text)
+        text, _ = self.ocr.read_line(self.render("Leisure Time"))
+        self.assertIn("leisuretime", jhm.clean_ocr_title(text).lower(), text)
 
     def test_label(self):
         text, _ = self.ocr.read_line(self.render("아르카나 이벤트"))

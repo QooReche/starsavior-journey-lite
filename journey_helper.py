@@ -13,6 +13,7 @@ import difflib
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 import traceback
@@ -35,7 +36,7 @@ try:
     import mss
     from PyQt5.QtCore import Qt, QThread, QTimer, pyqtSignal
     from PyQt5.QtGui import QBrush, QColor, QCursor, QIcon, QPainter, QPixmap
-    from PyQt5.QtWidgets import (QAction, QActionGroup, QApplication, QLabel, QMenu, QSystemTrayIcon,
+    from PyQt5.QtWidgets import (QAction, QActionGroup, QApplication, QLabel, QMenu, QMessageBox, QSystemTrayIcon,
                                  QVBoxLayout, QWidget)
 except ImportError:  # --selftest 는 GUI 없이도 돌 수 있게
     mss = None
@@ -47,6 +48,8 @@ APP_NAME = "JourneyHelperLite"
 APP_VERSION = "1.0.6-lite.1"
 
 DEFAULT_SETTINGS = {
+    "language": "ko",               # "ko" | "en"  (화면 문구 + DB 언어, 변경 시 재시작)
+    "startup_state": "collapsed",   # 상단바 시작 상태: "collapsed" | "expanded"
     "tooltip_font_scale": 1.0,
     "show_info": True,              # 잠재력/버프 설명 표시
     "low_spec_mode": False,         # OCR 주기를 늘려 CPU 절약
@@ -60,7 +63,8 @@ REGION_FRACTIONS = {
     "event_label": {"top": 0.170, "left": 0.110, "width": 0.200, "height": 0.032},
 }
 EVENT_LABEL_PHRASES = ("여정이벤트", "훈련이벤트", "아르카나이벤트")
-NOISE_TITLE_WORDS = ("여정이벤트", "훈련이벤트", "아르카나이벤트", "제목")
+EVENT_LABEL_PHRASES_EN = ("journeyevent", "trainingevent", "arcanaevent")
+NOISE_TITLE_WORDS = ("여정이벤트", "훈련이벤트", "아르카나이벤트", "제목", "journeyevent", "trainingevent", "arcanaevent")
 _GAME_KEYWORDS = ["스타세이비어", "스타 세이비어", "starsavior", "star savior"]
 _BROWSER_CLASSES = {"chrome_widgetwin_1", "mozillawindowclass", "applicationframewindow", "operawindowclass"}
 
@@ -91,6 +95,10 @@ def load_settings():
             settings.update({k: v for k, v in saved.items() if k in DEFAULT_SETTINGS})
     except Exception:
         pass
+    if settings.get("language") not in jh_db.SUPPORTED_LANGS:
+        settings["language"] = "ko"
+    if settings.get("startup_state") not in ("collapsed", "expanded"):
+        settings["startup_state"] = "collapsed"
     return settings
 
 
@@ -100,6 +108,68 @@ def save_settings(settings):
             json.dump(settings, f, ensure_ascii=False, indent=2)
     except Exception as e:
         print(f"[설정 저장 실패] {e}")
+
+
+# ----------------------------------------------------------------------------
+# 표시 언어 (화면에 보이는 문구만; 콘솔 로그는 항상 한글)
+# 번역이 없는 문구는 한글 원문이 그대로 나온다 (앱이 깨지지 않음).
+# ----------------------------------------------------------------------------
+_CURRENT_LANGUAGE = "ko"
+
+_TRANSLATIONS_EN = {
+    "🔽 여정 시 펼쳐주세요": "🔽 Expand during Journey",
+    "🟡 준비 중...": "🟡 Getting ready...",
+    "🟡 [DB 불러오는 중] 이벤트 데이터를 가져오는 중...": "🟡 [Loading DB] Fetching event database...",
+    "🟡 [OCR 모델 로딩 중] 처음 한 번만 몇 초 걸려요...": "🟡 [Loading OCR Model] Only takes a few seconds, once...",
+    "⚪ [헬퍼 대기 중] 여정 이벤트 화면을 찾고 있습니다...": "⚪ [Waiting] Looking for a Journey event screen...",
+    "🌕 [로딩 중] 다음 화면으로 이동하는 중...": "🌕 [Loading] Moving to the next screen...",
+    "🟢 [여정 진행 중] {}": "🟢 [Journey in Progress] {}",
+    "🔵 [이벤트 확인 중] {}...": "🔵 [Confirming Event] {}...",
+    "⚠️ [추정] {}": "⚠️ [Estimate] {}",
+    "🟠 [DB에 없는 제목] {}": "🟠 [Title not in DB] {}",
+    "🟢 [DB 준비 완료] 이벤트 {}개": "🟢 [Database Ready] {} events loaded",
+    "⏳ 수동 새로고침은 잠시 후 다시 가능합니다 (10분 쿨다운)": "⏳ Manual refresh is on cooldown (10 min)",
+    "⚠️ 갱신 실패 - 저장된 DB를 사용합니다": "⚠️ Update failed - using the saved DB",
+    "🔴 DB 없음 - 인터넷 연결 후 메뉴에서 새로고침": "🔴 No DB - connect to the internet, then refresh from the menu",
+    "🔼 상단바 펼치기": "🔼 Expand top bar",
+    "🔽 상단바 접기": "🔽 Collapse top bar",
+    "🔄 DB 새로고침 (10분 쿨다운)": "🔄 Refresh DB (10 min cooldown)",
+    "▶️ 헬퍼 재개": "▶️ Resume helper",
+    "⏸️ 헬퍼 일시정지": "⏸️ Pause helper",
+    "🛑 프로그램 종료": "🛑 Quit Program",
+    "⚙️ 설정": "⚙️ Settings",
+    "🔤 툴팁 글자 크기": "🔤 Tooltip font size",
+    "작게": "Small", "보통": "Normal", "크게": "Large", "아주 크게": "Extra Large",
+    "🚀 시작 시 상단바": "🚀 Top bar on startup",
+    "접힘": "Collapsed", "펼침": "Expanded",
+    "🌐 언어": "🌐 Language",
+    "잠재력/버프 설명 표시": "Show potential/buff descriptions",
+    "⚡ 저사양 모드 (OCR 주기 늘림)": "⚡ Low-spec mode (slower OCR polling)",
+    "상단바 위치 고정": "Lock top bar position",
+    "상단바 위치 초기화": "Reset top bar position",
+    "현재 버전: {}": "Current version: {}",
+    "JourneyHelper가 실행 중입니다 (우클릭: 메뉴)": "JourneyHelper is running (right-click for menu)",
+    "재시작 필요": "Restart Required",
+    "언어를 바꾸면 여정 이벤트 데이터를 새 언어로 다시 불러와야 해요.\n지금 재시작할까요? (재시작 안 하면 일부 이벤트 인식이 이전 언어\n기준으로 남아있어 오작동할 수 있어요)":
+        "Changing the language requires reloading Journey event data in the new language.\nRestart now? (If you don't, some event recognition may stay on the old language and misbehave)",
+}
+
+
+def set_language(lang):
+    global _CURRENT_LANGUAGE
+    _CURRENT_LANGUAGE = lang if lang in jh_db.SUPPORTED_LANGS else "ko"
+
+
+def get_language():
+    return _CURRENT_LANGUAGE
+
+
+def tr(text):
+    """현재 언어가 "en"이면 번역표에서 찾아 반환하고, 없으면 한글 원문을 그대로 돌려준다."""
+    if _CURRENT_LANGUAGE == "en":
+        return _TRANSLATIONS_EN.get(text, text)
+    return text
+
 
 
 def install_crash_logger():
@@ -203,6 +273,34 @@ def is_game_hovered_or_active():
         return False
 
 
+_single_instance_handle = None
+
+
+def acquire_single_instance():
+    global _single_instance_handle
+    _single_instance_handle = ctypes.windll.kernel32.CreateMutexW(None, False, f"Global\\{APP_NAME}_SingleInstance")
+    return ctypes.windll.kernel32.GetLastError() != 183
+
+
+def release_single_instance():
+    global _single_instance_handle
+    try:
+        if _single_instance_handle:
+            ctypes.windll.kernel32.CloseHandle(_single_instance_handle)
+            _single_instance_handle = None
+    except Exception:
+        pass
+
+
+def reassert_topmost(widget):
+    """게임이 포커스를 되찾은 뒤에도 오버레이가 가려지지 않게 최상단을 다시 지정한다."""
+    try:
+        # HWND_TOPMOST(-1), SWP_NOSIZE|SWP_NOMOVE|SWP_NOACTIVATE
+        ctypes.windll.user32.SetWindowPos(int(widget.winId()), -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)
+    except Exception:
+        pass
+
+
 def exclude_from_capture(widget):
     """오버레이가 화면 캡처(OCR)에 찍히지 않도록 한다."""
     try:
@@ -231,27 +329,31 @@ def is_loading_screen(sct, rect):
 # ----------------------------------------------------------------------------
 # 텍스트 판정 (순수 함수 - 테스트 가능)
 # ----------------------------------------------------------------------------
-def match_event_label(text, cutoff=0.8):
+def match_event_label(text, cutoff=0.8, lang="ko"):
     """OCR 텍스트가 '여정 이벤트/훈련 이벤트/아르카나 이벤트' 전체 문구와 일치(또는 거의 일치)하면 문구를 반환.
-    '이벤트' 같은 일반 단어만으로는 통과시키지 않는다 (장비/스탯 화면 오탐 방지)."""
-    t = re.sub(r"[^가-힣]", "", text or "")
-    if len(t) < 4:
-        return None
-    for p in EVENT_LABEL_PHRASES:
-        if p in t:
-            return p
-    for p in EVENT_LABEL_PHRASES:
-        for L in (len(p) - 1, len(p), len(p) + 1):
-            for i in range(0, len(t) - L + 1):
-                if difflib.SequenceMatcher(None, t[i:i + L], p).ratio() >= cutoff:
-                    return p
+    '이벤트' 같은 일반 단어만으로는 통과시키지 않는다 (장비/스탯 화면 오탐 방지).
+    lang == "en" 이면 'Journey Event / Training Event / Arcana Event' 도 허용한다."""
+    pairs = [(re.sub(r"[^가-힣]", "", text or ""), EVENT_LABEL_PHRASES, 4)]
+    if lang == "en":
+        pairs.append((re.sub(r"[^a-z]", "", (text or "").lower()), EVENT_LABEL_PHRASES_EN, 8))
+    for t_, phrases, min_len in pairs:
+        if len(t_) < min_len:
+            continue
+        for p in phrases:
+            if p in t_:
+                return p
+        for p in phrases:
+            for L in (len(p) - 1, len(p), len(p) + 1):
+                for i in range(0, len(t_) - L + 1):
+                    if difflib.SequenceMatcher(None, t_[i:i + L], p).ratio() >= cutoff:
+                        return p
     return None
 
 
 def clean_ocr_title(text):
     t = re.sub(r"[^가-힣0-9a-zA-Z]", "", text or "")
     for w in NOISE_TITLE_WORDS:
-        t = t.replace(w, "")
+        t = re.sub(w, "", t, flags=re.I)
     return t
 
 
@@ -301,8 +403,10 @@ class ScreenWatcher(QThread):
     LEAVE_AFTER_OTHER = 3     # 라벨 자리에 다른 글자가 읽힘 -> 이벤트 화면이 아니라고 확신 (연속 횟수)
     LEAVE_AFTER_UNSEEN = 8    # 아무것도 못 읽음 -> 스캔 실패일 수 있으니 더 오래 기다림
 
-    def __init__(self, pause_getter=None, low_spec_getter=None):
+    def __init__(self, pause_getter=None, low_spec_getter=None, lang_getter=None):
         super().__init__()
+        self.lang_getter = lang_getter or (lambda: "ko")
+        self._last_rect = None
         self.pause_getter = pause_getter or (lambda: False)
         self.low_spec_getter = low_spec_getter or (lambda: False)
         self.ocr = None
@@ -347,7 +451,7 @@ class ScreenWatcher(QThread):
         text, conf = self.ocr.read_line(gray)
         if conf < 0.3 or not re.sub(r"[^가-힣]", "", text):
             state = "unseen"
-        elif match_event_label(text):
+        elif match_event_label(text, lang=self.lang_getter()):
             state = "found"
         else:
             state = "other"
@@ -374,13 +478,22 @@ class ScreenWatcher(QThread):
                     continue
                 rect = get_game_window_rect() if is_game_hovered_or_active() else None
                 if rect is None:
+                    self._last_rect = None
                     self._leave_event_screen()
                     self.msleep(1000)
                     continue
                 if self.ocr is None:
                     self.model_loading.emit()
+                    print("[지연 로딩] 게임 감지됨 -> 제목/라벨 인식용 OCR 모델 로딩 시작...")
                     self.ocr = KoreanOCR()
+                    print("[지연 로딩] 제목/라벨 인식용 OCR 모델 로딩 완료")
                     self.model_ready.emit()
+                lr = self._last_rect
+                if lr and any(abs(rect[k] - lr[k]) > 5 for k in ("left", "top", "width", "height")):
+                    # 게임 창이 이동/리사이즈됨: 영역은 매 주기 창 기준 비율로 다시 계산되므로 캐시만 비우고 재스캔한다
+                    print("[게임 창 변경 감지] 위치/크기가 바뀜 -> 캡처 영역 재보정")
+                    self._last_label_gray = self._last_title_gray = None
+                self._last_rect = dict(rect)
                 if self._reverify:
                     self._reverify = False
                     self.label_visible = False
@@ -456,7 +569,10 @@ def make_tray_icon():
 
 
 class StatusBadge(QWidget):
-    """게임 창 위쪽 상태 배지. 좌클릭: 접기/펼치기, 우클릭: 메뉴, (잠금 해제 시) 드래그 이동."""
+    """게임 창 위쪽 상태 배지.
+    기본은 접힌 상태(시작 시 설정 startup_state). 접혀 있어도 여정/이벤트가 감지되면 잠깐 펼쳐 보여 주고
+    FLASH_SEC 뒤에 자동으로 다시 접는다. 좌클릭: 메뉴, 우클릭: 설정, (잠금 해제 시) 드래그 이동."""
+    FLASH_SEC = 6.0
 
     def __init__(self, settings):
         super().__init__()
@@ -469,26 +585,49 @@ class StatusBadge(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(self.label)
-        self.collapsed = False
-        self.on_menu = None
-        self.on_toggle = None
-        self._text, self._color = "준비 중...", "#ffcc00"
+        self.collapsed = settings.get("startup_state", "collapsed") != "expanded"
+        self.on_menu = None            # 좌클릭
+        self.on_settings = None        # 우클릭
+        self._text, self._color = tr("🟡 준비 중..."), "#ffcc00"
         self._protect_until = 0
+        self._flash_until = 0
         self._drag = None
         self._dragging = False
         self.render()
         self.show()
         exclude_from_capture(self)
 
-    def set_status(self, text, color="#00e5ff", protect_sec=0):
+    # --- 상태 표시 ---
+    def is_flash_active(self):
+        return time.time() < self._flash_until
+
+    def set_status(self, text, color="#00e5ff", protect_sec=0, flash=False):
         if time.time() < self._protect_until and not protect_sec:
             return
         self._protect_until = time.time() + protect_sec if protect_sec else 0
         self._text, self._color = text, color
+        if flash and self.collapsed:
+            self._flash_until = time.time() + max(self.FLASH_SEC, protect_sec)
+            self._schedule_auto_revert()
+        self.render()
+
+    def _schedule_auto_revert(self):
+        QTimer.singleShot(int(self.FLASH_SEC * 1000) + 150, self._revert_after_flash)
+
+    def _revert_after_flash(self):
+        if self.collapsed and not self.is_flash_active():
+            self.render()
+
+    def set_collapsed(self, value):
+        self.collapsed = bool(value)
+        self._flash_until = 0
         self.render()
 
     def render(self):
-        text, color = ("🔽 (클릭하여 활성화)", "#888888") if self.collapsed else (self._text, self._color)
+        if self.collapsed and not self.is_flash_active():
+            text, color = tr("🔽 여정 시 펼쳐주세요"), "#888888"
+        else:
+            text, color = self._text, self._color
         self.label.setText(text)
         self.label.setStyleSheet(f"QLabel {{ background-color: rgba(10,14,24,245); border: 2px solid {color}; "
                                  f"border-radius: 15px; color: {color}; font-size: 13px; font-weight: bold; padding: 6px 18px; }}")
@@ -507,9 +646,10 @@ class StatusBadge(QWidget):
         else:
             self.move(int(left + w / 2 - self.width() / 2), top + 4)
 
+    # --- 마우스 ---
     def mousePressEvent(self, e):
-        if e.button() == Qt.RightButton and self.on_menu:
-            self.on_menu(e.globalPos())
+        if e.button() == Qt.RightButton and self.on_settings:
+            self.on_settings(e.globalPos())
         elif e.button() == Qt.LeftButton:
             self._drag, self._start, self._dragging = e.globalPos(), self.pos(), False
 
@@ -527,11 +667,8 @@ class StatusBadge(QWidget):
             rect = get_game_window_rect() or {"left": 0, "top": 0}
             self.settings["status_badge_offset"] = [self.x() - rect["left"], self.y() - rect["top"]]
             save_settings(self.settings)
-        else:
-            self.collapsed = not self.collapsed
-            self.render()
-            if self.on_toggle:
-                self.on_toggle()
+        elif self.on_menu:
+            self.on_menu(e.globalPos())
         self._drag, self._dragging = None, False
 
 
@@ -587,38 +724,40 @@ class MouseHoverManager(QWidget):
     def __init__(self):
         super().__init__()
         self.settings = load_settings()
+        self.lang = self.settings["language"]
         self.screen_w = QApplication.desktop().screenGeometry().width()
         self.db_event_cache = []
-        self.store = jh_db.DbStore(user_agent=f"{APP_NAME}/{APP_VERSION} (+https://github.com/QooReche/starsavior-journey-lite)")
+        self.store = jh_db.DbStore(lang=self.lang,
+                                   user_agent=f"{APP_NAME}/{APP_VERSION} (+https://github.com/QooReche/starsavior-journey-lite)")
         self._hidden = False
         self._loading_screen = False
         self._load_hits = self._load_miss = 0
+        self._game_focus_was_active = False
         self._db_threads = []
+        self._sct = None
         self.reset_event_state()
 
         self.status = StatusBadge(self.settings)
-        self.status.on_menu = self.show_menu
-        self.status.on_toggle = self._on_badge_toggle
+        self.status.on_menu = self.show_main_menu
+        self.status.on_settings = self.show_settings_menu
         self.tooltip = FixedLeftTooltip(self.settings["tooltip_font_scale"])
-        self._build_menu()
         self._build_tray()
 
-        self.watcher = ScreenWatcher(pause_getter=self._is_paused, low_spec_getter=lambda: self.settings["low_spec_mode"])
+        self.watcher = ScreenWatcher(pause_getter=lambda: self._hidden, low_spec_getter=lambda: self.settings["low_spec_mode"],
+                                     lang_getter=lambda: self.lang)
         self.watcher.title_detected.connect(self.on_title)
         self.watcher.journey_status_changed.connect(self.on_journey_status)
-        self.watcher.model_loading.connect(lambda: self.status.set_status("🟡 OCR 모델 로딩 중... (처음 한 번)", "#ffcc00"))
+        self.watcher.model_loading.connect(
+            lambda: self.status.set_status(tr("🟡 [OCR 모델 로딩 중] 처음 한 번만 몇 초 걸려요..."), "#ffcc00", flash=True))
         self.watcher.model_ready.connect(lambda: self.status.set_status(self._idle_text(), "#888888"))
         self.watcher.start()
 
-        self.hover_timer = QTimer(self)
-        self.hover_timer.timeout.connect(self.check_hover)
-        self.hover_timer.start(60)
-        self.loading_timer = QTimer(self)
-        self.loading_timer.timeout.connect(self.poll_loading)
-        self.loading_timer.start(300)
-        self._sct = None
+        for interval, fn in ((60, self.check_hover), (300, self.poll_loading), (1000, self.maintain_overlays)):
+            t = QTimer(self)
+            t.timeout.connect(fn)
+            t.start(interval)
 
-        self.status.set_status("🟡 DB 불러오는 중...", "#ffcc00")
+        self.status.set_status(tr("🟡 [DB 불러오는 중] 이벤트 데이터를 가져오는 중..."), "#ffcc00")
         self.start_db(manual=False)
 
     # --- 상태 ---
@@ -631,15 +770,13 @@ class MouseHoverManager(QWidget):
         if hasattr(self, "tooltip"):
             self.tooltip.hide_and_clear()
 
-    def _on_badge_toggle(self):
-        self.reset_event_state()
-        self.watcher.request_reverify()
-
     def _idle_text(self):
-        return "⚪ [헬퍼 대기 중] 여정 이벤트 화면을 찾고 있습니다..."
+        return tr("⚪ [헬퍼 대기 중] 여정 이벤트 화면을 찾고 있습니다...")
 
-    def _is_paused(self):
-        return self.status.collapsed or self._hidden
+    def _journey_text(self):
+        if self.matched:
+            return tr("🟢 [여정 진행 중] {}").format(self.matched["rawTitle"])
+        return tr("🔵 [이벤트 확인 중] {}...").format(self.current_title)
 
     # --- DB ---
     def start_db(self, manual):
@@ -652,15 +789,15 @@ class MouseHoverManager(QWidget):
         if cache:
             self.db_event_cache = cache
             print(f"[DB] 이벤트 {len(cache)}개 ({status}: {message})")
-            text = f"✅ DB {len(cache)}개 이벤트" + (" (갱신됨)" if status == "updated" else "")
+            text = tr("🟢 [DB 준비 완료] 이벤트 {}개").format(len(cache))
             if manual and status == "cooldown":
-                text = "⏳ " + message
+                text = tr("⏳ 수동 새로고침은 잠시 후 다시 가능합니다 (10분 쿨다운)")
             elif manual and status == "offline":
-                text = "⚠️ 갱신 실패 - 저장된 DB 사용 중"
-            self.status.set_status(text, "#3ddc84", protect_sec=4)
-            QTimer.singleShot(4200, lambda: self.status.set_status(self._idle_text() if not self.in_journey else self._journey_text(), "#888888"))
+                text = tr("⚠️ 갱신 실패 - 저장된 DB를 사용합니다")
+            self.status.set_status(text, "#3ddc84", protect_sec=4, flash=True)
+            QTimer.singleShot(4200, lambda: self.status.set_status(self._journey_text() if self.in_journey else self._idle_text(), "#888888"))
         else:
-            self.status.set_status("🔴 DB 없음 - 인터넷 연결 후 메뉴에서 새로고침", "#ff5c5c", protect_sec=8 if manual else 0)
+            self.status.set_status(tr("🔴 DB 없음 - 인터넷 연결 후 메뉴에서 새로고침"), "#ff5c5c", protect_sec=8 if manual else 0, flash=True)
 
     def refresh_db(self):
         self.start_db(manual=True)
@@ -669,29 +806,27 @@ class MouseHoverManager(QWidget):
     def on_journey_status(self, active):
         self.in_journey = active
         if active:
-            self.status.set_status(f"🔵 [이벤트 확인 중] {self.current_title or '...'}", "#00aaff")
+            self.status.set_status(tr("🔵 [이벤트 확인 중] {}...").format(self.current_title or "..."), "#00aaff", flash=True)
         else:                                           # (1) 이벤트 화면 이탈 -> 오래된 상태 제거
             self.reset_event_state()
             self.status.set_status(self._idle_text(), "#888888")
-
-    def _journey_text(self):
-        return f"🟢 [여정 진행 중] {self.matched['rawTitle']}" if self.matched else f"🔵 [이벤트 확인 중] {self.current_title}"
 
     def on_title(self, title):
         if title == self.current_title:
             return
         self.current_title, self.matched, self.zones, self.options = title, None, [], []
         self.tooltip.hide_and_clear()
-        q = re.sub(r"[^가-힣0-9]", "", title)
+        q = jh_db.clean_title(title)
         if len(q) < 2 or not self.db_event_cache:
             return
         best, score = jh_db.find_best_event(q, self.db_event_cache)
         if not best:
-            self.status.set_status(f"🟠 [DB에 없는 제목] {title}", "#ff9800")
+            self.status.set_status(tr("🟠 [DB에 없는 제목] {}").format(title), "#ff9800", flash=True)
             return
         self.matched, self.options = best, best.get("options", [])
         weak = score < 0.5
-        self.status.set_status(("⚠️ [추정] " if weak else "🟢 [여정 진행 중] ") + best["rawTitle"], "#ff9800" if weak else "#00e5ff")
+        text = (tr("⚠️ [추정] {}") if weak else tr("🟢 [여정 진행 중] {}")).format(best["rawTitle"])
+        self.status.set_status(text, "#ff9800" if weak else "#00e5ff", flash=True)
         print(f"[매칭] '{title}' -> '{best['rawTitle']}' ({score:.2f})")
         self.zones = self.estimate_zones(len(self.options)) if len(self.options) >= 2 else []
 
@@ -707,7 +842,7 @@ class MouseHoverManager(QWidget):
 
     # --- 로딩 화면: 상태 초기화 후, 끝나면 라벨부터 다시 확인 (5) ---
     def poll_loading(self):
-        if self._is_paused() or not is_game_hovered_or_active():
+        if self._hidden or not is_game_hovered_or_active():
             return
         rect = get_game_window_rect()
         if not rect:
@@ -720,23 +855,30 @@ class MouseHoverManager(QWidget):
         if not self._loading_screen and self._load_hits >= 2:
             self._loading_screen = True
             self.reset_event_state()
-            self.status.set_status("🌕 [로딩 중] 다음 화면으로 이동하는 중...", "#ffcc00")
+            self.status.set_status(tr("🌕 [로딩 중] 다음 화면으로 이동하는 중..."), "#ffcc00")
         elif self._loading_screen and self._load_miss >= 2:
             self._loading_screen = False
             self.watcher.request_reverify()
             self.status.set_status(self._idle_text(), "#888888")
 
+    # --- 오버레이 유지: 게임이 다시 포커스를 받으면 최상단 재지정, 창이 움직였으면 위치 보정 ---
+    def maintain_overlays(self):
+        active = is_game_hovered_or_active()
+        if active and not self._game_focus_was_active:
+            reassert_topmost(self.status)
+            reassert_topmost(self.tooltip)
+        self._game_focus_was_active = active
+        if not self._hidden:
+            self.status.reposition()
+
     # --- 호버 ---
     def check_hover(self):
-        if self._is_paused() or self._loading_screen or not self.in_journey or not self.matched:
-            self.tooltip.hide_and_clear()
-            return
-        if not is_game_hovered_or_active():
+        if self._hidden or self._loading_screen or not self.in_journey or not self.matched or not is_game_hovered_or_active():
             self.tooltip.hide_and_clear()
             return
         scale, show_info = self.settings["tooltip_font_scale"], self.settings["show_info"]
         if len(self.options) == 1:                      # 선택지가 하나(자동 진행)면 호버 없이 바로 표시
-            self.tooltip.show_html(jh_db.format_option_html(self.options[0], scale, show_info))
+            self.tooltip.show_html(jh_db.format_option_html(self.options[0], scale, show_info, self.lang))
             return
         rect, pos = get_game_window_rect(), QCursor.pos()
         if rect:
@@ -746,56 +888,127 @@ class MouseHoverManager(QWidget):
         if x0 <= pos.x() <= x1:
             for z in self.zones:
                 if z["y_min"] <= pos.y() <= z["y_max"]:
-                    self.tooltip.show_html(jh_db.format_option_html(z["option"], scale, show_info))
+                    self.tooltip.show_html(jh_db.format_option_html(z["option"], scale, show_info, self.lang))
                     return
         self.tooltip.hide_and_clear()
 
-    # --- 메뉴 / 트레이 ---
-    def _build_menu(self):
+    # --- 메뉴: 좌클릭(상단바 조작) / 우클릭(설정) / 트레이(둘 다) ---
+    def _toggle_collapsed(self):
+        self.status.set_collapsed(not self.status.collapsed)
+
+    def _toggle_hidden(self):
+        self._hidden = not self._hidden
+        if self._hidden:
+            self.reset_event_state()
+            self.status.hide()
+        else:
+            self.status.show()
+            self.status.render()
+
+    def build_main_menu(self):
         m = QMenu()
-        m.addAction("DB 새로고침 (10분 쿨다운)", self.refresh_db)
-        scale_menu = m.addMenu("툴팁 글자 크기")
+        m.addAction(tr("🔼 상단바 펼치기") if self.status.collapsed else tr("🔽 상단바 접기"), self._toggle_collapsed)
+        m.addAction(tr("🔄 DB 새로고침 (10분 쿨다운)"), self.refresh_db)
+        m.addAction(tr("▶️ 헬퍼 재개") if self._hidden else tr("⏸️ 헬퍼 일시정지"), self._toggle_hidden)
+        m.addSeparator()
+        m.addAction(tr("🛑 프로그램 종료"), self.quit_app)
+        return m
+
+    def build_settings_menu(self):
+        m = QMenu()
+        m.addAction(tr("⚙️ 설정")).setEnabled(False)
+        scale_menu = m.addMenu(tr("🔤 툴팁 글자 크기"))
         group = QActionGroup(m)
-        for label, val in (("작게", 0.85), ("보통", 1.0), ("크게", 1.25), ("아주 크게", 1.5)):
+        for label, val in ((tr("작게"), 0.85), (tr("보통"), 1.0), (tr("크게"), 1.25), (tr("아주 크게"), 1.5)):
             a = QAction(label, m, checkable=True)
             a.setChecked(abs(self.settings["tooltip_font_scale"] - val) < 0.01)
             a.triggered.connect(lambda _, v=val: self.set_scale(v))
             group.addAction(a)
             scale_menu.addAction(a)
-        for text, key in (("잠재력/버프 설명 표시", "show_info"), ("저사양 모드 (OCR 주기 늘림)", "low_spec_mode"),
-                          ("상단 배지 위치 고정", "status_badge_locked")):
+        start_menu = m.addMenu(tr("🚀 시작 시 상단바"))
+        g2 = QActionGroup(m)
+        for label, val in ((tr("접힘"), "collapsed"), (tr("펼침"), "expanded")):
+            a = QAction(label, m, checkable=True)
+            a.setChecked(self.settings["startup_state"] == val)
+            a.triggered.connect(lambda _, v=val: self.set_value("startup_state", v))
+            g2.addAction(a)
+            start_menu.addAction(a)
+        lang_menu = m.addMenu(tr("🌐 언어"))
+        g3 = QActionGroup(m)
+        for label, val in (("한국어", "ko"), ("English", "en")):
+            a = QAction(label, m, checkable=True)
+            a.setChecked(self.lang == val)
+            a.triggered.connect(lambda _, v=val: self.on_language_selected(v))
+            g3.addAction(a)
+            lang_menu.addAction(a)
+        for text, key in ((tr("잠재력/버프 설명 표시"), "show_info"), (tr("⚡ 저사양 모드 (OCR 주기 늘림)"), "low_spec_mode"),
+                          (tr("상단바 위치 고정"), "status_badge_locked")):
             a = QAction(text, m, checkable=True)
             a.setChecked(bool(self.settings[key]))
-            a.triggered.connect(lambda checked, k=key: self.set_flag(k, checked))
+            a.triggered.connect(lambda checked, k=key: self.set_value(k, bool(checked)))
             m.addAction(a)
-        m.addAction("배지 위치 초기화", self.reset_badge_pos)
+        m.addAction(tr("상단바 위치 초기화"), self.reset_badge_pos)
         m.addSeparator()
-        m.addAction(f"{APP_NAME} {APP_VERSION}").setEnabled(False)
-        m.addAction("종료", self.quit_app)
-        self.menu = m
+        m.addAction(tr("현재 버전: {}").format(APP_VERSION)).setEnabled(False)
+        return m
+
+    def show_main_menu(self, pos):
+        self.build_main_menu().exec_(pos)
+
+    def show_settings_menu(self, pos):
+        self.build_settings_menu().exec_(pos)
 
     def _build_tray(self):
         self.tray = QSystemTrayIcon(make_tray_icon(), self)
-        self.tray.setToolTip(f"{APP_NAME} {APP_VERSION}")
-        self.tray.setContextMenu(self.menu)
+        self.tray.setToolTip(tr("JourneyHelper가 실행 중입니다 (우클릭: 메뉴)"))
+        self._tray_menu = QMenu()
+        self._tray_menu.aboutToShow.connect(self._refresh_tray_menu)
+        self.tray.setContextMenu(self._tray_menu)
         self.tray.show()
 
-    def show_menu(self, global_pos):
-        self.menu.exec_(global_pos)
+    def _refresh_tray_menu(self):
+        m = self._tray_menu
+        m.clear()
+        main, settings = self.build_main_menu(), self.build_settings_menu()
+        self._tray_keep = [main, settings]            # 액션의 소유자(메뉴)를 살려 둬야 한다 (GC 되면 크래시)
+        for a in main.actions():
+            m.addAction(a)
+        sub = m.addMenu(tr("⚙️ 설정"))
+        for a in settings.actions():
+            sub.addAction(a)
 
     def set_scale(self, v):
-        self.settings["tooltip_font_scale"] = v
+        self.set_value("tooltip_font_scale", v)
         self.tooltip.set_scale(v)
-        save_settings(self.settings)
 
-    def set_flag(self, key, value):
-        self.settings[key] = bool(value)
+    def set_value(self, key, value):
+        self.settings[key] = value
         save_settings(self.settings)
 
     def reset_badge_pos(self):
-        self.settings["status_badge_offset"] = None
-        save_settings(self.settings)
+        self.set_value("status_badge_offset", None)
         self.status.reposition()
+
+    def on_language_selected(self, lang):
+        """언어 변경: DB 캐시를 새 언어로 다시 만들어야 하므로 재시작 여부를 묻는다."""
+        if lang == self.lang:
+            return
+        ans = QMessageBox.question(None, tr("재시작 필요"), tr(
+            "언어를 바꾸면 여정 이벤트 데이터를 새 언어로 다시 불러와야 해요.\n지금 재시작할까요? (재시작 안 하면 일부 이벤트 인식이 이전 언어\n기준으로 남아있어 오작동할 수 있어요)"))
+        if ans == QMessageBox.Yes:
+            self.set_value("language", lang)
+            print("[언어 변경] 새 언어로 다시 시작합니다.")
+            self.restart_app()
+
+    def restart_app(self):
+        release_single_instance()
+        cmd = [sys.executable] if getattr(sys, "frozen", False) else [sys.executable, os.path.abspath(__file__)]
+        try:
+            subprocess.Popen(cmd + [a for a in sys.argv[1:] if a.startswith("--")])
+        except Exception as e:
+            print(f"[재시작 실패] {e}")
+            return
+        self.quit_app()
 
     def quit_app(self):
         self.watcher.stop()
@@ -840,9 +1053,9 @@ def prepare_qt_plugins():
 # ----------------------------------------------------------------------------
 # 셀프테스트 / 진입점
 # ----------------------------------------------------------------------------
-def run_selftest(no_update=False):
+def run_selftest(no_update=False, lang="ko"):
     """GUI/게임 없이: DB 로드(필요 시 갱신) -> 캐시 구성 -> 이벤트 수와 샘플 툴팁 HTML 출력."""
-    store = jh_db.DbStore(user_agent=f"{APP_NAME}/{APP_VERSION} (selftest)")
+    store = jh_db.DbStore(user_agent=f"{APP_NAME}/{APP_VERSION} (selftest)", lang=lang)
     if not no_update:
         res = store.update()
         print(f"[selftest] update: {res.status} - {res.message}")
@@ -850,28 +1063,29 @@ def run_selftest(no_update=False):
     if not journey:
         print("[selftest] 실패: 캐시된 DB가 없습니다")
         return 1
-    cache = jh_db.build_event_cache(journey, arcanas)
+    cache = jh_db.build_event_cache(journey, arcanas, lang)
     arc = sum(1 for e in cache if e["isArcana"])
     print(f"[selftest] 이벤트 {len(cache)}개 (아르카나 {arc} / 일반 {len(cache) - arc}), 캐시 위치: {store.cache_dir}")
     sample = next((e for e in cache if len(e["options"]) >= 2 and any(o["info"] for o in e["options"])), cache[0])
     opt = next((o for o in sample["options"] if o["info"]), sample["options"][0])
     print(f"[selftest] 샘플 이벤트: {sample['rawTitle']}")
-    print(jh_db.format_option_html(opt))
+    print(jh_db.format_option_html(opt, lang=lang))
     return 0
 
 
 def main(argv):
     if "--selftest" in argv:
-        sys.exit(run_selftest(no_update="--no-update" in argv))
+        lang = argv[argv.index("--lang") + 1] if "--lang" in argv and argv.index("--lang") + 1 < len(argv) else "ko"
+        sys.exit(run_selftest(no_update="--no-update" in argv, lang=lang if lang in jh_db.SUPPORTED_LANGS else "ko"))
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(2)     # mss 물리 좌표와 Qt 좌표를 일치시킨다
     except Exception:
         pass
-    mutex = ctypes.windll.kernel32.CreateMutexW(None, False, f"Global\\{APP_NAME}_SingleInstance")
-    if ctypes.windll.kernel32.GetLastError() == 183:
+    if not acquire_single_instance():
         ctypes.windll.user32.MessageBoxW(0, f"{APP_NAME}가 이미 실행 중입니다.\n트레이 아이콘을 확인하세요.", "이미 실행 중", 0x40)
         return 0
     install_crash_logger()
+    set_language(load_settings()["language"])
     prepare_qt_plugins()
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)

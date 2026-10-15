@@ -31,6 +31,13 @@ a = Analysis(
     excludes=EXCLUDES,
     noarchive=False,
 )
+# 용량 줄이기: 쓰지 않는 대용량 바이너리/데이터 제거
+_DROP_BIN = ("opencv_videoio_ffmpeg", "opengl32sw", "d3dcompiler", "Qt5Quick", "Qt5Qml", "Qt5Network", "Qt5Svg",
+             "Qt5DBus", "Qt5WebSockets", "_avif", "libGLESv2", "libEGL")
+_DROP_DATA = ("ch_PP-OCRv4_rec_infer.onnx", "translations", "ch_ppocr_mobile_v2.0_cls")   # 기본 중국어 rec 모델 등
+a.binaries = [b for b in a.binaries if not any(k in b[0] for k in _DROP_BIN)]
+a.datas = [d for d in a.datas if not any(k in d[0] for k in _DROP_DATA)]
+
 pyz = PYZ(a.pure)
 
 exe = EXE(
