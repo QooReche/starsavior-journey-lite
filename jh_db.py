@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 jh_db.py - JourneyHelper Lite 데이터 계층 (GUI/OCR 의존성 없음)
 
@@ -34,12 +34,14 @@ STR = {
            "noinfo": "(정보 없음)", "dup": "※ 같은 제목의 이벤트가 여러 아르카나에 있습니다", "more": "외 {}",
            "stamina": "스태미나", "cond": "컨디션", "pp": "잠재력 포인트", "turn": "{}턴",
            "use_head": "📦 이 아이템의 이후 사용처", "use_none": "이후 사용처 없음 / 확인 안 됨",
-           "more_n": "외 {}건", "from_head": "📥 획득처"},
+           "more_n": "외 {}건", "from_head": "📥 획득처",
+           "ambig": "※ 제목이 비슷해 확정하지 못했습니다 - 화면의 제목과 맞는 것을 보세요"},
     "en": {"buff": "Journey Buff", "poten": "Potential", "auto": "Automatic", "ok": "Success", "fail": "Failure",
            "noinfo": "(no info)", "dup": "* Several arcanas have an event with this title", "more": "+{} more",
            "stamina": "Stamina", "cond": "Condition", "pp": "Potential Point", "turn": "{} Turn",
            "use_head": "📦 Later uses of this item", "use_none": "No later use found / unknown",
-           "more_n": "+{} more", "from_head": "📥 Obtained from"},
+           "more_n": "+{} more", "from_head": "📥 Obtained from",
+           "ambig": "* Title match is uncertain - check which one matches the screen"},
 }
 
 
@@ -761,6 +763,18 @@ def format_option_html(option, scale=1.0, show_info=True, lang="ko"):
     return html
 
 
+def format_ambiguous_html(items, scale=1.0, show_info=True, lang="ko"):
+    """제목이 모호할 때: [(이벤트 제목, 선택지)] -> 제목 머리글을 붙여 이어 붙인 툴팁 HTML"""
+    s = STR.get(lang, STR["ko"])
+    small = max(9, round(12 * scale))
+    parts = []
+    for title, opt in items:
+        parts.append(f'<span style="color:#ffd27f; font-size:{small + 1}px;"><b>◆ {_html.escape(title)}</b></span><br>'
+                     + format_option_html(opt, scale, show_info, lang))
+    sep = '<hr style="border:none;border-top:2px solid #777777;margin:8px 0;">'
+    return (sep.join(parts) + f'<br><span style="color:#aaaaaa; font-size:{max(9, round(11 * scale))}px;">{_html.escape(s["ambig"])}</span>')
+
+
 MAX_USES = 3
 MAX_ITEM_GROUPS = 2
 
@@ -812,22 +826,114 @@ def _render_item_sections(option, scale, s):
     return out
 
 
-def find_best_event(clean_query, events, min_score=0.35):
-    """OCR 제목 -> 가장 비슷한 캐시 이벤트 (원본 헬퍼의 점수식 유지)"""
-    best, best_score = None, 0.0
-    for ev in events:
-        score = score_match(clean_query, ev.get("cleanTitle", ""))
-        if score > best_score and score >= min_score:
-            best, best_score = ev, score
-    return best, best_score
+# ----------------------------------------------------------------------------
+# OCR 제목 -> 이벤트 매칭: 순서를 보는 편집거리 (한글은 자모 단위로 부분 점수)
+# ----------------------------------------------------------------------------
+_JUNK_COST = 0.4        # 질의 양끝의 군더더기 글자 (OCR 이 붙인 쓰레기) 비용
+_MISS_COST = 0.8        # 이벤트 제목에는 있는데 OCR 에서 빠진 글자
+_INS_COST = 1.0         # 질의 중간에 끼어든 글자
+
+
+def _jamo(ch):
+    o = ord(ch) - 0xAC00
+    if 0 <= o < 11172:
+        return (o // 588, (o % 588) // 28, o % 28)
+    return None
+
+
+def _char_cost(a, b):
+    """글자 치환 비용 0(같음) ~ 1(전혀 다름). 한글은 초/중/종성이 일부 같으면 깎아준다 (순/손/소/스 등)"""
+    if a == b:
+        return 0.0
+    ja, jb = _jamo(a), _jamo(b)
+    if not ja or not jb:
+        return 1.0
+    e = [x == y for x, y in zip(ja, jb)]
+    if e[0] and e[1]:
+        return 0.3
+    if e[0] and e[2] or e[1] and e[2]:
+        return 0.45
+    if e[0]:
+        return 0.7
+    if any(e):
+        return 0.85
+    return 1.0
+
+
+def match_cost(q, c):
+    n, m = len(q), len(c)
+    D = [[0.0] * (m + 1) for _ in range(n + 1)]
+    for i in range(1, n + 1):
+        D[i][0] = i * _JUNK_COST
+    for j in range(1, m + 1):
+        D[0][j] = j * _MISS_COST
+    for i in range(1, n + 1):
+        for j in range(1, m + 1):
+            D[i][j] = min(D[i - 1][j - 1] + _char_cost(q[i - 1], c[j - 1]),
+                          D[i - 1][j] + _INS_COST,
+                          D[i][j - 1] + _MISS_COST)
+    return min(D[i][m] + (n - i) * _JUNK_COST for i in range(n + 1))
 
 
 def score_match(q, c):
+    """0~1 유사도 (1 = 동일). q: OCR 글자열, c: 이벤트 제목(둘 다 clean_title 처리된 상태)"""
     if not c or not q:
         return 0.0
-    if c in q or q in c:
-        return min(len(q), len(c)) / max(len(q), len(c)) + 0.35
-    mc = sum(1 for ch in q if ch in c)
-    if mc / len(q) < 0.5 or mc / len(c) < 0.3:
+    return max(0.0, 1.0 - match_cost(q, c) / max(len(c), 2))
+
+
+def _as_list(queries):
+    if isinstance(queries, str):
+        queries = [queries]
+    seen, out = set(), []
+    for q in queries or []:
+        q = clean_title(q)
+        if len(q) >= 2 and q not in seen:
+            seen.add(q)
+            out.append(q)
+    return out
+
+
+def score_candidates(queries, c):
+    """여러 OCR 후보 중 가장 잘 맞는 것 + 나머지 평균을 조금 반영"""
+    sc = [score_match(q, c) for q in queries]
+    if not sc:
         return 0.0
-    return (mc / len(q) + mc / len(c)) / 2.0
+    best = max(sc)
+    return best + 0.05 * (sum(sc) / len(sc))
+
+
+def find_event_candidates(queries, events, min_score=0.5, top=5):
+    """OCR 후보 문자열(들) -> [(event, score)] 점수 내림차순 (min_score 미만 제외)"""
+    qs = _as_list(queries)
+    out = []
+    for ev in events or []:
+        s = score_candidates(qs, ev.get("cleanTitle", ""))
+        if s >= min_score:
+            out.append((ev, s))
+    out.sort(key=lambda x: -x[1])
+    return out[:top]
+
+
+AMBIG_MARGIN = 0.7      # 1등과의 차이가 이 글자 수(비용) 미만이면 모호
+AMBIG_MAX = 3
+
+
+def ambiguous_set(cands, margin=AMBIG_MARGIN, max_n=AMBIG_MAX):
+    """1등과의 차이(점수차 x 제목 길이 = 글자 단위 비용)가 margin 미만인 후보들 (최대 max_n 개). 1개뿐이면 확신."""
+    if not cands:
+        return []
+    top, n = cands[0][1], max(len(cands[0][0].get("cleanTitle", "")), 2)
+    return [c for c in cands if (top - c[1]) * n < margin][:max_n]
+
+
+def find_best_event(clean_query, events, min_score=0.5):
+    """OCR 제목(문자열 또는 후보 리스트) -> (가장 비슷한 캐시 이벤트, 점수). 동점이면 먼저 나온 것"""
+    c = find_event_candidates(clean_query, events, min_score, top=1)
+    return c[0] if c else (None, 0.0)
+
+def match_title(queries, events):
+    """OCR 후보 -> (candidates, ambiguous). candidates=[(event, score)...] 상위 5개, ambiguous=1등과 구분이 안 되는 이벤트 리스트
+    (길이 1이면 확신, 0이면 DB 에 없음)"""
+    cands = find_event_candidates(queries, events)
+    return cands, [ev for ev, _ in ambiguous_set(cands)]
