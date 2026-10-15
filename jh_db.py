@@ -18,10 +18,32 @@ import time
 from collections import OrderedDict, namedtuple
 
 BASE_URL = "https://starsavior-guide.github.io/data/"
-DB_FILES = OrderedDict([
-    ("journey", "journey/ko/journey.json"),
-    ("arcanas", "arcanas/arcanas.json"),
-])
+SUPPORTED_LANGS = ("ko", "en")
+
+
+def db_files(lang="ko"):
+    """언어별로 내려받을 파일 목록 (arcanas.json 은 ko/en/ja 이름이 모두 들어 있어 공용)"""
+    return OrderedDict([("journey", f"journey/{lang}/journey.json"), ("arcanas", "arcanas/arcanas.json")])
+
+
+DB_FILES = db_files("ko")
+
+# 화면 문구 (DB 가 아니라 이 모듈이 만드는 텍스트)
+STR = {
+    "ko": {"buff": "여정 버프", "poten": "잠재력", "auto": "자동 진행", "ok": "성공", "fail": "실패",
+           "noinfo": "(정보 없음)", "dup": "※ 같은 제목의 이벤트가 여러 아르카나에 있습니다", "more": "외 {}",
+           "stamina": "스태미나", "cond": "컨디션", "pp": "잠재력 포인트", "turn": "{}턴"},
+    "en": {"buff": "Journey Buff", "poten": "Potential", "auto": "Automatic", "ok": "Success", "fail": "Failure",
+           "noinfo": "(no info)", "dup": "* Several arcanas have an event with this title", "more": "+{} more",
+           "stamina": "Stamina", "cond": "Condition", "pp": "Potential Point", "turn": "{} Turn"},
+}
+
+
+def _loc(d, lang):
+    """{'ko':..,'en':..,'ja':..} 형태 필드에서 언어에 맞는 값 (비어 있으면 한국어로 대체)"""
+    if not isinstance(d, dict):
+        return d or ""
+    return d.get(lang) or d.get("ko") or ""
 CHECK_INTERVAL_SEC = 12 * 60 * 60     # 자동 확인 최소 간격
 MANUAL_COOLDOWN_SEC = 10 * 60         # 수동 새로고침 쿨다운
 FAIL_BACKOFF_SEC = 10 * 60            # 실패 직후 자동 재시도 금지 시간
@@ -58,7 +80,9 @@ class DbStore:
     """로컬 캐시 + 조건부 GET 갱신기. session은 requests.Session 호환(get 메서드)이면 된다."""
 
     def __init__(self, cache_dir=None, session=None, base_url=BASE_URL,
-                 clock=time.time, user_agent=DEFAULT_USER_AGENT):
+                 clock=time.time, user_agent=DEFAULT_USER_AGENT, lang="ko"):
+        self.lang = lang if lang in SUPPORTED_LANGS else "ko"
+        self.files = db_files(self.lang)
         self.cache_dir = cache_dir or default_cache_dir()
         self.base_url = base_url
         self.clock = clock
@@ -97,12 +121,12 @@ class DbStore:
 
     # --- 조회 ---
     def has_cache(self):
-        return all(os.path.isfile(self._file_path(rel)) for rel in DB_FILES.values())
+        return all(os.path.isfile(self._file_path(rel)) for rel in self.files.values())
 
     def load(self):
         """(journey, arcanas) 반환. 없거나 깨졌으면 (None, None). arcanas는 없어도 동작한다."""
         out = {}
-        for key, rel in DB_FILES.items():
+        for key, rel in self.files.items():
             try:
                 with open(self._file_path(rel), "r", encoding="utf-8") as f:
                     out[key] = json.load(f)
@@ -129,7 +153,7 @@ class DbStore:
                 return UpdateResult("backoff", False, "직전 실패 후 대기 중")
 
         changed, failed, not_modified = False, None, 0
-        for key, rel in DB_FILES.items():
+        for key, rel in self.files.items():
             try:
                 res = self._fetch_one(rel)
             except Exception as e:  # 네트워크 오류, 파싱 오류 등: 조용히 캐시 사용
@@ -195,7 +219,7 @@ def strip_tags(s):
 
 
 def clean_title(s):
-    return re.sub(r"[^가-힣0-9a-zA-Z]", "", s or "")
+    return re.sub(r"[^가-힣0-9a-zA-Z]", "", s or "").lower()
 
 
 def _fmt_num(n):
@@ -207,47 +231,52 @@ def _fmt_num(n):
 class InfoIndex:
     """잠재력/여정 버프 이름 -> 설명 (arcanas.json)"""
 
-    def __init__(self, arcanas=None):
+    def __init__(self, arcanas=None, lang="ko"):
+        self.lang = lang if lang in SUPPORTED_LANGS else "ko"
+        self.s = STR[self.lang]
         self.potentials, self.buffs = {}, {}
         for p in (arcanas or {}).get("potentials", []) or []:
             self.potentials[p.get("id")] = p
         for b in (arcanas or {}).get("journeyBuffs", []) or []:
             self.buffs[b.get("id")] = b
         self.by_name = {}
-        for kind, src in (("잠재력", self.potentials), ("여정 버프", self.buffs)):
+        for kind, src in ((self.s["poten"], self.potentials), (self.s["buff"], self.buffs)):
             for obj in src.values():
-                name = (obj.get("name") or {}).get("ko")
-                desc = strip_tags((obj.get("description") or {}).get("ko", ""))
+                name = _loc(obj.get("name"), self.lang)
+                desc = strip_tags(_loc(obj.get("description"), self.lang))
                 if name and desc:
                     self.by_name.setdefault(name, {"name": name, "desc": desc, "kind": kind})
         self._names = sorted(self.by_name, key=len, reverse=True)
 
     def pname(self, pid):
-        return ((self.potentials.get(pid) or {}).get("name") or {}).get("ko", "")
+        return _loc((self.potentials.get(pid) or {}).get("name"), self.lang)
 
     def pdesc(self, pid):
-        return strip_tags(((self.potentials.get(pid) or {}).get("description") or {}).get("ko", ""))
+        return strip_tags(_loc((self.potentials.get(pid) or {}).get("description"), self.lang))
 
     def bname(self, bid):
-        return ((self.buffs.get(bid) or {}).get("name") or {}).get("ko", "")
+        return _loc((self.buffs.get(bid) or {}).get("name"), self.lang)
 
     def bdesc(self, bid):
-        return strip_tags(((self.buffs.get(bid) or {}).get("description") or {}).get("ko", ""))
+        return strip_tags(_loc((self.buffs.get(bid) or {}).get("description"), self.lang))
 
     def find_in_text(self, text):
         """표 형태 이벤트의 보상 문자열에서 알려진 잠재력/버프 이름을 찾아 설명을 돌려준다."""
         found, rest = [], text
         for name in self._names:
-            if name in rest and (len(name) >= 3 or "버프" in text):
+            if name in rest and (len(name) >= 3 or "버프" in text or "Buff" in text):
                 found.append(self.by_name[name])
                 rest = rest.replace(name, " ")
         return found
 
 
 _COND_WORDS = ("사용", "소모", "필요")
+_COND_EN = re.compile(r"^(Use|Requires?)\b", re.I)
 
 
 def is_condition_line(line):
+    if _COND_EN.match(line.strip()):
+        return True
     return any(w in line for w in _COND_WORDS) and "+" not in line
 
 
@@ -261,12 +290,14 @@ def _entry_to_line_and_info(x, idx):
         name = label.split("·", 1)[-1].strip() if "·" in label else label
         if not desc and idx is not None:
             desc = idx.bdesc(x.get("sourceId"))
-        return f"여정 버프 {name} {value}".strip(), ({"name": name, "desc": desc, "kind": "여정 버프"} if desc else None)
+        return (f"{idx.s['buff']} {name} {value}".strip(),
+                ({"name": name, "desc": desc, "kind": idx.s["buff"]} if desc else None))
     if t == "RT_SE_POTEN":
         name = label or (idx.pname(x.get("sourceId")) if idx else "")
         if not desc and idx is not None:
             desc = idx.pdesc(x.get("sourceId"))
-        return f"잠재력 {name}".strip(), ({"name": name, "desc": desc, "kind": "잠재력"} if desc else None)
+        return (f"{idx.s['poten']} {name}".strip(),
+                ({"name": name, "desc": desc, "kind": idx.s["poten"]} if desc else None))
     return f"{label} {value}".strip(), None
 
 
@@ -282,21 +313,20 @@ def _raw_entry_to_journey_entry(r, idx):
         value = f"{_fmt_num(mn)}~{_fmt_num(mx)}"
     e = {"sourceType": t, "sourceId": r.get("rewardId"), "label": "", "value": value, "description": ""}
     if t == "RT_STAT":
-        e["label"] = (r.get("statName") or {}).get("ko", "")
+        e["label"] = _loc(r.get("statName"), idx.lang)
     elif t == "RT_STAMINA":
-        e["label"] = "스태미나"
+        e["label"] = idx.s["stamina"]
     elif t == "RT_CONDITION":
-        e["label"] = "컨디션"
+        e["label"] = idx.s["cond"]
     elif t == "RT_POTEN_POINT":
-        e["label"] = "잠재력 포인트"
+        e["label"] = idx.s["pp"]
     elif t == "RT_SE_POTEN":
         e["label"] = idx.pname(r.get("rewardId"))
         e["value"] = ""
     elif t == "RT_JOURNEY_BUFF":
-        name = idx.bname(r.get("rewardId")) or (r.get("journeyBuffName") or {}).get("ko", "") \
-            if isinstance(r.get("journeyBuffName"), dict) else (idx.bname(r.get("rewardId")) or r.get("journeyBuffName") or "")
-        e["label"] = f"여정 버프 획득 · {name}"
-        e["value"] = f"{mn}턴" if mn is not None else ""
+        name = idx.bname(r.get("rewardId")) or _loc(r.get("journeyBuffName"), idx.lang)
+        e["label"] = f"{idx.s['buff']} · {name}"
+        e["value"] = idx.s["turn"].format(mn) if mn is not None else ""
     else:
         e["label"] = str(t)
     return e
@@ -346,14 +376,14 @@ def _arcana_events_from_raw(arcanas, idx, skip_ids):
     for a in (arcanas or {}).get("arcanas", []) or []:
         if a.get("id") in skip_ids:
             continue
-        aname = (a.get("name") or {}).get("ko", "")
+        aname = _loc(a.get("name"), idx.lang)
         for ev in a.get("events", []) or []:
             opts = []
             for ch in ev.get("choices", []) or []:
                 conv = lambda groups: [[_raw_entry_to_journey_entry(r, idx) for r in grp] for grp in groups or []]
-                opts.append(_choice_to_option((ch.get("name") or {}).get("ko", ""), conv(ch.get("successRewards")),
+                opts.append(_choice_to_option(_loc(ch.get("name"), idx.lang), conv(ch.get("successRewards")),
                                               conv(ch.get("failureRewards")), idx))
-            out.append((a.get("id"), (ev.get("name") or {}).get("ko", ""), aname, opts))
+            out.append((a.get("id"), _loc(ev.get("name"), idx.lang), aname, opts))
     return out
 
 
@@ -448,9 +478,9 @@ def _merge_candidates(cands):
     return merged
 
 
-def build_event_cache(journey, arcanas=None):
+def build_event_cache(journey, arcanas=None, lang="ko"):
     """journey.json (+ arcanas.json) -> db_event_cache 리스트."""
-    idx = InfoIndex(arcanas)
+    idx = InfoIndex(arcanas, lang)
     groups = OrderedDict()      # cleanTitle -> {'raw','arcana','cands':[(src, opts)]}
 
     def add(title, is_arcana, src, opts):
@@ -490,8 +520,8 @@ def build_event_cache(journey, arcanas=None):
 # ----------------------------------------------------------------------------
 # 툴팁 HTML
 # ----------------------------------------------------------------------------
-DIFF_BADGE_COLORS = {"이지": "#3ddc84", "노말": "#ffcc4d", "하드": "#ff6b6b"}
-_DIFF_RE = re.compile(r"^(이지|노말|하드)(?:\s+(.*))?$")
+DIFF_BADGE_COLORS = {"이지": "#3ddc84", "노말": "#ffcc4d", "하드": "#ff6b6b", "Easy": "#3ddc84", "Normal": "#ffcc4d", "Hard": "#ff6b6b"}
+_DIFF_RE = re.compile(r"^(이지|노말|하드|Easy|Normal|Hard)(?:\s+(.*))?$")
 _TAG_PREFIX = re.compile(r"^\[(SUCCESS|FAIL)\]\s*")
 _OUTCOME_STYLE = {"SUCCESS": ("rgba(61,220,132,0.16)", "#3ddc84"), "FAIL": ("rgba(255,92,92,0.16)", "#ff5c5c")}
 MAX_INFO_ITEMS = 6
@@ -518,7 +548,7 @@ def _split_blocks(reward):
     return blocks
 
 
-def _render_block(block, esc, scale, tint):
+def _render_block(block, esc, scale, tint, s):
     px = max(10, round(14 * scale))
     small = max(9, round(12 * scale))
     parts, badge, conds, bullets = [], None, [], []
@@ -544,38 +574,39 @@ def _render_block(block, esc, scale, tint):
         parts.append(head)
     for b in bullets:
         parts.append(f'<span style="color:#ffffff; font-size:{px}px;">• {esc(b)}</span>')
-    inner = "<br>".join(parts) or f'<span style="color:#888888; font-size:{small}px;">(정보 없음)</span>'
+    inner = "<br>".join(parts) or f'<span style="color:#888888; font-size:{small}px;">{esc(s["noinfo"])}</span>'
     if tint and block["type"] in _OUTCOME_STYLE:
         bg, border = _OUTCOME_STYLE[block["type"]]
-        label = "성공" if block["type"] == "SUCCESS" else "실패"
+        label = s["ok"] if block["type"] == "SUCCESS" else s["fail"]
         inner = (f'<div style="background-color:{bg}; border-left:3px solid {border}; padding:4px 8px;">'
                  f'<span style="color:{border}; font-size:{small}px;">{label}</span><br>{inner}</div>')
     return inner
 
 
-def format_option_html(option, scale=1.0, show_info=True):
+def format_option_html(option, scale=1.0, show_info=True, lang="ko"):
+    s = STR.get(lang, STR["ko"])
     """선택지 1개 -> 툴팁용 HTML 문자열."""
     esc = _html.escape
     name = re.sub(r"[\.\s]+$", "", option.get("choice", ""))
     star = "⭐ " if option.get("recommended") else ""
-    title = f"💡 <b>{star}{esc(name)}</b>" if name else "💡 <b>자동 진행</b>"
+    title = f"💡 <b>{star}{esc(name)}</b>" if name else f"💡 <b>{esc(s['auto'])}</b>"
     variants = option.get("variants") or [{"sources": [], "reward": option.get("reward", ""), "info": option.get("info", [])}]
     body = []
     divider = '<hr style="border:none;border-top:1px solid #333333;margin:6px 0;">'
     for v in variants:
         blocks = _split_blocks(v.get("reward", ""))
         tint = any(b["type"] == "FAIL" for b in blocks)
-        rendered = divider.join(f'<div style="margin-bottom:2px;">{_render_block(b, esc, scale, tint)}</div>' for b in blocks)
+        rendered = divider.join(f'<div style="margin-bottom:2px;">{_render_block(b, esc, scale, tint, s)}</div>' for b in blocks)
         if len(variants) > 1:
             src = v.get("sources") or []
-            shown = ", ".join(src[:3]) + (f" 외 {len(src) - 3}" if len(src) > 3 else "")
+            shown = ", ".join(src[:3]) + (" " + s["more"].format(len(src) - 3) if len(src) > 3 else "")
             rendered = f'<span style="color:#00e5ff; font-size:{max(9, round(12 * scale))}px;">🃏 {esc(shown)}</span><br>' + rendered
         body.append(rendered or "")
     html = title + '<hr style="border:none;border-top:1px solid #444444;margin:4px 0;">' + \
         '<hr style="border:none;border-top:1px dashed #555555;margin:6px 0;">'.join(body)
     if len(variants) > 1:
-        html += ('<br><span style="color:#aaaaaa; font-size:%dpx;">※ 같은 제목의 이벤트가 여러 아르카나에 있습니다</span>'
-                 % max(9, round(11 * scale)))
+        html += ('<br><span style="color:#aaaaaa; font-size:%dpx;">%s</span>'
+                 % (max(9, round(11 * scale)), esc(s["dup"])))
     infos = option.get("info") or []
     if show_info and infos:
         small = max(9, round(12 * scale))

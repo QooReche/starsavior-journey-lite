@@ -118,6 +118,48 @@ class CacheBuildTests(unittest.TestCase):
         self.assertTrue(all(e["options"] for e in c))
 
 
+class EnglishTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        journey = json.loads(_read("journey", "en", "journey.json"))
+        arcanas = json.loads(_read("arcanas", "arcanas.json"))
+        cls.cache = jh_db.build_event_cache(journey, arcanas, lang="en")
+        cls.by = {e["cleanTitle"]: e for e in cls.cache}
+
+    def test_titles_and_options(self):
+        e = self.by[jh_db.clean_title("Leisure Time")]
+        self.assertEqual(len(e["options"]), 4)
+        self.assertIn("Use Old Coin 50", e["options"][0]["reward"])
+        self.assertTrue(e["options"][0]["has_condition"])
+        self.assertIn("Endurance +10 or Endurance +20", e["options"][2]["reward"])
+
+    def test_english_info_and_prefix(self):
+        txt = " ".join(o["reward"] for e in self.cache if e["isArcana"] for o in e["options"])
+        self.assertIn("Journey Buff", txt)
+        self.assertIn("Potential ", txt)
+        infos = [i for e in self.cache for o in e["options"] for i in o["info"]]
+        self.assertTrue(any(i["desc"] and not any("가" <= c <= "힣" for c in i["desc"]) for i in infos))
+
+    def test_html_lang(self):
+        e = self.by[jh_db.clean_title("Leisure Time")]
+        self.assertIn("Use Old Coin 50", jh_db.format_option_html(e["options"][0], lang="en"))
+        auto = {"choice": "", "reward": "Strength +3", "info": []}
+        self.assertIn("Automatic", jh_db.format_option_html(auto, lang="en"))
+        self.assertIn("자동 진행", jh_db.format_option_html(auto, lang="ko"))
+
+    def test_matching_is_case_insensitive(self):
+        best, _ = jh_db.find_best_event(jh_db.clean_title("leisure time"), self.cache)
+        self.assertEqual(best["rawTitle"], "Leisure Time")
+
+    def test_store_uses_language_path(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            s = FakeSession(ok_handler)
+            st = jh_db.DbStore(d, session=s, lang="en")
+            st.update()
+            self.assertTrue(s.calls[0][0].endswith("journey/en/journey.json"))
+
+
 class UpdateTests(unittest.TestCase):
     def setUp(self):
         import tempfile
