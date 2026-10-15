@@ -454,6 +454,41 @@ def read_title_candidates(ocr, gray, scales=TITLE_SCALES, min_conf=0.4):
     return out
 
 
+class LeaveGrace:
+    """라벨이 found<->unseen/other 로 깜빡일 때 '이탈'을 곧바로 확정하지 않기 위한 유예 타이머."""
+
+    def __init__(self, grace, clock=time.monotonic):
+        self.grace, self.clock, self._since = grace, clock, None
+
+    def good(self):
+        self._since = None
+
+    def bad_long_enough(self):
+        now = self.clock()
+        if self._since is None:
+            self._since = now
+        return now - self._since >= self.grace
+
+
+class TitleMemo:
+    """방금 이벤트 화면을 떠난 직후(ttl 초) 같은 제목 이미지가 다시 보이면 OCR 을 다시 하지 않고 결과를 재사용한다."""
+
+    def __init__(self, ttl, clock=time.monotonic):
+        self.ttl, self.clock, self._item = ttl, clock, None
+
+    def remember(self, gray, cands, title):
+        if gray is not None and cands:
+            self._item = (self.clock(), gray, list(cands), title)
+
+    def recall(self, gray, limit=1.0):
+        it = self._item
+        if it is None or self.clock() - it[0] > self.ttl:
+            return None
+        if it[1].shape != gray.shape or cv2.absdiff(gray, it[1]).mean() >= limit:
+            return None
+        return list(it[2]), it[3]
+
+
 # ----------------------------------------------------------------------------
 # 화면 감시 스레드: 라벨 확인 -> (확인된 경우에만) 제목 OCR
 # ----------------------------------------------------------------------------
@@ -465,6 +500,8 @@ class ScreenWatcher(QThread):
 
     LEAVE_AFTER_OTHER = 3     # 라벨 자리에 다른 글자가 읽힘 -> 이벤트 화면이 아니라고 확신 (연속 횟수)
     LEAVE_AFTER_UNSEEN = 8    # 아무것도 못 읽음 -> 스캔 실패일 수 있으니 더 오래 기다림
+    LEAVE_GRACE_SEC = 1.5     # 위 횟수를 채워도 이만큼 계속 안 보여야 이탈 확정 (깜빡임 디바운스)
+    REENTRY_MEMO_SEC = 4.0    # 이탈 직후 이 시간 안에 같은 제목 이미지가 다시 보이면 OCR 생략
 
     def __init__(self, pause_getter=None, low_spec_getter=None, lang_getter=None):
         super().__init__()
@@ -479,6 +516,8 @@ class ScreenWatcher(QThread):
         self.on_event_screen = False
         self._reverify = True
         self._was_inactive = False
+        self._grace = LeaveGrace(self.LEAVE_GRACE_SEC)
+        self._memo = TitleMemo(self.REENTRY_MEMO_SEC)
         self._reset_scan_state()
 
     def _reset_scan_state(self):
@@ -500,6 +539,8 @@ class ScreenWatcher(QThread):
     def _leave_event_screen(self):
         """(1) 라벨이 사라졌거나 이벤트 화면을 떠남 -> 진행 상태 전부 초기화"""
         was = self.on_event_screen
+        self._memo.remember(self._last_title_gray, self._cached_title, self.last_title)
+        self._grace.good()
         self.label_visible = False
         self.on_event_screen = False
         self._reset_scan_state()
@@ -533,7 +574,12 @@ class ScreenWatcher(QThread):
         if last is not None and last.shape == gray.shape and cv2.absdiff(gray, last).mean() < limit:
             return self._cached_title
         self._last_title_gray = gray
-        self._cached_title = read_title_candidates(self.ocr, gray)
+        memo = self._memo.recall(gray, limit)
+        if memo:
+            self._cached_title = memo[0]
+            log(f"[OCR] 직전과 같은 제목 이미지 -> 재인식 생략 {memo[0]}")
+        else:
+            self._cached_title = read_title_candidates(self.ocr, gray)
         return self._cached_title
 
     def run(self):
@@ -580,6 +626,7 @@ class ScreenWatcher(QThread):
                 state = self._scan_label(sct, rect)
                 if state == "found":
                     self._miss = 0
+                    self._grace.good()
                     self.label_visible = True
                     if not self.on_event_screen:
                         self.on_event_screen = True
@@ -587,7 +634,8 @@ class ScreenWatcher(QThread):
                 else:
                     self._miss += 1
                     limit = self.LEAVE_AFTER_OTHER if state == "other" else self.LEAVE_AFTER_UNSEEN
-                    if self._miss >= limit and (self.label_visible or self.on_event_screen):
+                    long_enough = self._grace.bad_long_enough()      # 처음 안 보인 순간부터 시간을 잰다
+                    if self._miss >= limit and long_enough and (self.label_visible or self.on_event_screen):
                         self._leave_event_screen()
                     if state == "other":
                         self.label_visible = False       # 다른 글자가 보이면 즉시 제목 인식 중단 (오탐 방지)
@@ -920,6 +968,8 @@ class MouseHoverManager(QWidget):
 
     # --- 워처 콜백 ---
     def on_journey_status(self, active):
+        if active and self.in_journey:
+            return                                      # 이미 진입 상태: 중복 알림 무시
         self.in_journey = active
         log(f"[상태] 이벤트 화면 {'진입' if active else '이탈'}")
         if active:
