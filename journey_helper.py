@@ -15,6 +15,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 import traceback
 from ctypes import wintypes
@@ -103,12 +104,37 @@ def load_settings():
     return settings
 
 
+LOG_MAX_BYTES = 256 * 1024
+_log_lock = threading.Lock()
+
+
+def log(msg):
+    """%APPDATA%\\JourneyHelperLite\\log.txt 에 한 줄 기록 (256KB 에서 log.txt.1 로 회전). 어떤 실패도 앱을 멈추지 않는다."""
+    line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}"
+    try:
+        print(line)
+    except Exception:
+        pass
+    try:
+        with _log_lock:
+            path = os.environ.get("JH_LOG_PATH") or os.path.join(get_settings_dir(), "log.txt")
+            try:
+                if os.path.getsize(path) > LOG_MAX_BYTES:
+                    os.replace(path, path + ".1")
+            except OSError:
+                pass
+            with open(path, "a", encoding="utf-8", newline="\n") as f:
+                f.write(line + "\n")
+    except Exception:
+        pass
+
+
 def save_settings(settings):
     try:
         with open(os.path.join(get_settings_dir(), "settings.json"), "w", encoding="utf-8") as f:
             json.dump(settings, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        print(f"[설정 저장 실패] {e}")
+        log(f"[설정 저장 실패] {e}")
 
 
 # ----------------------------------------------------------------------------
@@ -127,6 +153,7 @@ _TRANSLATIONS_EN = {
     "🟢 [여정 진행 중] {}": "🟢 [Journey in Progress] {}",
     "🔵 [이벤트 확인 중] {}...": "🔵 [Confirming Event] {}...",
     "⚠️ [추정] {}": "⚠️ [Estimate] {}",
+    "⚠️ [후보 {}개] {}": "⚠️ [{} candidates] {}",
     "🟠 [DB에 없는 제목] {}": "🟠 [Title not in DB] {}",
     "🟢 [DB 준비 완료] 이벤트 {}개": "🟢 [Database Ready] {} events loaded",
     "⏳ 수동 새로고침은 잠시 후 다시 가능합니다 (10분 쿨다운)": "⏳ Manual refresh is on cooldown (10 min)",
@@ -402,11 +429,26 @@ class KoreanOCR:
         return (text or "").strip(), float(conf or 0.0)
 
 
+TITLE_SCALES = (2.0, 1.6, 1.0)      # 배율마다 오인식이 달라 후보를 모두 모은다 (2.0 이 평균적으로 가장 정확)
+
+
+def read_title_candidates(ocr, gray, scales=TITLE_SCALES, min_conf=0.4):
+    """제목 영역(gray)을 여러 배율(INTER_CUBIC)로 읽어 정리된 후보 문자열들을 중복 없이 돌려준다."""
+    out = []
+    for sc in scales:
+        g = gray if sc == 1.0 else cv2.resize(gray, None, fx=sc, fy=sc, interpolation=cv2.INTER_CUBIC)
+        text, conf = ocr.read_line(g)
+        t = clean_ocr_title(text) if conf >= min_conf else ""
+        if len(t) >= 2 and t not in out:
+            out.append(t)
+    return out
+
+
 # ----------------------------------------------------------------------------
 # 화면 감시 스레드: 라벨 확인 -> (확인된 경우에만) 제목 OCR
 # ----------------------------------------------------------------------------
 class ScreenWatcher(QThread):
-    title_detected = pyqtSignal(str)
+    title_detected = pyqtSignal(object)     # OCR 후보 문자열 리스트 (배율별, 가장 믿을 만한 것이 앞)
     journey_status_changed = pyqtSignal(bool)
     model_loading = pyqtSignal()
     model_ready = pyqtSignal()
@@ -434,7 +476,7 @@ class ScreenWatcher(QThread):
         self._last_label_gray = None
         self._label_state = "unseen"
         self._last_title_gray = None
-        self._cached_title = ""
+        self._cached_title = []
         self.last_title = ""
 
     def request_reverify(self):
@@ -467,6 +509,8 @@ class ScreenWatcher(QThread):
             state = "found"
         else:
             state = "other"
+        if state != self._label_state:
+            log(f"[라벨] {self._label_state} -> {state} ('{text}' conf={conf:.2f})")
         self._label_state = state
         return state
 
@@ -477,8 +521,7 @@ class ScreenWatcher(QThread):
         if last is not None and last.shape == gray.shape and cv2.absdiff(gray, last).mean() < limit:
             return self._cached_title
         self._last_title_gray = gray
-        text, conf = self.ocr.read_line(gray)
-        self._cached_title = clean_ocr_title(text) if conf >= 0.4 else ""
+        self._cached_title = read_title_candidates(self.ocr, gray)
         return self._cached_title
 
     def run(self):
@@ -506,14 +549,14 @@ class ScreenWatcher(QThread):
                     self._last_label_gray = self._last_title_gray = None
                 if self.ocr is None:
                     self.model_loading.emit()
-                    print("[지연 로딩] 게임 감지됨 -> 제목/라벨 인식용 OCR 모델 로딩 시작...")
+                    log("[지연 로딩] 게임 감지됨 -> 제목/라벨 인식용 OCR 모델 로딩 시작...")
                     self.ocr = KoreanOCR()
-                    print("[지연 로딩] 제목/라벨 인식용 OCR 모델 로딩 완료")
+                    log("[지연 로딩] 제목/라벨 인식용 OCR 모델 로딩 완료")
                     self.model_ready.emit()
                 lr = self._last_rect
                 if lr and any(abs(rect[k] - lr[k]) > 5 for k in ("left", "top", "width", "height")):
                     # 게임 창이 이동/리사이즈됨: 영역은 매 주기 창 기준 비율로 다시 계산되므로 캐시만 비우고 재스캔한다
-                    print("[게임 창 변경 감지] 위치/크기가 바뀜 -> 캡처 영역 재보정")
+                    log("[게임 창 변경 감지] 위치/크기가 바뀜 -> 캡처 영역 재보정")
                     self._last_label_gray = self._last_title_gray = None
                 self._last_rect = dict(rect)
                 if self._reverify:
@@ -538,13 +581,14 @@ class ScreenWatcher(QThread):
                         self.label_visible = False       # 다른 글자가 보이면 즉시 제목 인식 중단 (오탐 방지)
 
                 if self.label_visible:
-                    title = self._scan_title(sct, rect)
-                    if len(title) >= 2 and not same_text(title, self.last_title):
+                    cands = self._scan_title(sct, rect)
+                    title = cands[0] if cands else ""
+                    if len(title) >= 2 and not same_text(title, self.last_title, 0.9):
                         self.last_title = title
-                        print(f"[OCR] 제목: {title}")
-                        self.title_detected.emit(title)
+                        log(f"[OCR] 제목 후보: {cands}")
+                        self.title_detected.emit(list(cands))
             except Exception as e:
-                print(f"[ScreenWatcher 예외] {e}")
+                log(f"[ScreenWatcher 예외] {e}\n{traceback.format_exc()}")
             self.msleep(350 if self.low_spec_getter() else 200)
 
 
@@ -565,7 +609,7 @@ class DbThread(QThread):
             cache = jh_db.build_event_cache(journey, arcanas) if journey else []
             self.finished_ok.emit(cache, res.status, res.message)
         except Exception as e:
-            print(f"[DB 로딩 예외] {e}")
+            log(f"[DB 로딩 예외] {e}\n{traceback.format_exc()}")
             self.finished_ok.emit([], "error", str(e))
 
 
@@ -774,6 +818,7 @@ class MouseHoverManager(QWidget):
             lambda: self.status.set_status(tr("🟡 [OCR 모델 로딩 중] 처음 한 번만 몇 초 걸려요..."), "#ffcc00", flash=True))
         self.watcher.model_ready.connect(lambda: self.status.set_status(self._idle_text(), "#888888"))
         self.watcher.start()
+        log(f"[시작] {APP_NAME} {APP_VERSION} lang={self.lang} low_spec={self.settings['low_spec_mode']}")
 
         for interval, fn in ((60, self.check_hover), (300, self.poll_loading), (1000, self.maintain_overlays)):
             t = QTimer(self)
@@ -788,6 +833,7 @@ class MouseHoverManager(QWidget):
         self.in_journey = False
         self.current_title = ""
         self.matched = None
+        self.ambig = []
         self.zones = []
         self.options = []
         if hasattr(self, "tooltip"):
@@ -811,7 +857,7 @@ class MouseHoverManager(QWidget):
     def on_db_loaded(self, cache, status, message, manual):
         if cache:
             self.db_event_cache = cache
-            print(f"[DB] 이벤트 {len(cache)}개 ({status}: {message})")
+            log(f"[DB] 이벤트 {len(cache)}개 ({status}: {message})")
             text = tr("🟢 [DB 준비 완료] 이벤트 {}개").format(len(cache))
             if manual and status == "cooldown":
                 text = tr("⏳ 수동 새로고침은 잠시 후 다시 가능합니다 (10분 쿨다운)")
@@ -820,6 +866,7 @@ class MouseHoverManager(QWidget):
             self.status.set_status(text, "#3ddc84", protect_sec=4, flash=True)
             QTimer.singleShot(4200, lambda: self.status.set_status(self._journey_text() if self.in_journey else self._idle_text(), "#888888"))
         else:
+            log(f"[DB] 없음 ({status}: {message})")
             self.status.set_status(tr("🔴 DB 없음 - 인터넷 연결 후 메뉴에서 새로고침"), "#ff5c5c", protect_sec=8 if manual else 0, flash=True)
 
     def refresh_db(self):
@@ -828,30 +875,48 @@ class MouseHoverManager(QWidget):
     # --- 워처 콜백 ---
     def on_journey_status(self, active):
         self.in_journey = active
+        log(f"[상태] 이벤트 화면 {'진입' if active else '이탈'}")
         if active:
             self.status.set_status(tr("🔵 [이벤트 확인 중] {}...").format(self.current_title or "..."), "#00aaff", flash=True)
         else:                                           # (1) 이벤트 화면 이탈 -> 오래된 상태 제거
             self.reset_event_state()
             self.status.set_status(self._idle_text(), "#888888")
 
-    def on_title(self, title):
+    def on_title(self, titles):
+        """titles: OCR 후보 문자열 리스트(또는 문자열 하나)"""
+        cands_txt = [titles] if isinstance(titles, str) else list(titles or [])
+        title = cands_txt[0] if cands_txt else ""
         if title == self.current_title:
             return
-        self.current_title, self.matched, self.zones, self.options = title, None, [], []
+        self.current_title, self.matched, self.zones, self.options, self.ambig = title, None, [], [], []
         self.tooltip.hide_and_clear()
-        q = jh_db.clean_title(title)
-        if len(q) < 2 or not self.db_event_cache:
+        if len(jh_db.clean_title(title)) < 2 or not self.db_event_cache:
             return
-        best, score = jh_db.find_best_event(q, self.db_event_cache)
-        if not best:
+        cands, amb = jh_db.match_title(cands_txt, self.db_event_cache)
+        if not cands:
+            log(f"[매칭] {cands_txt} -> 없음")
             self.status.set_status(tr("🟠 [DB에 없는 제목] {}").format(title), "#ff9800", flash=True)
             return
+        best, score = cands[0]
         self.matched, self.options = best, best.get("options", [])
-        weak = score < 0.5
-        text = (tr("⚠️ [추정] {}") if weak else tr("🟢 [여정 진행 중] {}")).format(best["rawTitle"])
-        self.status.set_status(text, "#ff9800" if weak else "#00e5ff", flash=True)
-        print(f"[매칭] '{title}' -> '{best['rawTitle']}' ({score:.2f})")
+        self.ambig = amb if len(amb) > 1 else []
+        weak = score < 0.65
+        if self.ambig:
+            text = tr("⚠️ [후보 {}개] {}").format(len(self.ambig), " / ".join(e["rawTitle"] for e in self.ambig))
+        else:
+            text = (tr("⚠️ [추정] {}") if weak else tr("🟢 [여정 진행 중] {}")).format(best["rawTitle"])
+        self.status.set_status(text, "#ff9800" if (weak or self.ambig) else "#00e5ff", flash=True)
+        run = f", 차점 '{cands[1][0]['rawTitle']}' ({cands[1][1]:.2f})" if len(cands) > 1 else ""
+        log(f"[매칭] {cands_txt} -> '{best['rawTitle']}' ({score:.2f}){run}" + (f" 모호:{[e['rawTitle'] for e in self.ambig]}" if self.ambig else ""))
         self.zones = self.estimate_zones(len(self.options)) if len(self.options) >= 2 else []
+
+    def _option_html(self, idx, option, scale, show_info):
+        """선택지 idx 의 툴팁 HTML. 제목이 모호하면 후보 이벤트마다 같은 번호의 선택지를 제목 머리글과 함께 보여준다."""
+        if self.ambig:
+            items = [(e["rawTitle"], e["options"][idx]) for e in self.ambig if idx < len(e.get("options") or [])]
+            if len(items) > 1:
+                return jh_db.format_ambiguous_html(items, scale, show_info, self.lang)
+        return jh_db.format_option_html(option, scale, show_info, self.lang)
 
     def estimate_zones(self, count):
         """선택지 버튼의 Y 범위를 게임 창 비율로 추정 (아래 기준선에서 위로 쌓임)."""
@@ -860,7 +925,7 @@ class MouseHoverManager(QWidget):
         zones = []
         for i, opt in enumerate(self.options[:count]):
             cy = bottom - (count - 1 - i) * pitch
-            zones.append({"y_min": cy - btn_h // 2, "y_max": cy + btn_h // 2, "option": opt})
+            zones.append({"y_min": cy - btn_h // 2, "y_max": cy + btn_h // 2, "option": opt, "idx": i})
         return zones
 
     # --- 로딩 화면: 상태 초기화 후, 끝나면 라벨부터 다시 확인 (5) ---
@@ -901,7 +966,7 @@ class MouseHoverManager(QWidget):
             return
         scale, show_info = self.settings["tooltip_font_scale"], self.settings["show_info"]
         if len(self.options) == 1:                      # 선택지가 하나(자동 진행)면 호버 없이 바로 표시
-            self.tooltip.show_html(jh_db.format_option_html(self.options[0], scale, show_info, self.lang))
+            self.tooltip.show_html(self._option_html(0, self.options[0], scale, show_info))
             return
         rect, pos = get_game_window_rect(), QCursor.pos()
         if rect:
@@ -911,7 +976,7 @@ class MouseHoverManager(QWidget):
         if x0 <= pos.x() <= x1:
             for z in self.zones:
                 if z["y_min"] <= pos.y() <= z["y_max"]:
-                    self.tooltip.show_html(jh_db.format_option_html(z["option"], scale, show_info, self.lang))
+                    self.tooltip.show_html(self._option_html(z["idx"], z["option"], scale, show_info))
                     return
         self.tooltip.hide_and_clear()
 
@@ -1028,7 +1093,7 @@ class MouseHoverManager(QWidget):
             "언어를 바꾸면 여정 이벤트 데이터를 새 언어로 다시 불러와야 해요.\n지금 재시작할까요? (재시작 안 하면 일부 이벤트 인식이 이전 언어\n기준으로 남아있어 오작동할 수 있어요)"))
         if ans == QMessageBox.Yes:
             self.set_value("language", lang)
-            print("[언어 변경] 새 언어로 다시 시작합니다.")
+            log("[언어 변경] 새 언어로 다시 시작합니다.")
             self.restart_app()
 
     def restart_app(self):
@@ -1037,7 +1102,7 @@ class MouseHoverManager(QWidget):
         try:
             subprocess.Popen(cmd + [a for a in sys.argv[1:] if a.startswith("--")])
         except Exception as e:
-            print(f"[재시작 실패] {e}")
+            log(f"[재시작 실패] {e}")
             return
         self.quit_app()
 
