@@ -35,6 +35,13 @@ def test_difficulty_filter():
     assert jh_db.format_option_html(DIFF, difficulty="bogus").count("힘 +") == 3
 
 
+def test_hidden_difficulty_list():
+    h = jh_db.format_option_html(DIFF, difficulty=["easy"])
+    assert h.count("힘 +") == 2
+    assert jh_db.format_option_html(DIFF, difficulty=[]).count("힘 +") == 3
+    assert jh_db.format_option_html(DIFF, difficulty=["easy", "normal", "hard"]).count("힘 +") == 3   # 전부 숨기면 원본
+
+
 def test_difficulty_leaves_unlabelled_events_alone():
     assert jh_db.format_option_html(RANDOM, difficulty="hard").count("힘 +") == 3
 

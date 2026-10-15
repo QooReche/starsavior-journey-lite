@@ -790,17 +790,29 @@ def block_difficulty(block):
     return DIFF_KEYS.get(m.group(1)) if m else None
 
 
+def hidden_set(difficulty):
+    """difficulty 인자 -> 숨길 난이도 집합.
+    문자열('all'|'easy'|'normal'|'hard')이면 '그 난이도만 표시', 리스트/집합이면 원작 1.1.3 의
+    hidden_difficulties 와 같은 '숨길 난이도 목록'으로 해석한다(알 수 없는 값은 무시)."""
+    if isinstance(difficulty, str):
+        if difficulty not in DIFFICULTIES or difficulty == "all":
+            return set()
+        return {d for d in DIFFICULTIES[1:] if d != difficulty}
+    return {d for d in (difficulty or ()) if d in DIFFICULTIES[1:]}
+
+
 def filter_blocks_by_difficulty(blocks, difficulty):
-    """난이도가 명시된 블록만 걸러낸다. 난이도 표시가 없는 블록(랜덤 결과 등)은 항상 유지.
-    걸러 낸 결과가 비면 원본을 돌려준다."""
-    if difficulty not in DIFFICULTIES or difficulty == "all":
+    """숨길 난이도가 명시된 블록을 걸러낸다. 난이도 표시가 없는 블록(랜덤 결과 등)은 항상 유지.
+    걸러 낸 결과가 비면 원본을 돌려준다. difficulty: 표시할 난이도 문자열 또는 숨길 난이도 목록."""
+    hidden = hidden_set(difficulty)
+    if not hidden:
         return blocks
-    kept = [b for b in blocks if block_difficulty(b) in (None, difficulty)]
+    kept = [b for b in blocks if block_difficulty(b) not in hidden]
     return kept if kept else blocks
 
 
 def format_option_html(option, scale=1.0, show_info=True, lang="ko", difficulty="all", detail=0):
-    """선택지 1개 -> 툴팁용 HTML 문자열. difficulty: 'all'|'easy'|'normal'|'hard'.
+    """선택지 1개 -> 툴팁용 HTML 문자열. difficulty: 'all'|'easy'|'normal'|'hard' 또는 숨길 난이도 목록.
     detail: 0 전체, 1 설명/아이템 섹션 생략, 2 변형·블록 수도 제한(화면 아래가 잘릴 때 단계적으로 줄임)."""
     s = STR.get(lang, STR["ko"])
     esc = _html.escape

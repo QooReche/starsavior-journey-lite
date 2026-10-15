@@ -57,9 +57,22 @@ DEFAULT_SETTINGS = {
     "low_spec_mode": False,         # OCR 주기를 늘려 CPU 절약
     "status_badge_locked": True,
     "status_badge_offset": None,
-    "difficulty": "all",            # 난이도 표시 필터: "all" | "easy" | "normal" | "hard" (난이도 라벨이 있는 이벤트만 해당)
+    "difficulty": "all",            # (이전 방식, 읽기 전용) 한 난이도만 표시. hidden_difficulties 로 옮겨진다
+    "hidden_difficulties": [],      # 툴팁에서 숨길 난이도 ["easy","normal","hard"] 부분집합 (원작 1.1.3 과 같은 키)
     "show_capture_debug": False,    # True: 상단바/툴팁이 스크린샷에도 보이게 함 (진단용, OCR 방해 가능)
 }
+
+# 원작 1.1.3 '왼쪽 툴팁 글자 크기' 선택지와 같은 배율
+FONT_SCALE_CHOICES = (("작게", 0.85), ("보통", 1.0), ("크게", 1.2), ("아주 크게", 1.4))
+
+
+def snap_font_scale(v):
+    """저장된 배율을 가장 가까운 선택지로 맞춘다 (이전 버전의 1.25/1.5 도 크게/아주 크게로)."""
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return 1.0
+    return min((val for _, val in FONT_SCALE_CHOICES), key=lambda c: abs(c - v))
 
 # 게임 창 기준 비율 (원작 값 유지). 라벨은 '여정 이벤트' 문구가 있는 작은 띠.
 REGION_FRACTIONS = {
@@ -98,11 +111,19 @@ def load_settings():
         if isinstance(saved, dict):
             settings.update({k: v for k, v in saved.items() if k in DEFAULT_SETTINGS})
     except Exception:
-        pass
+        saved = {}
+    if not isinstance(saved, dict):
+        saved = {}
     if settings.get("language") not in jh_db.SUPPORTED_LANGS:
         settings["language"] = "ko"
     if settings.get("difficulty") not in jh_db.DIFFICULTIES:
         settings["difficulty"] = "all"
+    hidden = settings.get("hidden_difficulties")
+    if "hidden_difficulties" not in saved:          # 이전 '한 난이도만 표시' 설정을 숨김 목록으로 옮긴다
+        hidden = jh_db.hidden_set(settings["difficulty"])
+    settings["hidden_difficulties"] = sorted(jh_db.hidden_set(hidden if isinstance(hidden, (list, tuple, set)) else []),
+                                             key=jh_db.DIFFICULTIES.index)
+    settings["tooltip_font_scale"] = snap_font_scale(settings.get("tooltip_font_scale", 1.0))
     if settings.get("startup_state") not in ("collapsed", "expanded"):
         settings["startup_state"] = "collapsed"
     return settings
@@ -170,7 +191,8 @@ _TRANSLATIONS_EN = {
     "⏸️ 헬퍼 일시정지": "⏸️ Pause helper",
     "🛑 프로그램 종료": "🛑 Quit Program",
     "⚙️ 설정": "⚙️ Settings",
-    "🔤 툴팁 글자 크기": "🔤 Tooltip font size",
+    "🔤 왼쪽 툴팁 글자 크기": "🔤 Left tooltip font size",
+    "🎚️ 툴팁에서 숨길 난이도": "🎚️ Difficulties to hide from tooltip",
     "작게": "Small", "보통": "Normal", "크게": "Large", "아주 크게": "Extra Large",
     "🚀 시작 시 상단바": "🚀 Top bar on startup",
     "접힘": "Collapsed", "펼침": "Expanded",
@@ -445,6 +467,16 @@ class KoreanOCR:
 
 
 DIFFICULTY_CHOICES = (("전체", "all"), ("쉬움", "easy"), ("보통", "normal"), ("어려움", "hard"))
+
+
+def toggle_hidden_difficulty(hidden, value, checked):
+    """숨길 난이도 목록에서 value 를 켜고/끈 새 목록(정렬됨)을 돌려준다. 바로 툴팁에 반영된다(재시작 불필요)."""
+    s = jh_db.hidden_set(hidden if isinstance(hidden, (list, tuple, set)) else [])
+    if checked:
+        s.add(value)
+    else:
+        s.discard(value)
+    return sorted(jh_db.hidden_set(s), key=jh_db.DIFFICULTIES.index)
 TOOLTIP_MAX_DETAIL = 2      # 툴팁이 화면보다 길 때 jh_db.format_*_html 의 detail 을 이 단계까지 올려 줄인다
 TITLE_SCALES = (2.0, 1.6, 1.0)      # 배율마다 오인식이 달라 후보를 모두 모은다 (2.0 이 평균적으로 가장 정확)
 
@@ -1055,7 +1087,7 @@ class MouseHoverManager(QWidget):
 
     def _option_html(self, idx, option, scale, show_info):
         """선택지 idx 의 툴팁 HTML 생성 함수(detail -> html). 제목이 모호하면 후보 이벤트마다 같은 번호의 선택지를 제목 머리글과 함께 보여준다."""
-        diff = self.settings.get("difficulty", "all")
+        diff = list(self.settings.get("hidden_difficulties") or [])
         if self.ambig:
             items = [(e["rawTitle"], e["options"][idx]) for e in self.ambig if idx < len(e.get("options") or [])]
             if len(items) > 1:
@@ -1153,10 +1185,10 @@ class MouseHoverManager(QWidget):
     def build_settings_menu(self):
         m = QMenu()
         m.addAction(tr("⚙️ 설정")).setEnabled(False)
-        scale_menu = m.addMenu(tr("🔤 툴팁 글자 크기"))
+        scale_menu = m.addMenu(tr("🔤 왼쪽 툴팁 글자 크기"))
         group = QActionGroup(m)
-        for label, val in ((tr("작게"), 0.85), (tr("보통"), 1.0), (tr("크게"), 1.25), (tr("아주 크게"), 1.5)):
-            a = QAction(label, m, checkable=True)
+        for label, val in FONT_SCALE_CHOICES:
+            a = QAction(tr(label), m, checkable=True)
             a.setChecked(abs(self.settings["tooltip_font_scale"] - val) < 0.01)
             a.triggered.connect(lambda _, v=val: self.set_scale(v))
             group.addAction(a)
@@ -1169,13 +1201,13 @@ class MouseHoverManager(QWidget):
             a.triggered.connect(lambda _, v=val: self.set_value("startup_state", v))
             g2.addAction(a)
             start_menu.addAction(a)
-        diff_menu = m.addMenu(tr("🎚️ 난이도 표시"))
-        g4 = QActionGroup(m)
-        for label, val in DIFFICULTY_CHOICES:
+        diff_menu = m.addMenu(tr("🎚️ 툴팁에서 숨길 난이도"))
+        hidden = set(self.settings.get("hidden_difficulties") or [])
+        for label, val in DIFFICULTY_CHOICES[1:]:
             a = QAction(tr(label), m, checkable=True)
-            a.setChecked(self.settings.get("difficulty", "all") == val)
-            a.triggered.connect(lambda _, v=val: self.set_value("difficulty", v))
-            g4.addAction(a)
+            a.setChecked(val in hidden)
+            a.triggered.connect(lambda checked, v=val: self.set_value(
+                "hidden_difficulties", toggle_hidden_difficulty(self.settings.get("hidden_difficulties"), v, checked)))
             diff_menu.addAction(a)
         lang_menu = m.addMenu(tr("🌐 언어"))
         g3 = QActionGroup(m)
