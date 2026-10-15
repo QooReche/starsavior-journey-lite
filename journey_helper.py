@@ -974,8 +974,9 @@ class MouseHoverManager(QWidget):
 
     def on_db_loaded(self, cache, status, message, manual):
         if cache:
-            self.db_event_cache = cache
-            log(f"[DB] 이벤트 {len(cache)}개 ({status}: {message})")
+            customs = jh_db.load_custom_events(os.path.join(get_settings_dir(), jh_db.CUSTOM_EVENTS_FILE))
+            self.db_event_cache = jh_db.merge_custom_events(cache, customs)
+            log(f"[DB] 이벤트 {len(cache)}개 + 사용자 정의 {len(self.db_event_cache) - len(cache)}개 ({status}: {message})")
             text = tr("🟢 [DB 준비 완료] 이벤트 {}개").format(len(cache))
             if manual and status == "cooldown":
                 text = tr("⏳ 수동 새로고침은 잠시 후 다시 가능합니다 (10분 쿨다운)")

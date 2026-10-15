@@ -34,14 +34,14 @@ STR = {
            "noinfo": "(정보 없음)", "dup": "※ 같은 제목의 이벤트가 여러 아르카나에 있습니다", "more": "외 {}",
            "stamina": "스태미나", "cond": "컨디션", "pp": "잠재력 포인트", "turn": "{}턴",
            "use_head": "📦 이 아이템의 이후 사용처", "use_none": "이후 사용처 없음 / 확인 안 됨",
-           "more_n": "외 {}건", "from_head": "📥 획득처", "or": "또는",
+           "more_n": "외 {}건", "from_head": "📥 획득처", "or": "또는", "custom": "사용자 안내",
            "notfound": "📭 DB에 없는 이벤트: {}",
            "ambig": "※ 제목이 비슷해 확정하지 못했습니다 - 화면의 제목과 맞는 것을 보세요"},
     "en": {"buff": "Journey Buff", "poten": "Potential", "auto": "Automatic", "ok": "Success", "fail": "Failure",
            "noinfo": "(no info)", "dup": "* Several arcanas have an event with this title", "more": "+{} more",
            "stamina": "Stamina", "cond": "Condition", "pp": "Potential Point", "turn": "{} Turn",
            "use_head": "📦 Later uses of this item", "use_none": "No later use found / unknown",
-           "more_n": "+{} more", "from_head": "📥 Obtained from", "or": "OR",
+           "more_n": "+{} more", "from_head": "📥 Obtained from", "or": "OR", "custom": "Custom note",
            "notfound": "📭 Event not in DB: {}",
            "ambig": "* Title match is uncertain - check which one matches the screen"},
 }
@@ -605,6 +605,53 @@ def build_event_cache(journey, arcanas=None, lang="ko"):
 
 
 # ----------------------------------------------------------------------------
+# 사용자 정의 이벤트 (custom_events.json): DB 에 없는 이벤트에 직접 안내문을 붙인다
+# ----------------------------------------------------------------------------
+CUSTOM_EVENTS_FILE = "custom_events.json"
+DEFAULT_CUSTOM_EVENTS = {
+    "운명이 이어 준 첫 번째 인연": ("초반에 가져온 인자 2명의 효과가 적용되는 타이밍입니다. "
+                           "보상은 선택한 인자에 따라 달라집니다 (관찰 예: 힘 +85)."),
+}
+
+
+def load_custom_events(path, create_default=True):
+    """path 의 JSON 을 읽어 {제목: 안내문 | {"note": 안내문, "arcana": bool}} 로 돌려준다.
+    파일이 없으면 기본 항목으로 새로 만들고(create_default), 깨진 파일은 무시한다(기본 항목만 반환, 덮어쓰지 않음)."""
+    try:
+        with open(path, "r", encoding="utf-8-sig") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else dict(DEFAULT_CUSTOM_EVENTS)
+    except FileNotFoundError:
+        if create_default:
+            try:
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump(DEFAULT_CUSTOM_EVENTS, f, ensure_ascii=False, indent=2)
+            except OSError:
+                pass
+        return dict(DEFAULT_CUSTOM_EVENTS)
+    except Exception:
+        return dict(DEFAULT_CUSTOM_EVENTS)
+
+
+def merge_custom_events(cache, customs):
+    """DB 에 같은 제목이 이미 있으면 DB 를 우선하고, 없는 것만 캐시 뒤에 붙인다. -> 새 리스트"""
+    out = list(cache or [])
+    have = {e.get("cleanTitle") for e in out}
+    for title, val in (customs or {}).items():
+        note = val.get("note", "") if isinstance(val, dict) else val
+        ct = clean_title(str(title))
+        if not ct or ct in have or not isinstance(note, str) or not note.strip():
+            continue
+        arcana = bool(val.get("arcana")) if isinstance(val, dict) else False
+        out.append({"rawTitle": str(title), "cleanTitle": ct, "isArcana": arcana, "custom": True,
+                    "options": [{"choice": "", "reward": "", "has_condition": False, "recommended": False,
+                                 "info": [], "items": [], "result": "", "note": note.strip()}],
+                    "sources": [], "timing": ""})
+        have.add(ct)
+    return out
+
+
+# ----------------------------------------------------------------------------
 # 아이템 색인: 어느 이벤트에서 얻고(grant) 어디에서 쓰는지(consume/require)
 # ----------------------------------------------------------------------------
 _TIMING_RE = re.compile(r"(\d+)\s*월\s*(초순|중순|하순)?")
@@ -760,6 +807,11 @@ def format_option_html(option, scale=1.0, show_info=True, lang="ko", difficulty=
     name = re.sub(r"[\.\s]+$", "", option.get("choice", ""))
     star = "⭐ " if option.get("recommended") else ""
     title = f"💡 <b>{star}{esc(name)}</b>" if name else f"💡 <b>{esc(s['auto'])}</b>"
+    if option.get("note"):                      # custom_events.json 의 안내문
+        head = f"📝 <b>{esc(name or s['custom'])}</b>"
+        body_txt = esc(option["note"]).replace(chr(10), "<br>")
+        return (head + '<hr style="border:none;border-top:1px solid #444444;margin:4px 0;">'
+                + f'<span style="color:#ffffff; font-size:{max(10, round(14 * scale))}px;">{body_txt}</span>')
     variants = option.get("variants") or [{"sources": [], "reward": option.get("reward", ""), "info": option.get("info", [])}]
     body = []
     divider = '<hr style="border:none;border-top:1px solid #333333;margin:6px 0;">'
