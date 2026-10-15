@@ -170,11 +170,18 @@ class DbStore:
         data = json.loads(content.decode("utf-8"))      # 깨진 응답이 캐시를 덮어쓰지 않도록 먼저 검증
         if not isinstance(data, dict) or not data:
             raise ValueError("unexpected JSON")
-        _atomic_write(self._file_path(rel), content)
+        same = False
+        try:                # GitHub Pages(CDN 노드별로 ETag 가 달라짐)는 내용이 같아도 200 을 줄 수 있다
+            with open(self._file_path(rel), "rb") as f:
+                same = f.read() == content
+        except OSError:
+            pass
+        if not same:
+            _atomic_write(self._file_path(rel), content)
         h = r.headers or {}
         self.meta["files"][rel] = {"etag": h.get("ETag") or h.get("etag"),
                                    "last_modified": h.get("Last-Modified") or h.get("last-modified")}
-        return "updated"
+        return "not_modified" if same else "updated"
 
 
 # ----------------------------------------------------------------------------

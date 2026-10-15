@@ -158,6 +158,20 @@ class UpdateTests(unittest.TestCase):
         self.assertIsNotNone(j)
         self.assertIsNotNone(a)
 
+    def test_200_with_identical_content_is_not_a_change(self):
+        st, s = self.store()
+        st.update()
+        self.t[0] += 13 * 3600
+
+        def new_etag(url, headers):
+            r = ok_handler(url, {})                     # 조건부 헤더 무시하고 200, ETag 만 다름
+            r.headers = {"ETag": '"v2"'}
+            return r
+        st.session.handler = new_etag
+        r = st.update()
+        self.assertEqual((r.status, r.changed), ("not_modified", False))
+        self.assertEqual(st.meta["files"]["journey/ko/journey.json"]["etag"], '"v2"')
+
     def test_manual_cooldown(self):
         st, s = self.store()
         st.update()
