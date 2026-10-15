@@ -223,3 +223,25 @@ def identify(card_bgr_crop, candidate_arcana_ids, store=None,
         return None, best, margin
     return best_id, best, margin
 
+
+
+def identify_stable(grab, candidate_arcana_ids, store=None, need=2, max_tries=8, sleep=time.sleep, interval=0.25):
+    """grab() -> 카드 영역 BGR (실패 시 None). 같은 id 가 연속 need 번 나오면 채택 (라벨 패널 애니메이션 중 오판 방지).
+    -> (arcana_id | None, score, margin, tries). 끝까지 안정되지 않으면 id=None (호출 측은 전부 표시로 폴백)."""
+    last, streak, score, margin = None, 0, 0.0, 0.0
+    for n in range(1, max_tries + 1):
+        try:
+            img = grab()
+        except Exception:
+            img = None
+        aid, score, margin = identify(img, candidate_arcana_ids, store)
+        if aid is not None and aid == last:
+            streak += 1
+        else:
+            streak = 1 if aid is not None else 0
+        last = aid
+        if aid is not None and streak >= need:
+            return aid, score, margin, n
+        if n < max_tries:
+            sleep(interval)
+    return None, score, margin, max_tries

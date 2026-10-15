@@ -31,6 +31,7 @@ except ImportError:
 import cv2
 import numpy as np
 
+import jh_cards
 import jh_db
 
 try:
@@ -603,6 +604,37 @@ class ScreenWatcher(QThread):
             self.msleep(350 if self.low_spec_getter() else 200)
 
 
+def grab_card_crop(sct, rect):
+    """게임 창에서 카드 썸네일 영역을 BGR 로 캡처 (jh_cards.CARD_REGION_FRAC)."""
+    x0, y0, x1, y1 = jh_cards.CARD_REGION_FRAC
+    mon = region_to_monitor({"left": x0, "top": y0, "width": x1 - x0, "height": y1 - y0}, rect)
+    return cv2.cvtColor(np.array(sct.grab(mon)), cv2.COLOR_BGRA2BGR)
+
+
+class CardThread(QThread):
+    """제목이 여러 아르카나에 있을 때 카드 썸네일로 어느 아르카나인지 식별 (참조 이미지 다운로드가 있어 별도 스레드)."""
+    resolved = pyqtSignal(str, object, str)      # (제목, arcanaId 또는 None, 로그 문구)
+
+    def __init__(self, title, ids):
+        super().__init__()
+        self.title, self.ids = title, list(ids)
+
+    def run(self):
+        aid, info = None, ""
+        try:
+            sct = mss.mss()
+
+            def grab():
+                rect = get_game_window_rect()
+                return grab_card_crop(sct, rect) if rect else None
+
+            aid, score, margin, tries = jh_cards.identify_stable(grab, self.ids)
+            info = f"score={score:.2f} margin={margin:.2f} tries={tries}"
+        except Exception as e:
+            info = f"예외 {e}"
+        self.resolved.emit(self.title, aid, info)
+
+
 # ----------------------------------------------------------------------------
 # DB 로딩 스레드
 # ----------------------------------------------------------------------------
@@ -848,6 +880,8 @@ class MouseHoverManager(QWidget):
         self.ambig = []
         self.zones = []
         self.options = []
+        self.card_id = None
+        self._card_threads = getattr(self, "_card_threads", [])
         if hasattr(self, "tooltip"):
             self.tooltip.hide_and_clear()
 
@@ -923,6 +957,26 @@ class MouseHoverManager(QWidget):
         run = f", 차점 '{cands[1][0]['rawTitle']}' ({cands[1][1]:.2f})" if len(cands) > 1 else ""
         log(f"[매칭] {cands_txt} -> '{best['rawTitle']}' ({score:.2f}){run}" + (f" 모호:{[e['rawTitle'] for e in self.ambig]}" if self.ambig else ""))
         self.zones = self.estimate_zones(len(self.options)) if len(self.options) >= 2 else []
+        ids = jh_db.arcana_ids_of(best)
+        if len(ids) >= 2 and not self.ambig:
+            log(f"[카드] '{best['rawTitle']}' 아르카나 {len(ids)}곳에 있음 {ids} -> 카드 썸네일로 식별 시도 (그동안 전부 표시)")
+            t = CardThread(title, ids)
+            t.resolved.connect(self.on_card_resolved)
+            self._card_threads = [x for x in self._card_threads if x.isRunning()] + [t]
+            t.start()
+
+    def on_card_resolved(self, title, aid, info):
+        """카드 식별 결과: 아직 같은 제목이면 해당 아르카나 변형만 남긴다. 실패하면 지금처럼 전부 표시."""
+        if title != self.current_title or not self.matched:
+            return
+        if aid is None:
+            log(f"[카드] 식별 실패/모호 ({info}) -> 모든 아르카나 표시")
+            return
+        self.card_id = aid
+        self.matched = jh_db.filter_event_by_arcana(self.matched, aid)
+        self.options = self.matched.get("options", [])
+        self.zones = self.estimate_zones(len(self.options)) if len(self.options) >= 2 else []
+        log(f"[카드] 식별 성공: arcanaId={aid} ({info}) -> {self.matched.get('sources')} 만 표시")
 
     def _option_html(self, idx, option, scale, show_info):
         """선택지 idx 의 툴팁 HTML. 제목이 모호하면 후보 이벤트마다 같은 번호의 선택지를 제목 머리글과 함께 보여준다."""

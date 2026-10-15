@@ -565,21 +565,23 @@ def build_event_cache(journey, arcanas=None, lang="ko"):
     idx = InfoIndex(arcanas, lang)
     groups = OrderedDict()      # cleanTitle -> {'raw','arcana','cands':[(src, opts)]}
 
-    def add(title, is_arcana, src, opts):
+    def add(title, is_arcana, src, opts, aid=None):
         ct = clean_title(title)
         if not ct:
             return
-        g = groups.setdefault(ct, {"raw": title, "arcana": is_arcana, "cands": []})
+        g = groups.setdefault(ct, {"raw": title, "arcana": is_arcana, "cands": [], "ids": {}})
         g["cands"].append((src, opts))
+        if aid is not None and src:
+            g["ids"][src] = aid
 
     journey = journey or {}
     jr_ids = set()
     for a in journey.get("arcana", []) or []:
         jr_ids.add(a.get("arcanaId"))
-    for _, title, aname, opts in _arcana_events_from_journey(journey, idx):
-        add(title, True, aname, opts)
-    for _, title, aname, opts in _arcana_events_from_raw(arcanas, idx, jr_ids):
-        add(title, True, aname, opts)
+    for aid, title, aname, opts in _arcana_events_from_journey(journey, idx):
+        add(title, True, aname, opts, aid)
+    for aid, title, aname, opts in _arcana_events_from_raw(arcanas, idx, jr_ids):
+        add(title, True, aname, opts, aid)
     for ev in journey.get("events", []) or []:
         timing, opts = parse_table_event(ev, idx)
         if not opts:
@@ -595,6 +597,7 @@ def build_event_cache(journey, arcanas=None, lang="ko"):
             "isArcana": g["arcana"],
             "options": options,
             "sources": [s for s, _ in g["cands"] if s],
+            "arcanaIds": dict(g["ids"]),        # 출처(아르카나 이름) -> arcanaId (카드 식별용)
             "timing": "" if g["arcana"] else next((s for s, _ in g["cands"] if s), ""),
         })
     link_items(cache)
@@ -957,6 +960,30 @@ def filter_by_kind(events, kind):
     if kind == "general":
         return [e for e in events if not e.get("isArcana")]
     return events
+
+
+def arcana_ids_of(event):
+    """이벤트 제목을 가진 아르카나들의 id (중복 제거, 순서 유지). 정보가 없으면 빈 리스트."""
+    return list(dict.fromkeys((event.get("arcanaIds") or {}).values()))
+
+
+def filter_event_by_arcana(event, arcana_id):
+    """같은 제목이 여러 아르카나에 있을 때 arcana_id 의 변형만 남긴 이벤트 사본. 걸러낼 수 없으면 원본 그대로."""
+    names = {n for n, i in (event.get("arcanaIds") or {}).items() if i == arcana_id}
+    if not names:
+        return event
+    options = []
+    for o in event.get("options", []):
+        vs = []
+        for v in o.get("variants") or []:
+            keep = [x for x in v.get("sources", []) if x in names]
+            if keep:
+                vs.append(dict(v, sources=keep))
+        if not vs:
+            options.append(o)
+            continue
+        options.append(dict(o, variants=vs, reward=vs[0]["reward"]))
+    return dict(event, options=options, sources=[x for x in event.get("sources", []) if x in names])
 
 
 IGNORED_TITLE_WORD = "평가전"   # cleanTitle(공백 제거) 기준
