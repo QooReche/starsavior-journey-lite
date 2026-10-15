@@ -388,6 +388,15 @@ def match_event_label(text, cutoff=0.8, lang="ko"):
     return None
 
 
+def label_kind(phrase):
+    """match_event_label 결과 -> 'arcana' | 'general' | None"""
+    if phrase in ("아르카나이벤트", "arcanaevent"):
+        return "arcana"
+    if phrase in ("여정이벤트", "훈련이벤트", "journeyevent", "trainingevent"):
+        return "general"
+    return None
+
+
 def clean_ocr_title(text):
     t = re.sub(r"[^가-힣0-9a-zA-Z]", "", text or "")
     for w in NOISE_TITLE_WORDS:
@@ -448,7 +457,7 @@ def read_title_candidates(ocr, gray, scales=TITLE_SCALES, min_conf=0.4):
 # 화면 감시 스레드: 라벨 확인 -> (확인된 경우에만) 제목 OCR
 # ----------------------------------------------------------------------------
 class ScreenWatcher(QThread):
-    title_detected = pyqtSignal(object)     # OCR 후보 문자열 리스트 (배율별, 가장 믿을 만한 것이 앞)
+    title_detected = pyqtSignal(object, object)  # (후보 리스트, 라벨 종류 'arcana'/'general'/None)   # OCR 후보 문자열 리스트 (배율별, 가장 믿을 만한 것이 앞)
     journey_status_changed = pyqtSignal(bool)
     model_loading = pyqtSignal()
     model_ready = pyqtSignal()
@@ -477,6 +486,7 @@ class ScreenWatcher(QThread):
         self._label_state = "unseen"
         self._last_title_gray = None
         self._cached_title = []
+        self._label_kind = None
         self.last_title = ""
 
     def request_reverify(self):
@@ -507,6 +517,7 @@ class ScreenWatcher(QThread):
             state = "unseen"
         elif match_event_label(text, lang=self.lang_getter()):
             state = "found"
+            self._label_kind = label_kind(match_event_label(text, lang=self.lang_getter()))
         else:
             state = "other"
         if state != self._label_state:
@@ -586,7 +597,7 @@ class ScreenWatcher(QThread):
                     if len(title) >= 2 and not same_text(title, self.last_title, 0.9):
                         self.last_title = title
                         log(f"[OCR] 제목 후보: {cands}")
-                        self.title_detected.emit(list(cands))
+                        self.title_detected.emit(list(cands), self._label_kind)
             except Exception as e:
                 log(f"[ScreenWatcher 예외] {e}\n{traceback.format_exc()}")
             self.msleep(350 if self.low_spec_getter() else 200)
@@ -833,6 +844,7 @@ class MouseHoverManager(QWidget):
         self.in_journey = False
         self.current_title = ""
         self.matched = None
+        self.not_found = ""
         self.ambig = []
         self.zones = []
         self.options = []
@@ -882,19 +894,21 @@ class MouseHoverManager(QWidget):
             self.reset_event_state()
             self.status.set_status(self._idle_text(), "#888888")
 
-    def on_title(self, titles):
-        """titles: OCR 후보 문자열 리스트(또는 문자열 하나)"""
+    def on_title(self, titles, kind=None):
+        """titles: OCR 후보 문자열 리스트(또는 문자열 하나), kind: 라벨 종류 'arcana'/'general'/None"""
         cands_txt = [titles] if isinstance(titles, str) else list(titles or [])
         title = cands_txt[0] if cands_txt else ""
         if title == self.current_title:
             return
         self.current_title, self.matched, self.zones, self.options, self.ambig = title, None, [], [], []
+        self.not_found = ""
         self.tooltip.hide_and_clear()
         if len(jh_db.clean_title(title)) < 2 or not self.db_event_cache:
             return
-        cands, amb = jh_db.match_title(cands_txt, self.db_event_cache)
+        cands, amb = jh_db.match_title(cands_txt, self.db_event_cache, kind)
         if not cands:
-            log(f"[매칭] {cands_txt} -> 없음")
+            log(f"[매칭] {cands_txt} (라벨={kind}) -> DB에 없음")
+            self.not_found = title
             self.status.set_status(tr("🟠 [DB에 없는 제목] {}").format(title), "#ff9800", flash=True)
             return
         best, score = cands[0]
@@ -961,6 +975,10 @@ class MouseHoverManager(QWidget):
 
     # --- 호버 ---
     def check_hover(self):
+        if (self.not_found and not self._hidden and not self._loading_screen and self.in_journey
+                and is_game_hovered_or_active()):
+            self.tooltip.show_html(jh_db.format_not_found_html(self.not_found, self.settings["tooltip_font_scale"], self.lang))
+            return
         if self._hidden or self._loading_screen or not self.in_journey or not self.matched or not is_game_hovered_or_active():
             self.tooltip.hide_and_clear()
             return

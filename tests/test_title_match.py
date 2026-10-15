@@ -93,6 +93,36 @@ class LogTests(unittest.TestCase):
         finally:
             os.environ.pop("JH_LOG_PATH", None)
 
+class NotFoundAndKindTests(unittest.TestCase):
+    def test_short_title_not_matched_inside_long_query(self):
+        evs = EVENTS + [{"rawTitle": "운명", "cleanTitle": "운명", "isArcana": True}]
+        for q in ("운명이이어준첫번째인연", "운명이이어준첫번째인연ㅣ"):
+            cands, a = jh_db.match_title([q], evs)
+            self.assertEqual(cands, [], q)
+            self.assertEqual(a, [])
+        self.assertEqual(jh_db.match_title(["운명"], evs)[1][0]["cleanTitle"], "운명")
+
+    def test_kind_filter(self):
+        evs = [{"rawTitle": "머리사냥", "cleanTitle": "머리사냥", "isArcana": True},
+               {"rawTitle": "머리사냥 A", "cleanTitle": "머리사냥a", "isArcana": False}]
+        self.assertEqual(jh_db.match_title(["머리사냥"], evs, "arcana")[1][0]["isArcana"], True)
+        self.assertEqual(jh_db.match_title(["머리사냥a"], evs, "general")[1][0]["isArcana"], False)
+        self.assertEqual(jh_db.match_title(["머리사냥"], [evs[0]], "general")[0], [])      # 종류가 다르면 후보 없음
+        self.assertEqual(len(jh_db.match_title(["머리사냥"], evs, None)[0]), 2)
+
+    def test_label_kind(self):
+        import journey_helper as jhm
+        self.assertEqual(jhm.label_kind("아르카나이벤트"), "arcana")
+        self.assertEqual(jhm.label_kind("여정이벤트"), "general")
+        self.assertEqual(jhm.label_kind("훈련이벤트"), "general")
+        self.assertIsNone(jhm.label_kind(None))
+
+    def test_not_found_note(self):
+        for lang in ("ko", "en"):
+            h = jh_db.format_not_found_html("운명<이>", 1.0, lang)
+            self.assertIn("운명&lt;이&gt;", h)
+            self.assertIn("📭", h)
+
 MODEL_DIR = os.path.join(os.path.dirname(__file__), "..", "models")
 
 

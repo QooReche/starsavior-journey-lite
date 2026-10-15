@@ -35,12 +35,14 @@ STR = {
            "stamina": "스태미나", "cond": "컨디션", "pp": "잠재력 포인트", "turn": "{}턴",
            "use_head": "📦 이 아이템의 이후 사용처", "use_none": "이후 사용처 없음 / 확인 안 됨",
            "more_n": "외 {}건", "from_head": "📥 획득처",
+           "notfound": "📭 DB에 없는 이벤트: {}",
            "ambig": "※ 제목이 비슷해 확정하지 못했습니다 - 화면의 제목과 맞는 것을 보세요"},
     "en": {"buff": "Journey Buff", "poten": "Potential", "auto": "Automatic", "ok": "Success", "fail": "Failure",
            "noinfo": "(no info)", "dup": "* Several arcanas have an event with this title", "more": "+{} more",
            "stamina": "Stamina", "cond": "Condition", "pp": "Potential Point", "turn": "{} Turn",
            "use_head": "📦 Later uses of this item", "use_none": "No later use found / unknown",
            "more_n": "+{} more", "from_head": "📥 Obtained from",
+           "notfound": "📭 Event not in DB: {}",
            "ambig": "* Title match is uncertain - check which one matches the screen"},
 }
 
@@ -763,6 +765,13 @@ def format_option_html(option, scale=1.0, show_info=True, lang="ko"):
     return html
 
 
+def format_not_found_html(title, scale=1.0, lang="ko"):
+    """DB 에 없는 이벤트: 작은 중립 안내"""
+    s = STR.get(lang, STR["ko"])
+    return (f'<span style="color:#b0bec5; font-size:{max(9, round(12 * scale))}px;">'
+            f'{_html.escape(s["notfound"].format(title))}</span>')
+
+
 def format_ambiguous_html(items, scale=1.0, show_info=True, lang="ko"):
     """제목이 모호할 때: [(이벤트 제목, 선택지)] -> 제목 머리글을 붙여 이어 붙인 툴팁 HTML"""
     s = STR.get(lang, STR["ko"])
@@ -875,9 +884,14 @@ def match_cost(q, c):
     return min(D[i][m] + (n - i) * _JUNK_COST for i in range(n + 1))
 
 
+MIN_LEN_RATIO = 0.6     # 질의와 제목의 길이 비율이 이보다 작으면 다른 제목
+
+
 def score_match(q, c):
     """0~1 유사도 (1 = 동일). q: OCR 글자열, c: 이벤트 제목(둘 다 clean_title 처리된 상태)"""
     if not c or not q:
+        return 0.0
+    if min(len(q), len(c)) / max(len(q), len(c)) < MIN_LEN_RATIO:    # '운명' 이 긴 문장 안에 들어있다고 매칭되지 않도록
         return 0.0
     return max(0.0, 1.0 - match_cost(q, c) / max(len(c), 2))
 
@@ -932,8 +946,18 @@ def find_best_event(clean_query, events, min_score=0.5):
     c = find_event_candidates(clean_query, events, min_score, top=1)
     return c[0] if c else (None, 0.0)
 
-def match_title(queries, events):
+
+def filter_by_kind(events, kind):
+    """kind: 'arcana'(아르카나 이벤트 라벨) -> 아르카나 이벤트만, 'general'(여정/훈련 라벨) -> 일반 이벤트만, 그 외 -> 전체"""
+    if kind == "arcana":
+        return [e for e in events if e.get("isArcana")]
+    if kind == "general":
+        return [e for e in events if not e.get("isArcana")]
+    return events
+
+
+def match_title(queries, events, kind=None):
     """OCR 후보 -> (candidates, ambiguous). candidates=[(event, score)...] 상위 5개, ambiguous=1등과 구분이 안 되는 이벤트 리스트
-    (길이 1이면 확신, 0이면 DB 에 없음)"""
-    cands = find_event_candidates(queries, events)
+    (길이 1이면 확신, 0이면 DB 에 없음 = NOT-FOUND). kind 로 라벨 종류에 맞는 이벤트만 후보로 삼는다."""
+    cands = find_event_candidates(queries, filter_by_kind(events, kind))
     return cands, [ev for ev, _ in ambiguous_set(cands)]
