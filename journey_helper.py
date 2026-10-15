@@ -259,6 +259,16 @@ def get_game_window_rect():
         return None
 
 
+def game_window_usable():
+    """게임 창이 존재하고 보이는 상태(최소화 아님)인지. 다른 창을 눌러 포커스를 잃은 것은 '있음'으로 본다."""
+    try:
+        user32 = ctypes.windll.user32
+        hwnd = find_game_hwnd()
+        return bool(hwnd and user32.IsWindow(hwnd) and user32.IsWindowVisible(hwnd) and not user32.IsIconic(hwnd))
+    except Exception:
+        return False
+
+
 def is_game_hovered_or_active():
     try:
         user32 = ctypes.windll.user32
@@ -416,6 +426,7 @@ class ScreenWatcher(QThread):
         self.label_visible = False
         self.on_event_screen = False
         self._reverify = True
+        self._was_inactive = False
         self._reset_scan_state()
 
     def _reset_scan_state(self):
@@ -480,9 +491,19 @@ class ScreenWatcher(QThread):
                 rect = get_game_window_rect() if is_game_hovered_or_active() else None
                 if rect is None:
                     self._last_rect = None
-                    self._leave_event_screen()
+                    if game_window_usable():
+                        # 게임은 떠 있고 다른 창을 눌러 포커스만 잃은 상태: 다른 창을 OCR 하지 않도록 스캔만 멈추고
+                        # 이벤트 상태는 유지한다. 포커스가 돌아오면 캐시만 비워 바로 다시 읽는다.
+                        self._was_inactive = True
+                        self.msleep(300)
+                        continue
+                    self._leave_event_screen()      # 게임 창이 없거나 최소화됨 -> 상태 초기화
+                    self._was_inactive = False
                     self.msleep(1000)
                     continue
+                if self._was_inactive:
+                    self._was_inactive = False
+                    self._last_label_gray = self._last_title_gray = None
                 if self.ocr is None:
                     self.model_loading.emit()
                     print("[지연 로딩] 게임 감지됨 -> 제목/라벨 인식용 OCR 모델 로딩 시작...")
