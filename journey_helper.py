@@ -175,6 +175,8 @@ _TRANSLATIONS_EN = {
     "🚀 시작 시 상단바": "🚀 Top bar on startup",
     "접힘": "Collapsed", "펼침": "Expanded",
     "🌐 언어": "🌐 Language",
+    "🎚️ 난이도 표시": "🎚️ Difficulty filter",
+    "전체": "All", "쉬움": "Easy", "어려움": "Hard",
     "잠재력/버프 설명 표시": "Show potential/buff descriptions",
     "⚡ 저사양 모드 (OCR 주기 늘림)": "⚡ Low-spec mode (slower OCR polling)",
     "상단바 위치 고정": "Lock top bar position",
@@ -442,6 +444,7 @@ class KoreanOCR:
         return (text or "").strip(), float(conf or 0.0)
 
 
+DIFFICULTY_CHOICES = (("전체", "all"), ("쉬움", "easy"), ("보통", "normal"), ("어려움", "hard"))
 TOOLTIP_MAX_DETAIL = 2      # 툴팁이 화면보다 길 때 jh_db.format_*_html 의 detail 을 이 단계까지 올려 줄인다
 TITLE_SCALES = (2.0, 1.6, 1.0)      # 배율마다 오인식이 달라 후보를 모두 모은다 (2.0 이 평균적으로 가장 정확)
 
@@ -1165,6 +1168,14 @@ class MouseHoverManager(QWidget):
             a.triggered.connect(lambda _, v=val: self.set_value("startup_state", v))
             g2.addAction(a)
             start_menu.addAction(a)
+        diff_menu = m.addMenu(tr("🎚️ 난이도 표시"))
+        g4 = QActionGroup(m)
+        for label, val in DIFFICULTY_CHOICES:
+            a = QAction(tr(label), m, checkable=True)
+            a.setChecked(self.settings.get("difficulty", "all") == val)
+            a.triggered.connect(lambda _, v=val: self.set_value("difficulty", v))
+            g4.addAction(a)
+            diff_menu.addAction(a)
         lang_menu = m.addMenu(tr("🌐 언어"))
         g3 = QActionGroup(m)
         for label, val in (("한국어", "ko"), ("English", "en")):
