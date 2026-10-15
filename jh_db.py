@@ -34,14 +34,14 @@ STR = {
            "noinfo": "(정보 없음)", "dup": "※ 같은 제목의 이벤트가 여러 아르카나에 있습니다", "more": "외 {}",
            "stamina": "스태미나", "cond": "컨디션", "pp": "잠재력 포인트", "turn": "{}턴",
            "use_head": "📦 이 아이템의 이후 사용처", "use_none": "이후 사용처 없음 / 확인 안 됨",
-           "more_n": "외 {}건", "from_head": "📥 획득처",
+           "more_n": "외 {}건", "from_head": "📥 획득처", "or": "또는",
            "notfound": "📭 DB에 없는 이벤트: {}",
            "ambig": "※ 제목이 비슷해 확정하지 못했습니다 - 화면의 제목과 맞는 것을 보세요"},
     "en": {"buff": "Journey Buff", "poten": "Potential", "auto": "Automatic", "ok": "Success", "fail": "Failure",
            "noinfo": "(no info)", "dup": "* Several arcanas have an event with this title", "more": "+{} more",
            "stamina": "Stamina", "cond": "Condition", "pp": "Potential Point", "turn": "{} Turn",
            "use_head": "📦 Later uses of this item", "use_none": "No later use found / unknown",
-           "more_n": "+{} more", "from_head": "📥 Obtained from",
+           "more_n": "+{} more", "from_head": "📥 Obtained from", "or": "OR",
            "notfound": "📭 Event not in DB: {}",
            "ambig": "* Title match is uncertain - check which one matches the screen"},
 }
@@ -731,9 +731,31 @@ def _render_block(block, esc, scale, tint, s):
     return inner
 
 
-def format_option_html(option, scale=1.0, show_info=True, lang="ko"):
+DIFF_KEYS = {"이지": "easy", "노말": "normal", "하드": "hard", "Easy": "easy", "Normal": "normal", "Hard": "hard"}
+DIFFICULTIES = ("all", "easy", "normal", "hard")
+MAX_BLOCKS_COMPACT = 3      # detail 2 에서 변형 하나당 보여 줄 최대 블록 수
+MAX_VARIANTS_COMPACT = 2
+
+
+def block_difficulty(block):
+    """블록 첫 줄의 난이도 머리말('이지/노말/하드') -> 'easy'/'normal'/'hard' (없으면 None)"""
+    m = _DIFF_RE.match(block["lines"][0]) if block.get("lines") else None
+    return DIFF_KEYS.get(m.group(1)) if m else None
+
+
+def filter_blocks_by_difficulty(blocks, difficulty):
+    """난이도가 명시된 블록만 걸러낸다. 난이도 표시가 없는 블록(랜덤 결과 등)은 항상 유지.
+    걸러 낸 결과가 비면 원본을 돌려준다."""
+    if difficulty not in DIFFICULTIES or difficulty == "all":
+        return blocks
+    kept = [b for b in blocks if block_difficulty(b) in (None, difficulty)]
+    return kept if kept else blocks
+
+
+def format_option_html(option, scale=1.0, show_info=True, lang="ko", difficulty="all", detail=0):
+    """선택지 1개 -> 툴팁용 HTML 문자열. difficulty: 'all'|'easy'|'normal'|'hard'.
+    detail: 0 전체, 1 설명/아이템 섹션 생략, 2 변형·블록 수도 제한(화면 아래가 잘릴 때 단계적으로 줄임)."""
     s = STR.get(lang, STR["ko"])
-    """선택지 1개 -> 툴팁용 HTML 문자열."""
     esc = _html.escape
     name = re.sub(r"[\.\s]+$", "", option.get("choice", ""))
     star = "⭐ " if option.get("recommended") else ""
@@ -741,29 +763,53 @@ def format_option_html(option, scale=1.0, show_info=True, lang="ko"):
     variants = option.get("variants") or [{"sources": [], "reward": option.get("reward", ""), "info": option.get("info", [])}]
     body = []
     divider = '<hr style="border:none;border-top:1px solid #333333;margin:6px 0;">'
+    hidden_variants = 0
+    if detail >= 2 and len(variants) > MAX_VARIANTS_COMPACT:
+        hidden_variants = len(variants) - MAX_VARIANTS_COMPACT
+        variants = variants[:MAX_VARIANTS_COMPACT]
+    multi = len(variants) + hidden_variants > 1
+    small_c = max(9, round(12 * scale))
     for v in variants:
-        blocks = _split_blocks(v.get("reward", ""))
+        blocks = filter_blocks_by_difficulty(_split_blocks(v.get("reward", "")), difficulty)
         tint = any(b["type"] == "FAIL" for b in blocks)
-        rendered = divider.join(f'<div style="margin-bottom:2px;">{_render_block(b, esc, scale, tint, s)}</div>' for b in blocks)
-        if len(variants) > 1:
+        hidden_blocks = 0
+        if detail >= 2 and len(blocks) > MAX_BLOCKS_COMPACT:
+            hidden_blocks = len(blocks) - MAX_BLOCKS_COMPACT
+            blocks = blocks[:MAX_BLOCKS_COMPACT]
+        pieces = []
+        for i, b in enumerate(blocks):
+            if i:
+                # 난이도 표시도 성공/실패 구분도 없는 'or' 블록 = 같은 난이도에서 나올 수 있는 랜덤 결과 중 하나
+                if not tint and block_difficulty(b) is None and block_difficulty(blocks[i - 1]) is None:
+                    pieces.append(f'<div style="color:#ffd27f; font-size:{small_c}px; text-align:center; margin:2px 0;">'
+                                  f'── {esc(s["or"])} ──</div>')
+                else:
+                    pieces.append(divider)
+            pieces.append(f'<div style="margin-bottom:2px;">{_render_block(b, esc, scale, tint, s)}</div>')
+        if hidden_blocks:
+            pieces.append(f'<span style="color:#888888; font-size:{small_c}px;">…{esc(s["more_n"].format(hidden_blocks))}</span>')
+        rendered = "".join(pieces)
+        if multi:
             src = v.get("sources") or []
             shown = ", ".join(src[:3]) + (" " + s["more"].format(len(src) - 3) if len(src) > 3 else "")
             rendered = f'<span style="color:#00e5ff; font-size:{max(9, round(12 * scale))}px;">🃏 {esc(shown)}</span><br>' + rendered
         body.append(rendered or "")
+    if hidden_variants:
+        body.append(f'<span style="color:#888888; font-size:{small_c}px;">…{esc(s["more_n"].format(hidden_variants))}</span>')
     html = title + '<hr style="border:none;border-top:1px solid #444444;margin:4px 0;">' + \
         '<hr style="border:none;border-top:1px dashed #555555;margin:6px 0;">'.join(body)
-    if len(variants) > 1:
+    if multi:
         html += ('<br><span style="color:#aaaaaa; font-size:%dpx;">%s</span>'
                  % (max(9, round(11 * scale)), esc(s["dup"])))
     infos = option.get("info") or []
-    if show_info and infos:
+    if show_info and infos and detail < 1:
         small = max(9, round(12 * scale))
         rows = []
         for inf in infos[:MAX_INFO_ITEMS]:
             rows.append(f'<span style="color:#9fe8ff; font-size:{small}px;"><b>{esc(inf["name"])}</b></span>'
                         f'<span style="color:#cfd8dc; font-size:{small}px;"> {esc(inf["desc"])}</span>')
         html += '<hr style="border:none;border-top:1px solid #444444;margin:6px 0;">' + "<br>".join(rows)
-    if show_info:
+    if show_info and detail < 1:
         html += _render_item_sections(option, scale, s)
     return html
 
@@ -775,14 +821,14 @@ def format_not_found_html(title, scale=1.0, lang="ko"):
             f'{_html.escape(s["notfound"].format(title))}</span>')
 
 
-def format_ambiguous_html(items, scale=1.0, show_info=True, lang="ko"):
+def format_ambiguous_html(items, scale=1.0, show_info=True, lang="ko", difficulty="all", detail=0):
     """제목이 모호할 때: [(이벤트 제목, 선택지)] -> 제목 머리글을 붙여 이어 붙인 툴팁 HTML"""
     s = STR.get(lang, STR["ko"])
     small = max(9, round(12 * scale))
     parts = []
     for title, opt in items:
         parts.append(f'<span style="color:#ffd27f; font-size:{small + 1}px;"><b>◆ {_html.escape(title)}</b></span><br>'
-                     + format_option_html(opt, scale, show_info, lang))
+                     + format_option_html(opt, scale, show_info, lang, difficulty, detail))
     sep = '<hr style="border:none;border-top:2px solid #777777;margin:8px 0;">'
     return (sep.join(parts) + f'<br><span style="color:#aaaaaa; font-size:{max(9, round(11 * scale))}px;">{_html.escape(s["ambig"])}</span>')
 

@@ -57,6 +57,7 @@ DEFAULT_SETTINGS = {
     "low_spec_mode": False,         # OCR 주기를 늘려 CPU 절약
     "status_badge_locked": True,
     "status_badge_offset": None,
+    "difficulty": "all",            # 난이도 표시 필터: "all" | "easy" | "normal" | "hard" (난이도 라벨이 있는 이벤트만 해당)
     "show_capture_debug": False,    # True: 상단바/툴팁이 스크린샷에도 보이게 함 (진단용, OCR 방해 가능)
 }
 
@@ -100,6 +101,8 @@ def load_settings():
         pass
     if settings.get("language") not in jh_db.SUPPORTED_LANGS:
         settings["language"] = "ko"
+    if settings.get("difficulty") not in jh_db.DIFFICULTIES:
+        settings["difficulty"] = "all"
     if settings.get("startup_state") not in ("collapsed", "expanded"):
         settings["startup_state"] = "collapsed"
     return settings
@@ -439,6 +442,7 @@ class KoreanOCR:
         return (text or "").strip(), float(conf or 0.0)
 
 
+TOOLTIP_MAX_DETAIL = 2      # 툴팁이 화면보다 길 때 jh_db.format_*_html 의 detail 을 이 단계까지 올려 줄인다
 TITLE_SCALES = (2.0, 1.6, 1.0)      # 배율마다 오인식이 달라 후보를 모두 모은다 (2.0 이 평균적으로 가장 정확)
 
 
@@ -842,6 +846,7 @@ class FixedLeftTooltip(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(self.label)
+        self._src = None
         self.set_scale(scale)
         exclude_from_capture(self)
 
@@ -852,14 +857,29 @@ class FixedLeftTooltip(QWidget):
             f"color: #ffffff; font-size: {max(9, round(self.BASE_PX * scale))}px; font-weight: bold; padding: 14px 18px; }}")
         self.setFixedWidth(round(self.BASE_W * scale))
 
+    def _fit(self, html):
+        self.label.setText(html)
+        self.label.adjustSize()
+        self.adjustSize()
+        self.resize(self.sizeHint())
+
     def show_html(self, html):
-        if self.label.text() != html:
-            self.label.setText(html)
-            self.label.adjustSize()
-            self.adjustSize()
-            self.resize(self.sizeHint())
+        """html: 문자열 또는 detail(0~MAX_DETAIL) -> 문자열 함수. 함수면 화면에 들어올 때까지 단계적으로 줄여 본다."""
         rect = get_game_window_rect()
         screen = QApplication.desktop().screenGeometry()
+        if callable(html):
+            fn = html
+            html = fn(0)
+            if html != self._src:                       # 원본이 같으면 이미 맞춰 둔 크기/내용을 그대로 쓴다
+                self._src = html
+                self._fit(html)
+                for d in range(1, TOOLTIP_MAX_DETAIL + 1):
+                    if self.height() <= screen.height() - 40:
+                        break
+                    self._fit(fn(d))
+        elif html != self._src:
+            self._src = html
+            self._fit(html)
         x, y = (rect["left"] + 25, rect["top"] + int(rect["height"] * 0.30)) if rect else (25, int(screen.height() * 0.30))
         y = max(0, min(y, screen.height() - self.height() - 10))      # 내용이 길면 위로 밀어 화면 안에 유지
         self.move(x, y)
@@ -867,6 +887,7 @@ class FixedLeftTooltip(QWidget):
 
     def hide_and_clear(self):
         if self.isVisible():
+            self._src = None
             self.label.setText("")
             self.move(-10000, -10000)
             self.hide()
@@ -1029,12 +1050,13 @@ class MouseHoverManager(QWidget):
         log(f"[카드] 식별 성공: arcanaId={aid} ({info}) -> {self.matched.get('sources')} 만 표시")
 
     def _option_html(self, idx, option, scale, show_info):
-        """선택지 idx 의 툴팁 HTML. 제목이 모호하면 후보 이벤트마다 같은 번호의 선택지를 제목 머리글과 함께 보여준다."""
+        """선택지 idx 의 툴팁 HTML 생성 함수(detail -> html). 제목이 모호하면 후보 이벤트마다 같은 번호의 선택지를 제목 머리글과 함께 보여준다."""
+        diff = self.settings.get("difficulty", "all")
         if self.ambig:
             items = [(e["rawTitle"], e["options"][idx]) for e in self.ambig if idx < len(e.get("options") or [])]
             if len(items) > 1:
-                return jh_db.format_ambiguous_html(items, scale, show_info, self.lang)
-        return jh_db.format_option_html(option, scale, show_info, self.lang)
+                return lambda d=0: jh_db.format_ambiguous_html(items, scale, show_info, self.lang, diff, d)
+        return lambda d=0: jh_db.format_option_html(option, scale, show_info, self.lang, diff, d)
 
     def estimate_zones(self, count):
         """선택지 버튼의 Y 범위를 게임 창 비율로 추정 (아래 기준선에서 위로 쌓임)."""
