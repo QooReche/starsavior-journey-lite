@@ -55,6 +55,7 @@ DEFAULT_SETTINGS = {
     "low_spec_mode": False,         # OCR 주기를 늘려 CPU 절약
     "status_badge_locked": True,
     "status_badge_offset": None,
+    "show_capture_debug": False,    # True: 상단바/툴팁이 스크린샷에도 보이게 함 (진단용, OCR 방해 가능)
 }
 
 # 게임 창 기준 비율 (원작 값 유지). 라벨은 '여정 이벤트' 문구가 있는 작은 띠.
@@ -89,7 +90,7 @@ def get_settings_dir():
 def load_settings():
     settings = dict(DEFAULT_SETTINGS)
     try:
-        with open(os.path.join(get_settings_dir(), "settings.json"), "r", encoding="utf-8") as f:
+        with open(os.path.join(get_settings_dir(), "settings.json"), "r", encoding="utf-8-sig") as f:   # BOM 허용
             saved = json.load(f)
         if isinstance(saved, dict):
             settings.update({k: v for k, v in saved.items() if k in DEFAULT_SETTINGS})
@@ -301,10 +302,10 @@ def reassert_topmost(widget):
         pass
 
 
-def exclude_from_capture(widget):
-    """오버레이가 화면 캡처(OCR)에 찍히지 않도록 한다."""
+def exclude_from_capture(widget, hide=True):
+    """오버레이가 화면 캡처(OCR)에 찍히지 않도록 한다. hide=False 면 캡처에 보이게 한다(진단용)."""
     try:
-        ctypes.windll.user32.SetWindowDisplayAffinity(int(widget.winId()), 0x11)
+        ctypes.windll.user32.SetWindowDisplayAffinity(int(widget.winId()), 0x11 if hide else 0)
     except Exception:
         pass
 
@@ -741,6 +742,7 @@ class MouseHoverManager(QWidget):
         self.status.on_menu = self.show_main_menu
         self.status.on_settings = self.show_settings_menu
         self.tooltip = FixedLeftTooltip(self.settings["tooltip_font_scale"])
+        self._apply_capture_visibility()
         self._build_tray()
 
         self.watcher = ScreenWatcher(pause_getter=lambda: self._hidden, low_spec_getter=lambda: self.settings["low_spec_mode"],
@@ -942,7 +944,8 @@ class MouseHoverManager(QWidget):
             g3.addAction(a)
             lang_menu.addAction(a)
         for text, key in ((tr("잠재력/버프 설명 표시"), "show_info"), (tr("⚡ 저사양 모드 (OCR 주기 늘림)"), "low_spec_mode"),
-                          (tr("상단바 위치 고정"), "status_badge_locked")):
+                          (tr("상단바 위치 고정"), "status_badge_locked"),
+                          (tr("🐛 상단바/툴팁을 스크린샷에 보이게 하기"), "show_capture_debug")):
             a = QAction(text, m, checkable=True)
             a.setChecked(bool(self.settings[key]))
             a.triggered.connect(lambda checked, k=key: self.set_value(k, bool(checked)))
@@ -984,6 +987,13 @@ class MouseHoverManager(QWidget):
     def set_value(self, key, value):
         self.settings[key] = value
         save_settings(self.settings)
+        if key == "show_capture_debug":
+            self._apply_capture_visibility()
+
+    def _apply_capture_visibility(self):
+        hide = not self.settings.get("show_capture_debug", False)
+        for w in (self.status, self.tooltip):
+            exclude_from_capture(w, hide)
 
     def reset_badge_pos(self):
         self.set_value("status_badge_offset", None)
