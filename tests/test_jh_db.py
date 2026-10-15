@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 import json
 import os
 import sys
@@ -255,5 +255,64 @@ class UpdateTests(unittest.TestCase):
         self.assertFalse(st.has_cache())
 
 
+class ItemLinkTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.journey = json.loads(_read("items_events.json"))
+        cls.cache = jh_db.build_event_cache(cls.journey, None)
+        cls.by = {e["rawTitle"]: e for e in cls.cache}
+
+    @staticmethod
+    def _plain(h):
+        import re
+        return re.sub(r"<[^>]+>", "\n", h)
+
+    def test_roles(self):
+        g = self.by["우연한 발견"]["options"][0]
+        self.assertIn({"name": "수상한 상자", "role": "grant"}, g["items"])
+        c = self.by["교단의 분실물"]["options"][0]
+        self.assertIn({"name": "수상한 상자", "role": "consume"}, c["items"])
+        self.assertEqual(self.by["교단의 분실물"]["timing"], "9월 하순")
+        self.assertEqual(self.by["우연한 발견"]["options"][1]["items"], [])
+
+    def test_grant_section_lists_later_use(self):
+        h = jh_db.format_option_html(self.by["우연한 발견"]["options"][0])
+        t = self._plain(h)
+        self.assertIn("이후 사용처", t)
+        self.assertIn("교단의 분실물", t)
+        self.assertIn("9월 하순", t)
+        self.assertIn("어서 열어보자", t)
+        self.assertIn("힘+10", t)
+        self.assertNotIn("이후 사용처", jh_db.format_option_html(self.by["우연한 발견"]["options"][0], show_info=False))
+        self.assertNotIn("이후 사용처", jh_db.format_option_html(self.by["우연한 발견"]["options"][1]))
+
+    def test_consume_shows_source(self):
+        h = self._plain(jh_db.format_option_html(self.by["교단의 분실물"]["options"][0]))
+        self.assertIn("획득처", h)
+        self.assertIn("우연한 발견", h)
+        self.assertIn("5월 중순", h)
+
+    def test_buff_rows_are_not_items(self):
+        idx = jh_db.build_item_index(self.cache)
+        self.assertFalse([k for k in idx if "여정 버프" in k or "턴" in k])
+
+    def test_no_later_use_and_limit(self):
+        o = {"choice": "x", "reward": "a", "item_use": [{"item": "Z", "uses": []}]}
+        self.assertIn("확인 안 됨", jh_db.format_option_html(o))
+        uses = [{"event": f"E{i}", "timing": "1월 초순", "choice": "c", "result": "r"} for i in range(5)]
+        t = self._plain(jh_db.format_option_html({"choice": "x", "reward": "a", "item_use": [{"item": "Z", "uses": uses}]}))
+        self.assertIn("E2", t)
+        self.assertNotIn("E3", t)
+        self.assertIn("외 2건", t)
+        en = jh_db.format_option_html({"choice": "x", "reward": "a", "item_use": [{"item": "Z", "uses": uses}]}, lang="en")
+        self.assertIn("+2 more", en)
+
+    def test_robust_to_bad_rows(self):
+        self.assertEqual(jh_db.row_items({}), [])
+        self.assertEqual(jh_db.row_items({"text": "노말 힘 300 필요"}), [])
+        jh_db.link_items(None)
+        jh_db.link_items([{"options": [{"items": [{"name": "A"}]}]}])
+
 if __name__ == "__main__":
     unittest.main()
+

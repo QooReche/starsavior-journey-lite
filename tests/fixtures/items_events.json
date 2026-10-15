@@ -1,0 +1,931 @@
+{
+ "version": 3,
+ "language": "ko",
+ "arcana": [],
+ "events": [
+  {
+   "key": "jjqk49i",
+   "title": "리세트의 행운",
+   "searchText": "리세트의 행운 9월 하순 1월 하순 1. 추첨권을 왼쪽 상자에 넣는다. 리세트의 추첨권 소모 컨디션 +1 오래된 주화 +150 없음 2. 추첨권을 오른쪽 상자에 넣는다. 리세트의 추첨권 소모 스태미나 +10 오래된 주화 +150 없음 3. 다음 기회를 노린다. 없음",
+   "difficulties": [],
+   "rows": [
+    {
+     "text": "리세트의 행운",
+     "segments": [
+      {
+       "type": "text",
+       "text": "리세트의 행운",
+       "fontSize": 16,
+       "weight": 700
+      }
+     ],
+     "region": "",
+     "tone": "plain",
+     "fontSize": 16,
+     "weight": 700
+    },
+    {
+     "text": "9월 하순 1월 하순",
+     "segments": [
+      {
+       "type": "text",
+       "text": "9월 하순 1월 하순",
+       "fontSize": 12.8,
+       "weight": 700
+      }
+     ],
+     "region": "r1",
+     "tone": "neutral",
+     "fontSize": 12.8,
+     "weight": 700
+    },
+    {
+     "text": "1. 추첨권을 왼쪽 상자에 넣는다.",
+     "segments": [
+      {
+       "type": "text",
+       "text": "1. 추첨권을 왼쪽 상자에 넣는다.",
+       "fontSize": 14.4,
+       "weight": 700
+      }
+     ],
+     "region": "",
+     "tone": "plain",
+     "fontSize": 14.4,
+     "weight": 700
+    },
+    {
+     "text": "리세트의 추첨권 소모",
+     "segments": [
+      {
+       "type": "images",
+       "images": [
+        {
+         "alt": "",
+         "sourceWidth": 18.8,
+         "sourceHeight": 18,
+         "asset": "리세트의 추첨권 소모.webp"
+        }
+       ]
+      },
+      {
+       "type": "text",
+       "text": "리세트의 추첨권 소모",
+       "fontSize": 13.6,
+       "weight": 400
+      }
+     ],
+     "region": "r9",
+     "tone": "neutral",
+     "fontSize": 13.6,
+     "weight": 400
+    },
+    {
+     "text": "컨디션 +1",
+     "segments": [
+      {
+       "type": "text",
+       "text": "컨디션 +1",
+       "fontSize": 13.6,
+       "weight": 400
+      }
+     ],
+     "region": "r4",
+     "tone": "success",
+     "fontSize": 13.6,
+     "weight": 400
+    },
+    {
+     "text": "오래된 주화 +150",
+     "segments": [
+      {
+       "type": "text",
+       "text": "오래된 주화 +150",
+       "fontSize": 13.6,
+       "weight": 400
+      }
+     ],
+     "region": "r4",
+     "tone": "success",
+     "fontSize": 13.6,
+     "weight": 400
+    },
+    {
+     "text": "없음",
+     "segments": [
+      {
+       "type": "text",
+       "text": "없음",
+       "fontSize": 13.6,
+       "weight": 400
+      }
+     ],
+     "region": "r5",
+     "tone": "failure",
+     "fontSize": 13.6,
+     "weight": 400
+    },
+    {
+     "text": "2. 추첨권을 오른쪽 상자에 넣는다.",
+     "segments": [
+      {
+       "type": "text",
+       "text": "2. 추첨권을 오른쪽 상자에 넣는다.",
+       "fontSize": 14.4,
+       "weight": 700
+      }
+     ],
+     "region": "",
+     "tone": "plain",
+     "fontSize": 14.4,
+     "weight": 700
+    },
+    {
+     "text": "리세트의 추첨권 소모",
+     "segments": [
+      {
+       "type": "images",
+       "images": [
+        {
+         "alt": "",
+         "sourceWidth": 18.8,
+         "sourceHeight": 18,
+         "asset": "리세트의 추첨권 소모.webp"
+        }
+       ]
+      },
+      {
+       "type": "text",
+       "text": "리세트의 추첨권 소모",
+       "fontSize": 13.6,
+       "weight": 400
+      }
+     ],
+     "region": "r10",
+     "tone": "neutral",
+     "fontSize": 13.6,
+     "weight": 400
+    },
+    {
+     "text": "스태미나 +10",
+     "segments": [
+      {
+       "type": "text",
+       "text": "스태미나 +10",
+       "fontSize": 13.6,
+       "weight": 400
+      }
+     ],
+     "region": "r7",
+     "tone": "success",
+     "fontSize": 13.6,
+     "weight": 400
+    },
+    {
+     "text": "오래된 주화 +150",
+     "segments": [
+      {
+       "type": "text",
+       "text": "오래된 주화 +150",
+       "fontSize": 13.6,
+       "weight": 400
+      }
+     ],
+     "region": "r7",
+     "tone": "success",
+     "fontSize": 13.6,
+     "weight": 400
+    },
+    {
+     "text": "없음",
+     "segments": [
+      {
+       "type": "text",
+       "text": "없음",
+       "fontSize": 13.6,
+       "weight": 400
+      }
+     ],
+     "region": "r8",
+     "tone": "failure",
+     "fontSize": 13.6,
+     "weight": 400
+    },
+    {
+     "text": "3. 다음 기회를 노린다.",
+     "segments": [
+      {
+       "type": "text",
+       "text": "3. 다음 기회를 노린다.",
+       "fontSize": 14.4,
+       "weight": 700
+      }
+     ],
+     "region": "",
+     "tone": "plain",
+     "fontSize": 14.4,
+     "weight": 700
+    },
+    {
+     "text": "없음",
+     "segments": [
+      {
+       "type": "text",
+       "text": "없음",
+       "fontSize": 13.6,
+       "weight": 400
+      }
+     ],
+     "region": "",
+     "tone": "plain",
+     "fontSize": 13.6,
+     "weight": 400
+    }
+   ],
+   "categories": [
+    "reset"
+   ],
+   "kind": "events"
+  },
+  {
+   "key": "j8jhznd",
+   "title": "리세트의 휴가",
+   "searchText": "리세트의 휴가 10월 하순 1. 파는 곳을 같이 찾아준다. 스태미나 사용 20 여정 버프 획득 리세트와의 추억 +5턴 집중 +30 보호 +15 고풍스러운 열쇠 or 스태미나 사용 20 여정 버프 획득 리세트와의 추억 +5턴 보호 +30 집중 +15 고풍스러운 열쇠 2. 파는 곳의 위치를 알려준다. 스태미나 +5 집중 +10 or 스태미나 +5 보호 +10",
+   "difficulties": [],
+   "rows": [
+    {
+     "text": "리세트의 휴가",
+     "segments": [
+      {
+       "type": "text",
+       "text": "리세트의 휴가",
+       "fontSize": 16,
+       "weight": 700
+      }
+     ],
+     "region": "",
+     "tone": "plain",
+     "fontSize": 16,
+     "weight": 700
+    },
+    {
+     "text": "10월 하순",
+     "segments": [
+      {
+       "type": "text",
+       "text": "10월 하순",
+       "fontSize": 12.8,
+       "weight": 700
+      }
+     ],
+     "region": "r1",
+     "tone": "neutral",
+     "fontSize": 12.8,
+     "weight": 700
+    },
+    {
+     "text": "1. 파는 곳을 같이 찾아준다.",
+     "segments": [
+      {
+       "type": "text",
+       "text": "1. 파는 곳을 같이 찾아준다.",
+       "fontSize": 14.4,
+       "weight": 700
+      }
+     ],
+     "region": "",
+     "tone": "plain",
+     "fontSize": 14.4,
+     "weight": 700
+    },
+    {
+     "text": "스태미나 사용 20",
+     "segments": [
+      {
+       "type": "text",
+       "text": "스태미나 사용 20",
+       "fontSize": 13.6,
+       "weight": 400
+      }
+     ],
+     "region": "r2",
+     "tone": "neutral",
+     "fontSize": 13.6,
+     "weight": 400
+    },
+    {
+     "text": "여정 버프 획득 리세트와의 추억 +5턴",
+     "segments": [
+      {
+       "type": "text",
+       "text": "여정 버프 획득",
+       "fontSize": 13.6,
+       "weight": 400
+      },
+      {
+       "type": "images",
+       "images": [
+        {
+         "alt": "",
+         "sourceWidth": 17,
+         "sourceHeight": 17,
+         "asset": "여정 버프 획득 리세트와의 추억 +5턴.webp"
+        }
+       ]
+      },
+      {
+       "type": "text",
+       "text": "리세트와의 추억 +5턴",
+       "fontSize": 13.6,
+       "weight": 600
+      }
+     ],
+     "region": "r3",
+     "tone": "success",
+     "fontSize": 13.6,
+     "weight": 600
+    },
+    {
+     "text": "집중 +30",
+     "segments": [
+      {
+       "type": "text",
+       "text": "집중 +30",
+       "fontSize": 13.6,
+       "weight": 400
+      }
+     ],
+     "region": "r3",
+     "tone": "success",
+     "fontSize": 13.6,
+     "weight": 400
+    },
+    {
+     "text": "보호 +15",
+     "segments": [
+      {
+       "type": "text",
+       "text": "보호 +15",
+       "fontSize": 13.6,
+       "weight": 400
+      }
+     ],
+     "region": "r3",
+     "tone": "success",
+     "fontSize": 13.6,
+     "weight": 400
+    },
+    {
+     "text": "고풍스러운 열쇠",
+     "segments": [
+      {
+       "type": "images",
+       "images": [
+        {
+         "alt": "",
+         "sourceWidth": 16.7,
+         "sourceHeight": 17,
+         "asset": "고풍스러운 열쇠.webp"
+        }
+       ]
+      },
+      {
+       "type": "text",
+       "text": "고풍스러운 열쇠",
+       "fontSize": 13.6,
+       "weight": 600
+      }
+     ],
+     "region": "r9",
+     "tone": "success",
+     "fontSize": 13.6,
+     "weight": 600
+    },
+    {
+     "text": "or",
+     "segments": [
+      {
+       "type": "text",
+       "text": "or",
+       "fontSize": 13.6,
+       "weight": 400
+      }
+     ],
+     "region": "",
+     "tone": "plain",
+     "fontSize": 13.6,
+     "weight": 400
+    },
+    {
+     "text": "스태미나 사용 20",
+     "segments": [
+      {
+       "type": "text",
+       "text": "스태미나 사용 20",
+       "fontSize": 13.6,
+       "weight": 400
+      }
+     ],
+     "region": "r4",
+     "tone": "neutral",
+     "fontSize": 13.6,
+     "weight": 400
+    },
+    {
+     "text": "여정 버프 획득 리세트와의 추억 +5턴",
+     "segments": [
+      {
+       "type": "text",
+       "text": "여정 버프 획득",
+       "fontSize": 13.6,
+       "weight": 400
+      },
+      {
+       "type": "images",
+       "images": [
+        {
+         "alt": "",
+         "sourceWidth": 17,
+         "sourceHeight": 17,
+         "asset": "여정 버프 획득 리세트와의 추억 +5턴.webp"
+        }
+       ]
+      },
+      {
+       "type": "text",
+       "text": "리세트와의 추억 +5턴",
+       "fontSize": 13.6,
+       "weight": 600
+      }
+     ],
+     "region": "r5",
+     "tone": "success",
+     "fontSize": 13.6,
+     "weight": 600
+    },
+    {
+     "text": "보호 +30",
+     "segments": [
+      {
+       "type": "text",
+       "text": "보호 +30",
+       "fontSize": 13.6,
+       "weight": 400
+      }
+     ],
+     "region": "r5",
+     "tone": "success",
+     "fontSize": 13.6,
+     "weight": 400
+    },
+    {
+     "text": "집중 +15",
+     "segments": [
+      {
+       "type": "text",
+       "text": "집중 +15",
+       "fontSize": 13.6,
+       "weight": 400
+      }
+     ],
+     "region": "r5",
+     "tone": "success",
+     "fontSize": 13.6,
+     "weight": 400
+    },
+    {
+     "text": "고풍스러운 열쇠",
+     "segments": [
+      {
+       "type": "images",
+       "images": [
+        {
+         "alt": "",
+         "sourceWidth": 16.7,
+         "sourceHeight": 17,
+         "asset": "고풍스러운 열쇠.webp"
+        }
+       ]
+      },
+      {
+       "type": "text",
+       "text": "고풍스러운 열쇠",
+       "fontSize": 13.6,
+       "weight": 600
+      }
+     ],
+     "region": "r11",
+     "tone": "success",
+     "fontSize": 13.6,
+     "weight": 600
+    },
+    {
+     "text": "2. 파는 곳의 위치를 알려준다.",
+     "segments": [
+      {
+       "type": "text",
+       "text": "2. 파는 곳의 위치를 알려준다.",
+       "fontSize": 14.4,
+       "weight": 700
+      }
+     ],
+     "region": "",
+     "tone": "plain",
+     "fontSize": 14.4,
+     "weight": 700
+    },
+    {
+     "text": "스태미나 +5",
+     "segments": [
+      {
+       "type": "text",
+       "text": "스태미나 +5",
+       "fontSize": 13.6,
+       "weight": 400
+      }
+     ],
+     "region": "r6",
+     "tone": "success",
+     "fontSize": 13.6,
+     "weight": 400
+    },
+    {
+     "text": "집중 +10",
+     "segments": [
+      {
+       "type": "text",
+       "text": "집중 +10",
+       "fontSize": 13.6,
+       "weight": 400
+      }
+     ],
+     "region": "r6",
+     "tone": "success",
+     "fontSize": 13.6,
+     "weight": 400
+    },
+    {
+     "text": "or",
+     "segments": [
+      {
+       "type": "text",
+       "text": "or",
+       "fontSize": 13.6,
+       "weight": 400
+      }
+     ],
+     "region": "",
+     "tone": "plain",
+     "fontSize": 13.6,
+     "weight": 400
+    },
+    {
+     "text": "스태미나 +5",
+     "segments": [
+      {
+       "type": "text",
+       "text": "스태미나 +5",
+       "fontSize": 13.6,
+       "weight": 400
+      }
+     ],
+     "region": "r7",
+     "tone": "success",
+     "fontSize": 13.6,
+     "weight": 400
+    },
+    {
+     "text": "보호 +10",
+     "segments": [
+      {
+       "type": "text",
+       "text": "보호 +10",
+       "fontSize": 13.6,
+       "weight": 400
+      }
+     ],
+     "region": "r7",
+     "tone": "success",
+     "fontSize": 13.6,
+     "weight": 400
+    }
+   ],
+   "categories": [
+    "reset"
+   ],
+   "kind": "events"
+  },
+  {
+   "key": "j1urwsz3",
+   "title": "우연한 발견",
+   "searchText": "우연한 발견 5월 중순 1. 힘은 좀 들겠지만... 파 보자! 스태미나 사용 10 잠재력 포인트 +10 수상한 상자 없음 2. 이런 곳에 낭비할 체력은 없다! 없음",
+   "difficulties": [],
+   "rows": [
+    {
+     "text": "우연한 발견",
+     "segments": [
+      {
+       "type": "text",
+       "text": "우연한 발견",
+       "fontSize": 16,
+       "weight": 700
+      }
+     ],
+     "region": "",
+     "tone": "plain",
+     "fontSize": 16,
+     "weight": 700
+    },
+    {
+     "text": "5월 중순",
+     "segments": [
+      {
+       "type": "text",
+       "text": "5월 중순",
+       "fontSize": 12.8,
+       "weight": 700
+      }
+     ],
+     "region": "r1",
+     "tone": "neutral",
+     "fontSize": 12.8,
+     "weight": 700
+    },
+    {
+     "text": "1. 힘은 좀 들겠지만... 파 보자!",
+     "segments": [
+      {
+       "type": "text",
+       "text": "1. 힘은 좀 들겠지만... 파 보자!",
+       "fontSize": 14.4,
+       "weight": 700
+      }
+     ],
+     "region": "",
+     "tone": "plain",
+     "fontSize": 14.4,
+     "weight": 700
+    },
+    {
+     "text": "스태미나 사용 10",
+     "segments": [
+      {
+       "type": "text",
+       "text": "스태미나 사용 10",
+       "fontSize": 13.6,
+       "weight": 400
+      }
+     ],
+     "region": "r2",
+     "tone": "neutral",
+     "fontSize": 13.6,
+     "weight": 400
+    },
+    {
+     "text": "잠재력 포인트 +10",
+     "segments": [
+      {
+       "type": "text",
+       "text": "잠재력 포인트 +10",
+       "fontSize": 13.6,
+       "weight": 400
+      }
+     ],
+     "region": "r3",
+     "tone": "success",
+     "fontSize": 13.6,
+     "weight": 400
+    },
+    {
+     "text": "수상한 상자",
+     "segments": [
+      {
+       "type": "images",
+       "images": [
+        {
+         "alt": "",
+         "sourceWidth": 19.5,
+         "sourceHeight": 17,
+         "asset": "수상한 상자.webp"
+        }
+       ]
+      },
+      {
+       "type": "text",
+       "text": "수상한 상자",
+       "fontSize": 13.6,
+       "weight": 600
+      }
+     ],
+     "region": "r5",
+     "tone": "success",
+     "fontSize": 13.6,
+     "weight": 600
+    },
+    {
+     "text": "없음",
+     "segments": [
+      {
+       "type": "text",
+       "text": "없음",
+       "fontSize": 13.6,
+       "weight": 400
+      }
+     ],
+     "region": "r4",
+     "tone": "failure",
+     "fontSize": 13.6,
+     "weight": 400
+    },
+    {
+     "text": "2. 이런 곳에 낭비할 체력은 없다!",
+     "segments": [
+      {
+       "type": "text",
+       "text": "2. 이런 곳에 낭비할 체력은 없다!",
+       "fontSize": 14.4,
+       "weight": 700
+      }
+     ],
+     "region": "",
+     "tone": "plain",
+     "fontSize": 14.4,
+     "weight": 700
+    },
+    {
+     "text": "없음",
+     "segments": [
+      {
+       "type": "text",
+       "text": "없음",
+       "fontSize": 13.6,
+       "weight": 400
+      }
+     ],
+     "region": "",
+     "tone": "plain",
+     "fontSize": 13.6,
+     "weight": 400
+    }
+   ],
+   "categories": [],
+   "kind": "events"
+  },
+  {
+   "key": "jo6grn9",
+   "title": "교단의 분실물",
+   "searchText": "교단의 분실물 9월 하순 1. 어서 열어보자. 수상한 상자 소모 힘 +10 체력 +10 인내 +10 2. 다음에 열어보자. 없음",
+   "difficulties": [],
+   "rows": [
+    {
+     "text": "교단의 분실물",
+     "segments": [
+      {
+       "type": "text",
+       "text": "교단의 분실물",
+       "fontSize": 16,
+       "weight": 700
+      }
+     ],
+     "region": "",
+     "tone": "plain",
+     "fontSize": 16,
+     "weight": 700
+    },
+    {
+     "text": "9월 하순",
+     "segments": [
+      {
+       "type": "text",
+       "text": "9월 하순",
+       "fontSize": 12.8,
+       "weight": 700
+      }
+     ],
+     "region": "r1",
+     "tone": "neutral",
+     "fontSize": 12.8,
+     "weight": 700
+    },
+    {
+     "text": "1. 어서 열어보자.",
+     "segments": [
+      {
+       "type": "text",
+       "text": "1. 어서 열어보자.",
+       "fontSize": 14.4,
+       "weight": 700
+      }
+     ],
+     "region": "",
+     "tone": "plain",
+     "fontSize": 14.4,
+     "weight": 700
+    },
+    {
+     "text": "수상한 상자 소모",
+     "segments": [
+      {
+       "type": "images",
+       "images": [
+        {
+         "alt": "",
+         "sourceWidth": 21.1,
+         "sourceHeight": 18,
+         "asset": "수상한 상자.webp"
+        }
+       ]
+      },
+      {
+       "type": "text",
+       "text": "수상한 상자 소모",
+       "fontSize": 13.6,
+       "weight": 400
+      }
+     ],
+     "region": "r4",
+     "tone": "neutral",
+     "fontSize": 13.6,
+     "weight": 400
+    },
+    {
+     "text": "힘 +10",
+     "segments": [
+      {
+       "type": "text",
+       "text": "힘 +10",
+       "fontSize": 13.6,
+       "weight": 400
+      }
+     ],
+     "region": "r3",
+     "tone": "success",
+     "fontSize": 13.6,
+     "weight": 400
+    },
+    {
+     "text": "체력 +10",
+     "segments": [
+      {
+       "type": "text",
+       "text": "체력 +10",
+       "fontSize": 13.6,
+       "weight": 400
+      }
+     ],
+     "region": "r3",
+     "tone": "success",
+     "fontSize": 13.6,
+     "weight": 400
+    },
+    {
+     "text": "인내 +10",
+     "segments": [
+      {
+       "type": "text",
+       "text": "인내 +10",
+       "fontSize": 13.6,
+       "weight": 400
+      }
+     ],
+     "region": "r3",
+     "tone": "success",
+     "fontSize": 13.6,
+     "weight": 400
+    },
+    {
+     "text": "2. 다음에 열어보자.",
+     "segments": [
+      {
+       "type": "text",
+       "text": "2. 다음에 열어보자.",
+       "fontSize": 14.4,
+       "weight": 700
+      }
+     ],
+     "region": "",
+     "tone": "plain",
+     "fontSize": 14.4,
+     "weight": 700
+    },
+    {
+     "text": "없음",
+     "segments": [
+      {
+       "type": "text",
+       "text": "없음",
+       "fontSize": 13.6,
+       "weight": 400
+      }
+     ],
+     "region": "",
+     "tone": "plain",
+     "fontSize": 13.6,
+     "weight": 400
+    }
+   ],
+   "categories": [],
+   "kind": "events"
+  }
+ ]
+}

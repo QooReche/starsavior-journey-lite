@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 jh_db.py - JourneyHelper Lite 데이터 계층 (GUI/OCR 의존성 없음)
 
@@ -32,10 +32,14 @@ DB_FILES = db_files("ko")
 STR = {
     "ko": {"buff": "여정 버프", "poten": "잠재력", "auto": "자동 진행", "ok": "성공", "fail": "실패",
            "noinfo": "(정보 없음)", "dup": "※ 같은 제목의 이벤트가 여러 아르카나에 있습니다", "more": "외 {}",
-           "stamina": "스태미나", "cond": "컨디션", "pp": "잠재력 포인트", "turn": "{}턴"},
+           "stamina": "스태미나", "cond": "컨디션", "pp": "잠재력 포인트", "turn": "{}턴",
+           "use_head": "📦 이 아이템의 이후 사용처", "use_none": "이후 사용처 없음 / 확인 안 됨",
+           "more_n": "외 {}건", "from_head": "📥 획득처"},
     "en": {"buff": "Journey Buff", "poten": "Potential", "auto": "Automatic", "ok": "Success", "fail": "Failure",
            "noinfo": "(no info)", "dup": "* Several arcanas have an event with this title", "more": "+{} more",
-           "stamina": "Stamina", "cond": "Condition", "pp": "Potential Point", "turn": "{} Turn"},
+           "stamina": "Stamina", "cond": "Condition", "pp": "Potential Point", "turn": "{} Turn",
+           "use_head": "📦 Later uses of this item", "use_none": "No later use found / unknown",
+           "more_n": "+{} more", "from_head": "📥 Obtained from"},
 }
 
 
@@ -389,6 +393,68 @@ def _arcana_events_from_raw(arcanas, idx, skip_ids):
 
 _NUM_PREFIX = re.compile(r"^\s*\d+\s*[.)]\s*")
 
+# ----------------------------------------------------------------------------
+# 아이템 (표 형태 이벤트의 이미지 행)
+#   획득: 이미지가 있는 보상 행 (success/failure/neutral 톤) 이고 텍스트 == 에셋 이름
+#   소모/필요: 텍스트가 '<이름> 소모' (이미지 동반, tone=neutral) -> role 'consume'
+#   '여정 버프 획득 ...', '... 10 % 할인', '... +N턴' 은 아이템이 아니므로 제외
+# ----------------------------------------------------------------------------
+_CONSUME_RE = re.compile(r"^(?P<n>.+?)\s*(?P<w>소모|필요|보유|Consumed?|Required?)\s*$", re.I)
+_NOT_ITEM_RE = re.compile(r"^(여정 버프|Journey Buff)|할인|%|[+＋]\s*\d+\s*(턴|Turns?)\b", re.I)
+_OR_SPLIT = re.compile(r"\s+or(?:\s+|$)")
+
+
+def _row_images(r):
+    out = []
+    for seg in r.get("segments") or []:
+        if isinstance(seg, dict) and seg.get("type") == "images":
+            for im in seg.get("images") or []:
+                a = im.get("asset") if isinstance(im, dict) else None
+                if a:
+                    out.append(re.sub(r"\.(webp|png|jpg)$", "", a, flags=re.I))
+    return out
+
+
+def row_items(r):
+    """표 행 1개 -> [{'name', 'role': grant|consume|require}] (없으면 [])."""
+    try:
+        text = (r.get("text") or "").strip()
+        if not text or _NOT_ITEM_RE.search(text):
+            return []
+        has_img = bool(_row_images(r))
+        m = _CONSUME_RE.match(text)
+        if m:
+            name = m.group("n").strip()
+            if not name or (not has_img and (re.search(r"\d", name) or _DIFF_RE_EARLY.match(name))):
+                return []
+            role = "consume" if m.group("w") in ("소모",) or m.group("w").lower().startswith("consum") else "require"
+            return [{"name": name, "role": role}]
+        if not has_img or r.get("tone") not in ("success", "failure", "neutral"):
+            return []
+        names = [n.strip() for n in _OR_SPLIT.split(text) if n.strip()]
+        return [{"name": n, "role": "grant"} for n in names if n.lower() != "or"]
+    except Exception:
+        return []
+
+
+_DIFF_RE_EARLY = re.compile(r"^(이지|노말|하드|Easy|Normal|Hard)\b")
+
+
+def _compact_result(lines):
+    """옵션의 보상 줄들 -> '힘+10 체력+10' 형태의 짧은 요약"""
+    parts = []
+    for l in lines:
+        l = _TAG_PREFIX_EARLY.sub("", (l or "").strip())
+        if not l or l.lower() == "or" or is_condition_line(l) or _CONSUME_RE.match(l) or l in ("없음", "None"):
+            continue
+        parts.append(re.sub(r"\s+(?=[+-]\d)", "", l))
+    txt = " ".join(parts)
+    return txt if len(txt) <= 44 else txt[:43] + "…"
+
+
+_TAG_PREFIX_EARLY = re.compile(r"^\[(SUCCESS|FAIL)\]\s*")
+
+
 
 def parse_table_event(ev, idx):
     """events[] (표 형태 행) -> (timing, options). 한계는 README 참고."""
@@ -417,6 +483,10 @@ def parse_table_event(ev, idx):
             continue
         if cur is None:
             cur = new_opt("")
+        for it in row_items(r):
+            cur.setdefault("items", [])
+            if it not in cur["items"]:
+                cur["items"].append(it)
         if text.lower() == "or":
             cur["lines"].append(("", "or"))
             continue
@@ -440,6 +510,8 @@ def parse_table_event(ev, idx):
             "has_condition": any(is_condition_line(t) for t in texts),
             "recommended": False,
             "info": info,
+            "items": o.get("items") or [],
+            "result": _compact_result(texts),
         })
     return timing, out
 
@@ -453,6 +525,7 @@ def _merge_candidates(cands):
         variants = OrderedDict()
         first = None
         info_union = []
+        items_union = []
         for src, opts in cands:
             if i >= len(opts):
                 continue
@@ -465,6 +538,9 @@ def _merge_candidates(cands):
             for inf in o["info"]:
                 if all(x["name"] != inf["name"] for x in info_union):
                     info_union.append(inf)
+            for it in o.get("items") or []:
+                if it not in items_union:
+                    items_union.append(it)
         vlist = list(variants.values())
         merged.append({
             "choice": first["choice"],
@@ -474,6 +550,8 @@ def _merge_candidates(cands):
             "recommended": first.get("recommended", False),
             "info": info_union,
             "variants": vlist,
+            "items": items_union,
+            "result": first.get("result", ""),
         })
     return merged
 
@@ -513,8 +591,71 @@ def build_event_cache(journey, arcanas=None, lang="ko"):
             "isArcana": g["arcana"],
             "options": options,
             "sources": [s for s, _ in g["cands"] if s],
+            "timing": "" if g["arcana"] else next((s for s, _ in g["cands"] if s), ""),
         })
+    link_items(cache)
     return cache
+
+
+# ----------------------------------------------------------------------------
+# 아이템 색인: 어느 이벤트에서 얻고(grant) 어디에서 쓰는지(consume/require)
+# ----------------------------------------------------------------------------
+_TIMING_RE = re.compile(r"(\d+)\s*월\s*(초순|중순|하순)?")
+_PHASE = {"초순": 1, "중순": 2, "하순": 3}
+
+
+def _timing_key(t):
+    m = _TIMING_RE.search(t or "")
+    return (int(m.group(1)), _PHASE.get(m.group(2), 0)) if m else (99, 0)
+
+
+def _clean_choice(c):
+    return re.sub(r"[\.\s]+$", "", c or "")
+
+
+def build_item_index(cache):
+    """db_event_cache -> {item: {'grants': [ref...], 'uses': [ref...]}} (ref = event/timing/choice/result/kind)"""
+    index = OrderedDict()
+    for ev in cache or []:
+        for oi, o in enumerate(ev.get("options") or []):
+            for it in o.get("items") or []:
+                try:
+                    e = index.setdefault(it["name"], {"grants": [], "uses": []})
+                    ref = {"event": ev.get("rawTitle", ""), "timing": ev.get("timing", ""),
+                           "choice": _clean_choice(o.get("choice")), "result": o.get("result", ""),
+                           "kind": it["role"], "key": ev.get("cleanTitle", "")}
+                    e["grants" if it["role"] == "grant" else "uses"].append(ref)
+                except (KeyError, TypeError):
+                    continue
+    for e in index.values():
+        for k in ("grants", "uses"):
+            e[k].sort(key=lambda r: _timing_key(r["timing"]))     # 안정 정렬: 시기 없으면 DB 순서
+    return index
+
+
+def link_items(cache):
+    """각 선택지에 item_use(획득 아이템의 이후 사용처) / item_from(소모 아이템의 획득처)을 붙인다. 실패해도 조용히 무시."""
+    try:
+        index = build_item_index(cache)
+    except Exception:
+        return
+    for ev in cache or []:
+        for o in ev.get("options") or []:
+            use, frm = [], []
+            for it in o.get("items") or []:
+                ent = index.get(it.get("name"))
+                if not ent:
+                    continue
+                if it.get("role") == "grant":
+                    uses = [r for r in ent["uses"] if r["key"] != ev.get("cleanTitle")]
+                    use.append({"item": it["name"], "uses": uses})
+                else:
+                    srcs = [r for r in ent["grants"] if r["key"] != ev.get("cleanTitle")]
+                    frm.append({"item": it["name"], "from": srcs})
+            if use:
+                o["item_use"] = use
+            if frm:
+                o["item_from"] = frm
 
 
 # ----------------------------------------------------------------------------
@@ -615,7 +756,60 @@ def format_option_html(option, scale=1.0, show_info=True, lang="ko"):
             rows.append(f'<span style="color:#9fe8ff; font-size:{small}px;"><b>{esc(inf["name"])}</b></span>'
                         f'<span style="color:#cfd8dc; font-size:{small}px;"> {esc(inf["desc"])}</span>')
         html += '<hr style="border:none;border-top:1px solid #444444;margin:6px 0;">' + "<br>".join(rows)
+    if show_info:
+        html += _render_item_sections(option, scale, s)
     return html
+
+
+MAX_USES = 3
+MAX_ITEM_GROUPS = 2
+
+
+def _ref_line(r, with_result):
+    parts = [r.get("event", "")]
+    if r.get("timing"):
+        parts.append(r["timing"])
+    if r.get("choice"):
+        parts.append(r["choice"])
+    line = " · ".join(p for p in parts if p)
+    if with_result and r.get("result"):
+        line += " → " + r["result"]
+    return line
+
+
+def _render_item_sections(option, scale, s):
+    """획득 아이템의 이후 사용처 / 소모 아이템의 획득처 섹션 (없으면 빈 문자열)"""
+    esc = _html.escape
+    small = max(9, round(12 * scale))
+    out = ""
+    groups = option.get("item_use") or []
+    if groups:
+        lines = [f'<span style="color:#ffd27f; font-size:{small}px;"><b>{esc(s["use_head"])}</b></span>']
+        for g in groups[:MAX_ITEM_GROUPS]:
+            lines.append(f'<span style="color:#9fe8ff; font-size:{small}px;"><b>{esc(g["item"])}</b></span>')
+            uses = g.get("uses") or []
+            if not uses:
+                lines.append(f'<span style="color:#888888; font-size:{small}px;">{esc(s["use_none"])}</span>')
+                continue
+            for r in uses[:MAX_USES]:
+                lines.append(f'<span style="color:#cfd8dc; font-size:{small}px;">• {esc(_ref_line(r, True))}</span>')
+            if len(uses) > MAX_USES:
+                lines.append(f'<span style="color:#888888; font-size:{small}px;">{esc(s["more_n"].format(len(uses) - MAX_USES))}</span>')
+        if len(groups) > MAX_ITEM_GROUPS:
+            lines.append(f'<span style="color:#888888; font-size:{small}px;">{esc(s["more_n"].format(len(groups) - MAX_ITEM_GROUPS))}</span>')
+        out += '<hr style="border:none;border-top:1px solid #444444;margin:6px 0;">' + "<br>".join(lines)
+    frm = [g for g in (option.get("item_from") or []) if g.get("from")]
+    if frm:
+        lines = []
+        for g in frm[:MAX_ITEM_GROUPS]:
+            srcs = g["from"]
+            txt = " / ".join(_ref_line(r, False) for r in srcs[:2])
+            if len(srcs) > 2:
+                txt += " " + s["more_n"].format(len(srcs) - 2)
+            lines.append(f'<span style="color:#a5d6a7; font-size:{small}px;">{esc(s["from_head"])}: '
+                         f'<b>{esc(g["item"])}</b> ← {esc(txt)}</span>')
+        out += '<hr style="border:none;border-top:1px solid #444444;margin:6px 0;">' + "<br>".join(lines)
+    return out
 
 
 def find_best_event(clean_query, events, min_score=0.35):
