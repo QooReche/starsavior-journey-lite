@@ -1070,10 +1070,19 @@ def run_selftest(no_update=False, lang="ko"):
     opt = next((o for o in sample["options"] if o["info"]), sample["options"][0])
     print(f"[selftest] 샘플 이벤트: {sample['rawTitle']}")
     print(jh_db.format_option_html(opt, lang=lang))
+    try:                          # OCR 모델 로딩/추론 점검 (빈 이미지 -> 예외 없이 끝나면 OK)
+        ocr = KoreanOCR()
+        ocr.read_line(np.full((48, 300), 255, np.uint8))
+        print("[selftest] OCR 모델 로딩 OK")
+    except Exception as e:
+        print(f"[selftest] OCR 모델 로딩 실패: {e}")
+        return 2
     return 0
 
 
 def main(argv):
+    if "--out" in argv and argv.index("--out") + 1 < len(argv):      # 콘솔이 없는 exe 에서 결과 확인용
+        sys.stdout = open(argv[argv.index("--out") + 1], "w", encoding="utf-8", buffering=1)
     if "--selftest" in argv:
         lang = argv[argv.index("--lang") + 1] if "--lang" in argv and argv.index("--lang") + 1 < len(argv) else "ko"
         sys.exit(run_selftest(no_update="--no-update" in argv, lang=lang if lang in jh_db.SUPPORTED_LANGS else "ko"))
