@@ -62,3 +62,41 @@ def test_crop_card_region_fractions():
     r = jc.crop_card_region(frame)
     assert abs(r.shape[1] - 130) <= 2 and abs(r.shape[0] - 160) <= 2
 
+
+
+def test_missing_reference_does_not_adopt_remaining_candidate(store):
+    """후보 2개 중 하나의 참조가 없으면 남은 하나를 채택하지 않는다 (잘못된 아르카나 필터 방지)."""
+    MISSING = 999999999
+    aid, score, margin = jc.identify(region("head"), [MISSING, BUGUL], store)
+    assert aid is None
+    aid, _, _ = jc.identify(region("head"), [BUGUL], store)         # 후보가 원래 1개면 기존대로
+    assert aid == BUGUL
+
+
+def test_download_failure_is_negatively_cached(tmp_path, monkeypatch):
+    s = jc.CardStore(str(tmp_path), download=True, sleep=0)
+    calls = []
+
+    def boom(aid):
+        calls.append(aid)
+        raise OSError("net")
+    monkeypatch.setattr(s, "_fetch", boom)
+    assert s.get_image(1) is None and s.get_image(1) is None
+    assert calls == [1]
+
+
+def test_fetch_uses_unique_tmp_files(tmp_path, monkeypatch):
+    import io
+    ok, buf = cv2.imencode(".png", np.full((40, 30, 3), 128, np.uint8))
+    data = buf.tobytes()
+
+    class R(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            pass
+    monkeypatch.setattr(jc.urllib.request, "urlopen", lambda *a, **k: R(data))
+    s = jc.CardStore(str(tmp_path), sleep=0)
+    assert s._fetch(5) is not None and s._fetch(5) is not None
+    assert sorted(os.listdir(tmp_path)) == ["5.png"]               # 임시 파일이 남지 않음

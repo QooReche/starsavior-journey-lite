@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import threading
 import time
 import urllib.request
@@ -41,6 +42,7 @@ _JITTER = (-2.0, 0.0, 2.0)
 MIN_SCORE = 0.50      # 1위 점수 하한
 MIN_MARGIN = 0.08     # 2위와의 격차 하한 (후보 2개 이상일 때)
 
+FAIL_RETRY_SEC = 20.0  # 참조 이미지 다운로드가 실패한 id 는 이 시간 동안 다시 시도하지 않음
 _REF_W = 176          # 캐시에 저장하는 참조 이미지 폭
 
 
@@ -124,6 +126,7 @@ class CardStore:
         self.sleep = sleep
         self.timeout = timeout
         self._desc = {}
+        self._fail = {}                 # aid -> 실패 시각: 잠시 재다운로드를 쉰다 (음성 캐시)
         self._lock = threading.Lock()
 
     def _path(self, aid):
@@ -143,9 +146,18 @@ class CardStore:
         h, w = img.shape[:2]
         img = cv2.resize(img, (_REF_W, max(1, int(h * _REF_W / w))), interpolation=cv2.INTER_AREA)
         os.makedirs(self.cache_dir, exist_ok=True)
-        tmp = self._path(aid) + ".tmp.png"
-        cv2.imwrite(tmp, img)
-        os.replace(tmp, self._path(aid))
+        fd, tmp = tempfile.mkstemp(suffix=".tmp.png", prefix=f"{int(aid)}.", dir=self.cache_dir)   # 스레드마다 고유 (경합 방지)
+        os.close(fd)
+        try:
+            if not cv2.imwrite(tmp, img):
+                raise OSError("imwrite failed")
+            os.replace(tmp, self._path(aid))
+        finally:
+            if os.path.exists(tmp):
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
         time.sleep(self.sleep)
         return img
 
@@ -157,9 +169,12 @@ class CardStore:
             return cv2.imdecode(data, cv2.IMREAD_COLOR)
         if not self.download:
             return None
+        if time.monotonic() - self._fail.get(aid, -1e9) < FAIL_RETRY_SEC:
+            return None
         try:
             return self._fetch(aid)
         except Exception:
+            self._fail[aid] = time.monotonic()
             return None
 
     def get_descriptor(self, aid):
@@ -214,6 +229,9 @@ def identify(card_bgr_crop, candidate_arcana_ids, store=None,
     sc = score_candidates(card_bgr_crop, ids, store)
     if not sc:
         return None, 0.0, 0.0
+    if len(ids) > 1 and len(sc) < len(ids):
+        # 참조 이미지를 하나라도 못 구했으면 남은 후보 하나를 그대로 채택하지 않는다 (호출 측은 전부 표시로 폴백)
+        return None, max(sc.values()), 0.0
     ranked = sorted(sc.items(), key=lambda kv: kv[1], reverse=True)
     best_id, best = ranked[0]
     margin = best - ranked[1][1] if len(ranked) > 1 else best
