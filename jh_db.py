@@ -451,15 +451,17 @@ _DIFF_RE_EARLY = re.compile(r"^(이지|노말|하드|Easy|Normal|Hard)\b")
 
 
 def _compact_result(lines):
-    """옵션의 보상 줄들 -> '힘+10 체력+10' 형태의 짧은 요약"""
+    """옵션의 보상 줄들 -> '힘+10\n체력+10' 형태의 요약 (줄바꿈 구분, 최대 6줄)"""
     parts = []
     for l in lines:
         l = _TAG_PREFIX_EARLY.sub("", (l or "").strip())
         if not l or l.lower() == "or" or is_condition_line(l) or _CONSUME_RE.match(l) or l in ("없음", "None"):
             continue
-        parts.append(re.sub(r"\s+(?=[+-]\d)", "", l))
-    txt = " ".join(parts)
-    return txt if len(txt) <= 44 else txt[:43] + "…"
+        l = re.sub(r"\s+(?=[+-]\d)", "", l)
+        parts.append(l if len(l) <= 40 else l[:39] + "…")
+    if len(parts) > 6:
+        parts = parts[:6] + ["…"]
+    return "\n".join(parts)
 
 
 _TAG_PREFIX_EARLY = re.compile(r"^\[(SUCCESS|FAIL)\]\s*")
@@ -920,6 +922,20 @@ def _ref_line(r, with_result):
     return line
 
 
+def _use_lines(r, small):
+    """사용처 1건 -> 식별하기 좋게 줄을 나눈 HTML 줄 목록: '• 이벤트 · 시기' / '  ↳ 선택지' / '  → 보상' (보상은 한 줄씩)"""
+    esc = _html.escape
+    sp = '&nbsp;&nbsp;&nbsp;'
+    span = lambda t: f'<span style="color:#cfd8dc; font-size:{small}px;">{t}</span>'
+    head = " · ".join(p for p in (r.get("event", ""), r.get("timing", "")) if p)
+    out = [span("• " + esc(head))]
+    if r.get("choice"):
+        out.append(span(sp + "↳ " + esc(r["choice"])))
+    for k, part in enumerate(x for x in (r.get("result") or "").split("\n") if x):
+        out.append(f'<span style="color:#a5d6a7; font-size:{small}px;">{sp}{"→ " if k == 0 else "&nbsp;&nbsp;"}{esc(part)}</span>')
+    return out
+
+
 def _render_item_sections(option, scale, s):
     """획득 아이템의 이후 사용처 / 소모 아이템의 획득처 섹션 (없으면 빈 문자열)"""
     esc = _html.escape
@@ -937,7 +953,7 @@ def _render_item_sections(option, scale, s):
                 lines.append(f'<span style="color:#888888; font-size:{small}px;">{esc(s["use_none"])}</span>')
                 continue
             for r in uses[:MAX_USES]:
-                lines.append(f'<span style="color:#cfd8dc; font-size:{small}px;">• {esc(_ref_line(r, True))}</span>')
+                lines.extend(_use_lines(r, small))
             if len(uses) > MAX_USES:
                 lines.append(f'<span style="color:#888888; font-size:{small}px;">{esc(s["more_n"].format(len(uses) - MAX_USES))}</span>')
         if len(groups) > MAX_ITEM_GROUPS:
