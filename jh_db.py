@@ -260,6 +260,13 @@ class InfoIndex:
                 desc = strip_tags(_loc(obj.get("description"), self.lang))
                 if name and desc:
                     self.by_name.setdefault(name, {"name": name, "desc": desc, "kind": kind})
+        try:                                    # 새 DB 에 없는 버프(예: 힘의 자양분)는 옛 DB 백업에서 추출한 설명으로 보충
+            from jh_buffs import BUFF_DESC
+            for name, desc in (BUFF_DESC.get(self.lang) or BUFF_DESC.get("ko") or {}).items():
+                if name and desc:
+                    self.by_name.setdefault(name, {"name": name, "desc": strip_tags(desc), "kind": self.s["buff"]})
+        except Exception:
+            pass
         self._names = sorted(self.by_name, key=len, reverse=True)
 
     def pname(self, pid):
@@ -450,14 +457,25 @@ def row_items(r):
 _DIFF_RE_EARLY = re.compile(r"^(이지|노말|하드|Easy|Normal|Hard)\b")
 
 
+_BUFF_INLINE_RE = re.compile(r"^(여정 버프 획득|Journey Buff (?:Gained|Obtained|Acquired))\s+(.+)$", re.I)
+_BUFF_HEAD_RE = re.compile(r"^(여정 버프 획득|Journey Buff (?:Gained|Obtained|Acquired)?)$", re.I)
+
+
 def _compact_result(lines):
-    """옵션의 보상 줄들 -> '힘+10\n체력+10' 형태의 요약 (줄바꿈 구분, 최대 6줄)"""
+    """옵션의 보상 줄들 -> 줄바꿈 구분 요약 (최대 6줄). '여정 버프 획득' 다음 줄은 '여정 버프 획득 (이름 +3턴)' 으로 합친다."""
     parts = []
     for l in lines:
         l = _TAG_PREFIX_EARLY.sub("", (l or "").strip())
         if not l or l.lower() == "or" or is_condition_line(l) or _CONSUME_RE.match(l) or l in ("없음", "None"):
             continue
         l = re.sub(r"\s+(?=[+-]\d)", "", l)
+        if parts and _BUFF_HEAD_RE.match(parts[-1]):
+            parts[-1] = f"{parts[-1]} ({l})"
+            continue
+        m = _BUFF_INLINE_RE.match(l)
+        if m:                                   # '여정 버프 획득 힘의 자양분+3턴' -> '여정 버프 획득 (힘의 자양분+3턴)'
+            parts.append(f"{m.group(1)} ({m.group(2)})")
+            continue
         parts.append(l if len(l) <= 40 else l[:39] + "…")
     if len(parts) > 6:
         parts = parts[:6] + ["…"]
@@ -685,7 +703,7 @@ def build_item_index(cache):
                     e = index.setdefault(it["name"], {"grants": [], "uses": []})
                     ref = {"event": ev.get("rawTitle", ""), "timing": ev.get("timing", ""),
                            "choice": _clean_choice(o.get("choice")), "result": o.get("result", ""),
-                           "kind": it["role"], "key": ev.get("cleanTitle", "")}
+                           "info": o.get("info") or [], "kind": it["role"], "key": ev.get("cleanTitle", "")}
                     e["grants" if it["role"] == "grant" else "uses"].append(ref)
                 except (KeyError, TypeError):
                     continue
@@ -933,6 +951,9 @@ def _use_lines(r, small):
         out.append(span(sp + "↳ " + esc(r["choice"])))
     for k, part in enumerate(x for x in (r.get("result") or "").split("\n") if x):
         out.append(f'<span style="color:#a5d6a7; font-size:{small}px;">{sp}{"→ " if k == 0 else "&nbsp;&nbsp;"}{esc(part)}</span>')
+    for inf in (r.get("info") or [])[:3]:       # 보상에 나온 버프/잠재력의 효과 설명
+        out.append(f'<span style="color:#9fe8ff; font-size:{small}px;">{sp}ℹ <b>{esc(inf["name"])}</b></span>'
+                   f'<span style="color:#90a4ae; font-size:{small}px;"> {esc(inf["desc"])}</span>')
     return out
 
 

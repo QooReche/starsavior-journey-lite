@@ -322,3 +322,11 @@ class ItemLinkTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
+
+
+def test_buff_line_merged_and_described():
+    """'여정 버프 획득' 줄은 괄호로 합치고, 새 DB에 없는 버프(힘의 자양분)도 옛 DB 보충 설명이 붙는다."""
+    assert jh_db._compact_result(["힘 +20", "여정 버프 획득 힘의 자양분 +3턴"]) == "힘+20\n여정 버프 획득 (힘의 자양분+3턴)"
+    assert jh_db._compact_result(["여정 버프 획득", "힘의 자양분 +3턴"]) == "여정 버프 획득 (힘의 자양분+3턴)"
+    inf = jh_db.InfoIndex({}, "ko").find_in_text("여정 버프 획득 힘의 자양분 +3턴")
+    assert inf and inf[0]["name"] == "힘의 자양분" and "계승" in inf[0]["desc"]
