@@ -84,6 +84,17 @@ EVENT_LABEL_PHRASES_EN = ("journeyevent", "trainingevent", "arcanaevent")
 NOISE_TITLE_WORDS = ("여정이벤트", "훈련이벤트", "아르카나이벤트", "제목", "journeyevent", "trainingevent", "arcanaevent")
 _GAME_KEYWORDS = ["스타세이비어", "스타 세이비어", "starsavior", "star savior"]
 _BROWSER_CLASSES = {"chrome_widgetwin_1", "mozillawindowclass", "applicationframewindow", "operawindowclass"}
+# 제목에 'starsavior' 가 들어가기 쉬운 비게임 창(폴더 이름이 제목인 탐색기, 편집기, 터미널 등)은 게임으로 보지 않는다
+_NON_GAME_CLASSES = _BROWSER_CLASSES | {"cabinetwclass", "notepad", "consolewindowclass", "cascadia_hosting_window_class",
+                                         "pseudoconsolewindow", "progman", "workerw", "shell_traywnd"}
+_NON_GAME_EXES = {"explorer.exe", "code.exe", "notepad.exe", "notepad++.exe", "devenv.exe", "cmd.exe", "powershell.exe", "pwsh.exe",
+                  "windowsterminal.exe", "conhost.exe", "pycharm64.exe", "idea64.exe", "sublime_text.exe", "obsidian.exe",
+                  "chrome.exe", "msedge.exe", "firefox.exe", "whale.exe", "opera.exe", "brave.exe", "slack.exe", "discord.exe"}
+
+
+def is_non_game_host(win_class, exe_name):
+    """창 클래스 / 실행 파일 이름으로 '게임일 수 없는' 창을 가려낸다 (제목 문자열만으로는 폴더·문서 창을 구분 못 함)."""
+    return (win_class or "").lower() in _NON_GAME_CLASSES or (exe_name or "").lower() in _NON_GAME_EXES
 
 
 # ----------------------------------------------------------------------------
@@ -268,6 +279,36 @@ def _is_browser(user32, hwnd):
     return buf.value.lower() in _BROWSER_CLASSES
 
 
+def _exe_name(hwnd):
+    """창을 소유한 프로세스의 실행 파일 이름(소문자). 알 수 없으면 빈 문자열."""
+    try:
+        k32, user32 = ctypes.windll.kernel32, ctypes.windll.user32
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        h = k32.OpenProcess(0x1000, False, pid.value)          # PROCESS_QUERY_LIMITED_INFORMATION
+        if not h:
+            return ""
+        try:
+            buf = ctypes.create_unicode_buffer(1024)
+            n = wintypes.DWORD(1024)
+            if k32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(n)):
+                return os.path.basename(buf.value).lower()
+        finally:
+            k32.CloseHandle(h)
+    except Exception:
+        pass
+    return ""
+
+
+def _is_game_candidate(user32, hwnd):
+    """제목이 게임처럼 보이고, 브라우저/탐색기/편집기 같은 비게임 창이 아닌가."""
+    if not hwnd or not _title_is_game(_window_text(user32, hwnd)):
+        return False
+    buf = ctypes.create_unicode_buffer(256)
+    user32.GetClassNameW(hwnd, buf, 256)
+    return not is_non_game_host(buf.value, _exe_name(hwnd))
+
+
 def _title_is_game(title):
     t = title.lower()
     return any(k in t for k in _GAME_KEYWORDS)
@@ -277,7 +318,7 @@ def find_game_hwnd():
     global _cached_hwnd
     try:
         user32 = ctypes.windll.user32
-        if _cached_hwnd and user32.IsWindow(_cached_hwnd):
+        if _cached_hwnd and user32.IsWindow(_cached_hwnd) and _title_is_game(_window_text(user32, _cached_hwnd)):
             return _cached_hwnd
         my_pid, found = os.getpid(), {"h": None}
         proc_t = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
@@ -286,7 +327,7 @@ def find_game_hwnd():
             if user32.IsWindowVisible(hwnd):
                 pid = wintypes.DWORD()
                 user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-                if pid.value != my_pid and not _is_browser(user32, hwnd) and _title_is_game(_window_text(user32, hwnd)):
+                if pid.value != my_pid and _is_game_candidate(user32, hwnd):
                     found["h"] = hwnd
                     return False
             return True
@@ -338,13 +379,13 @@ def is_game_hovered_or_active():
         if hwnd:
             cands.append(user32.GetAncestor(hwnd, 2) or hwnd)
         cands.append(user32.GetForegroundWindow())
-        return any(h and not _is_browser(user32, h) and _title_is_game(_window_text(user32, h)) for h in cands)
+        return any(h and _is_game_candidate(user32, h) for h in cands)
     except Exception:
         return False
 
 
 def _is_game_window(user32, hwnd):
-    return bool(hwnd and not _is_browser(user32, hwnd) and _title_is_game(_window_text(user32, hwnd)))
+    return bool(hwnd and _is_game_candidate(user32, hwnd))
 
 
 def is_game_foreground():
