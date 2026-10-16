@@ -137,6 +137,13 @@ def load_settings():
     settings["tooltip_font_scale"] = snap_font_scale(settings.get("tooltip_font_scale", 1.0))
     if settings.get("startup_state") not in ("collapsed", "expanded"):
         settings["startup_state"] = "collapsed"
+    for k, dv in DEFAULT_SETTINGS.items():             # bool 설정은 진짜 bool 만 인정 ("false" 문자열 등은 기본값)
+        if isinstance(dv, bool) and not isinstance(settings.get(k), bool):
+            settings[k] = dv
+    off = settings.get("status_badge_offset")
+    if off is not None and not (isinstance(off, (list, tuple)) and len(off) == 2
+                                and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in off)):
+        settings["status_badge_offset"] = None
     return settings
 
 
@@ -248,6 +255,11 @@ def install_crash_logger():
 
     def hook(exc_type, exc, tb):
         try:
+            try:
+                if os.path.getsize(path) > LOG_MAX_BYTES:        # 반복 예외로 무한히 커지지 않게 회전
+                    os.replace(path, path + ".1")
+            except OSError:
+                pass
             with open(path, "a", encoding="utf-8") as f:
                 f.write(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} =====\n")
                 traceback.print_exception(exc_type, exc, tb, file=f)
