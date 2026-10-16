@@ -109,6 +109,12 @@ class DbStore:
                 meta.update({k: saved[k] for k in meta if k in saved})
         except Exception:
             pass
+        for k in ("last_check", "last_fail", "last_manual"):      # 값이 손상돼도 update() 가 예외를 내지 않게
+            v = meta.get(k)
+            if isinstance(v, bool) or not isinstance(v, (int, float)):
+                meta[k] = 0
+        files = meta.get("files")
+        meta["files"] = {k: v for k, v in files.items() if isinstance(v, dict)} if isinstance(files, dict) else {}
         return meta
 
     def _save_meta(self):

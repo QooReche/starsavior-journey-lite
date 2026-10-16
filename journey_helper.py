@@ -853,15 +853,41 @@ class DbThread(QThread):
         super().__init__()
         self.store, self.manual = store, manual
 
-    def run(self):
+    def _build_cache(self):
+        journey, arcanas = self.store.load()
+        return jh_db.build_event_cache(journey, arcanas) if journey else []
+
+    def work(self, emit):
+        """캐시를 먼저 내보내 바로 쓰게 하고, 네트워크 갱신은 그 뒤에 한다. 갱신 예외가 유효한 캐시를 버리게 하지 않는다."""
+        sent_cache = False
+        if not self.manual:
+            try:
+                cache = self._build_cache()
+                if cache:
+                    emit(cache, "cache", "저장된 DB 사용 (백그라운드에서 갱신 확인)")
+                    sent_cache = True
+            except Exception as e:
+                log(f"[DB 캐시 로딩 예외] {e}\n{traceback.format_exc()}")
+        status, message, changed = "error", "", False
         try:
             res = self.store.update(manual=self.manual)
-            journey, arcanas = self.store.load()
-            cache = jh_db.build_event_cache(journey, arcanas) if journey else []
-            self.finished_ok.emit(cache, res.status, res.message)
+            status, message, changed = res.status, res.message, bool(res.changed)
+        except Exception as e:
+            log(f"[DB 갱신 예외] {e}\n{traceback.format_exc()}")
+            status, message = "offline", str(e)
+        if sent_cache and not changed:
+            return                                  # 이미 캐시를 보냈고 바뀐 것이 없음
+        try:
+            cache = self._build_cache()
         except Exception as e:
             log(f"[DB 로딩 예외] {e}\n{traceback.format_exc()}")
-            self.finished_ok.emit([], "error", str(e))
+            cache = []
+        if not cache and sent_cache:
+            return                                  # 갱신 뒤 읽기에 실패해도 이미 쓰고 있는 캐시는 유지
+        emit(cache, status, message)
+
+    def run(self):
+        self.work(self.finished_ok.emit)
 
 
 # ----------------------------------------------------------------------------
@@ -1231,6 +1257,7 @@ class MouseHoverManager(QWidget):
         t.start()
 
     def on_db_loaded(self, cache, status, message, manual):
+        had_db = bool(self.db_event_cache)
         if cache:
             customs = jh_db.load_custom_events(os.path.join(get_settings_dir(), jh_db.CUSTOM_EVENTS_FILE))
             self.db_event_cache = jh_db.merge_custom_events(cache, customs)
@@ -1242,6 +1269,11 @@ class MouseHoverManager(QWidget):
                 text = tr("⚠️ 갱신 실패 - 저장된 DB를 사용합니다")
             self.status.set_status(text, "#3ddc84", protect_sec=4, flash=True)
             QTimer.singleShot(4200, lambda: self.status.set_status(self._journey_text() if self.in_journey else self._idle_text(), "#888888"))
+            if not had_db and self.current_title and not self.matched and not self.not_found and getattr(self, "_last_cands", None):
+                # DB 가 늦게 로드됨: 그 사이 본 제목은 워처가 다시 보내지 않으므로 직접 다시 매칭한다
+                log(f"[DB] 늦게 로드됨 -> 이미 본 제목 {self._last_cands} 다시 매칭")
+                self.current_title = ""
+                self.on_title(self._last_cands, getattr(self, "_last_kind", None))
         else:
             log(f"[DB] 없음 ({status}: {message})")
             self.status.set_status(tr("🔴 DB 없음 - 인터넷 연결 후 메뉴에서 새로고침"), "#ff5c5c", protect_sec=8 if manual else 0, flash=True)
@@ -1267,6 +1299,7 @@ class MouseHoverManager(QWidget):
         title = cands_txt[0] if cands_txt else ""
         if title == self.current_title:
             return
+        self._last_cands, self._last_kind = cands_txt, kind
         if self.choice_lock.active:
             if self.choice_lock.blocks(cands_txt):
                 log(f"[완료 이벤트 잠금] {cands_txt} 는 방금 선택을 마친 '{self.choice_lock.title}' 와 같아 무시")
