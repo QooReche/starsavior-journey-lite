@@ -166,3 +166,12 @@ class RealOcrTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_label_ocr_variants_of_arcana():
+    import journey_helper as jhm
+    assert jhm.match_event_label("알카나이벤트") == "아르카나이벤트"
+    assert jhm.match_event_label("아드가나이벤트") == "아르카나이벤트"
+    assert jhm.match_event_label("아르가나 이벤트") == "아르카나이벤트"
+    assert jhm.match_event_label("알카나 장비") is None            # '이벤트' 가 없으면 변형 처리 안 함
+    assert jhm.match_event_label("이벤트") is None

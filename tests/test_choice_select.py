@@ -75,3 +75,18 @@ def test_panel_diff():
     assert jhm.panel_diff(a, b) == 30.0 > jhm.TRANSITION_DIFF
     assert jhm.panel_diff(a, None) is None
     assert jhm.panel_diff(a, np.zeros((10, 10), np.uint8)) is None
+
+
+def test_lock_key_distinguishes_similar_but_different_event():
+    """유사도만으로는 같은 이벤트로 묶이는 '의뢰 성공'/'의뢰 대성공'을 DB 매칭으로 구분한다."""
+    import types
+    ev = lambda t: {"rawTitle": t, "cleanTitle": t.replace(" ", ""), "isArcana": False, "options": [{"choice": "a"}]}
+    cache = [ev("의뢰 성공"), ev("의뢰 대성공"), ev("머리사냥")]
+    lock = jhm.ChoiceLock(clock=Clock())
+    lock.lock("의뢰 성공", "의뢰성공")
+    assert lock.blocks(["의뢰대성공"])                      # 글자 유사도로는 막힘
+    m = types.SimpleNamespace(choice_lock=lock, db_event_cache=cache)
+    assert jhm.MouseHoverManager._is_different_event(m, ["의뢰대성공"], None) is True
+    assert jhm.MouseHoverManager._is_different_event(m, ["의뢰성공"], None) is False
+    lock.release()
+    assert lock.key == ""

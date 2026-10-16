@@ -439,7 +439,9 @@ def match_event_label(text, cutoff=0.8, lang="ko"):
     """OCR 텍스트가 '여정 이벤트/훈련 이벤트/아르카나 이벤트' 전체 문구와 일치(또는 거의 일치)하면 문구를 반환.
     '이벤트' 같은 일반 단어만으로는 통과시키지 않는다 (장비/스탯 화면 오탐 방지).
     lang == "en" 이면 'Journey Event / Training Event / Arcana Event' 도 허용한다."""
-    pairs = [(re.sub(r"[^가-힣]", "", text or ""), EVENT_LABEL_PHRASES, 4)]
+    ko = re.sub(r"[^가-힣]", "", text or "")
+    ko = re.sub(r"(?:알카나|아드가나|아르가나)(?=이벤)", "아르카나", ko)      # 원작이 처리하는 OCR 변형 ('이벤트' 가 뒤따를 때만)
+    pairs = [(ko, EVENT_LABEL_PHRASES, 4)]
     if lang == "en":
         pairs.append((re.sub(r"[^a-z]", "", (text or "").lower()), EVENT_LABEL_PHRASES_EN, 8))
     for t_, phrases, min_len in pairs:
@@ -657,17 +659,18 @@ class ChoiceLock:
     CONFIRMED_MAX_SEC = 60.0    # (경량판 추가) 화면 전환으로 선택이 확정된 잠금은 더 오래 유지 - 결과 대화가 길어도 재표시 안 함
 
     def __init__(self, clock=time.monotonic):
-        self.clock, self.title, self.since, self.confirmed = clock, "", None, False
+        self.clock, self.title, self.since, self.confirmed, self.key = clock, "", None, False, ""
 
-    def lock(self, title):
-        self.title, self.since, self.confirmed = title or "", self.clock(), False
+    def lock(self, title, key=""):
+        """key: 잠글 때 매칭돼 있던 DB 이벤트의 cleanTitle. 비슷한 이름의 '다른' 이벤트를 구분하는 데 쓴다."""
+        self.title, self.since, self.confirmed, self.key = title or "", self.clock(), False, key or ""
 
     def confirm(self):
         if self.active:
             self.confirmed = True
 
     def release(self):
-        self.title, self.since, self.confirmed = "", None, False
+        self.title, self.since, self.confirmed, self.key = "", None, False, ""
 
     @property
     def active(self):
@@ -1401,7 +1404,7 @@ class MouseHoverManager(QWidget):
         option = self.zones[idx]["option"]
         title = self.current_title or (self.matched or {}).get("rawTitle", "")
         log(f"[선택지 선택 감지] '{title}' {idx + 1}번 '{option.get('choice', '')}' -> 완료 이벤트 잠금")
-        self.choice_lock.lock(title)
+        self.choice_lock.lock(title, (self.matched or {}).get("cleanTitle", ""))
         self._click_block_until = time.monotonic() + CLICK_BLOCK_SEC
         base = self._capture_choice_panel()
         self._pending_hide = not option.get("has_condition", True)
@@ -1491,6 +1494,19 @@ class MouseHoverManager(QWidget):
             self.reset_event_state()
             self.status.set_status(self._idle_text(), "#888888")
 
+    def _is_different_event(self, cands_txt, kind):
+        """잠금과 글자는 비슷하지만 DB 에서 확실히 '다른' 이벤트로 매칭되는가 (예: 의뢰 성공 / 의뢰 대성공)."""
+        key = self.choice_lock.key
+        if not key or not self.db_event_cache:
+            return False
+        try:
+            cands, amb = jh_db.match_title(cands_txt, self.db_event_cache, kind)
+        except Exception:
+            return False
+        if not cands or len(amb) != 1:
+            return False
+        return amb[0].get("cleanTitle", "") != key
+
     def on_title(self, titles, kind=None):
         """titles: OCR 후보 문자열 리스트(또는 문자열 하나), kind: 라벨 종류 'arcana'/'general'/None"""
         cands_txt = [titles] if isinstance(titles, str) else list(titles or [])
@@ -1499,7 +1515,7 @@ class MouseHoverManager(QWidget):
             return
         self._last_cands, self._last_kind = cands_txt, kind
         if self.choice_lock.active:
-            if self.choice_lock.blocks(cands_txt):
+            if self.choice_lock.blocks(cands_txt) and not self._is_different_event(cands_txt, kind):
                 log(f"[완료 이벤트 잠금] {cands_txt} 는 방금 선택을 마친 '{self.choice_lock.title}' 와 같아 무시")
                 return
             log(f"[완료 이벤트 잠금 해제] 다른 제목 {cands_txt}")
