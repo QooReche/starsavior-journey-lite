@@ -41,6 +41,10 @@ _JITTER = (-2.0, 0.0, 2.0)
 # 판정 규칙
 MIN_SCORE = 0.50      # 1위 점수 하한
 MIN_MARGIN = 0.08     # 2위와의 격차 하한 (후보 2개 이상일 때)
+# 실기(2026-10-16): 정답이 뚜렷해도(격차 0.28) 점수가 0.37 로 나와 0.50 기준에 걸려 식별 실패 -> 격차가 크면 점수 하한을 낮춘다
+STRONG_MARGIN = 0.25
+MIN_SCORE_STRONG = 0.33
+LAST_SCORES = {}      # 마지막 identify 의 후보별 점수 (로그/진단용)
 
 FAIL_RETRY_SEC = 20.0  # 참조 이미지 다운로드가 실패한 id 는 이 시간 동안 다시 시도하지 않음
 _REF_W = 176          # 캐시에 저장하는 참조 이미지 폭
@@ -235,7 +239,10 @@ def identify(card_bgr_crop, candidate_arcana_ids, store=None,
     ranked = sorted(sc.items(), key=lambda kv: kv[1], reverse=True)
     best_id, best = ranked[0]
     margin = best - ranked[1][1] if len(ranked) > 1 else best
-    if best < min_score:
+    LAST_SCORES.clear()
+    LAST_SCORES.update(sc)
+    strong = len(ranked) > 1 and margin >= STRONG_MARGIN
+    if best < (min(min_score, MIN_SCORE_STRONG) if strong else min_score):
         return None, best, margin
     if len(ranked) > 1 and margin < min_margin:
         return None, best, margin

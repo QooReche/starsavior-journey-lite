@@ -100,3 +100,15 @@ def test_fetch_uses_unique_tmp_files(tmp_path, monkeypatch):
     s = jc.CardStore(str(tmp_path), sleep=0)
     assert s._fetch(5) is not None and s._fetch(5) is not None
     assert sorted(os.listdir(tmp_path)) == ["5.png"]               # 임시 파일이 남지 않음
+
+
+def test_strong_margin_accepts_lower_score(monkeypatch):
+    """실기: 정답이 뚜렷(격차 0.28)한데 점수 0.37 이라 식별 실패하던 경우를 채택한다."""
+    import numpy as np
+    img = np.zeros((10, 10, 3), np.uint8)
+    monkeypatch.setattr(jc, "score_candidates", lambda r, ids, store=None: {1: 0.37, 2: 0.09})
+    assert jc.identify(img, [1, 2])[0] == 1
+    monkeypatch.setattr(jc, "score_candidates", lambda r, ids, store=None: {1: 0.37, 2: 0.25})   # 격차 작음 -> 거부
+    assert jc.identify(img, [1, 2])[0] is None
+    monkeypatch.setattr(jc, "score_candidates", lambda r, ids, store=None: {1: 0.25, 2: 0.01})   # 점수 너무 낮음 -> 거부
+    assert jc.identify(img, [1, 2])[0] is None

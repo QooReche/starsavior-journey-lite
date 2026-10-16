@@ -968,6 +968,20 @@ def grab_card_crop(sct, rect):
     return cv2.cvtColor(np.array(sct.grab(mon)), cv2.COLOR_BGRA2BGR)
 
 
+def save_card_debug(img, keep=10):
+    """카드 식별 실패 시 잘라낸 영역을 %APPDATA%\JourneyHelperLite\card_debug 에 저장(최근 keep 장만 유지) - 영역 보정 진단용."""
+    try:
+        d = os.path.join(get_settings_dir(), "card_debug")
+        os.makedirs(d, exist_ok=True)
+        ok, buf = cv2.imencode(".png", img)
+        if ok:
+            buf.tofile(os.path.join(d, time.strftime("%H%M%S") + ".png"))
+        for f in sorted(os.listdir(d))[:-keep]:
+            os.remove(os.path.join(d, f))
+    except Exception:
+        pass
+
+
 class CardThread(QThread):
     """제목이 여러 아르카나에 있을 때 카드 썸네일로 어느 아르카나인지 식별 (참조 이미지 다운로드가 있어 별도 스레드)."""
     resolved = pyqtSignal(str, object, str)      # (제목, arcanaId 또는 None, 로그 문구)
@@ -981,12 +995,17 @@ class CardThread(QThread):
         try:
             with mss.mss() as sct:                      # 닫지 않으면 스레드마다 GDI 핸들이 샌다
 
+                last = [None]
+
                 def grab():
                     rect = get_game_window_rect()
-                    return grab_card_crop(sct, rect) if rect else None
+                    last[0] = grab_card_crop(sct, rect) if rect else None
+                    return last[0]
 
                 aid, score, margin, tries = jh_cards.identify_stable(grab, self.ids)
-            info = f"score={score:.2f} margin={margin:.2f} tries={tries}"
+            info = f"score={score:.2f} margin={margin:.2f} tries={tries} 후보점수={ {k: round(v, 2) for k, v in jh_cards.LAST_SCORES.items()} }"
+            if aid is None and last[0] is not None:
+                save_card_debug(last[0])
         except Exception as e:
             info = f"예외 {e}"
         self.resolved.emit(self.title, aid, info)
