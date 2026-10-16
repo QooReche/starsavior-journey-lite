@@ -181,13 +181,32 @@ class DbStore:
         if failed is not None:
             self.meta["last_fail"] = now
             self._save_meta()
-            return UpdateResult("offline", changed, f"갱신 실패, 캐시 사용: {type(failed).__name__}")
+            return UpdateResult("offline", changed, f"갱신 실패, 캐시 사용: {type(failed).__name__} {str(failed)[:120]}".rstrip())
         self.meta["last_check"] = now
         self.meta["last_fail"] = 0
         self._save_meta()
         if changed:
             return UpdateResult("updated", True, "DB 갱신됨")
         return UpdateResult("not_modified", False, "변경 없음 (304)")
+
+    # 새 DB 사이트의 구조가 바뀌거나 내용이 크게 줄어든 응답이 정상 캐시를 덮어쓰지 않게 하는 안전장치
+    _GUARD_KEYS = {"journey": ("events", "arcana"), "arcanas": ("arcanas", "potentials")}
+    GUARD_MIN_RATIO = 0.5
+
+    def _check_not_shrunk(self, rel, data):
+        kind = "journey" if rel.startswith("journey/") else "arcanas" if rel.startswith("arcanas/") else None
+        if kind is None:
+            return
+        try:
+            with open(self._file_path(rel), "r", encoding="utf-8") as f:
+                old = json.load(f)
+        except Exception:
+            old = None
+        for key in self._GUARD_KEYS[kind]:
+            new_v, old_v = data.get(key), (old or {}).get(key)
+            if old_v is not None and isinstance(old_v, list) and len(old_v) >= 4:
+                if not isinstance(new_v, list) or len(new_v) < len(old_v) * self.GUARD_MIN_RATIO:
+                    raise ValueError(f"{rel}: '{key}' 항목이 {len(old_v)} -> {len(new_v) if isinstance(new_v, list) else new_v!r} 로 비정상 감소/변경, 캐시 유지")
 
     def _fetch_one(self, rel):
         url = self.base_url.rstrip("/") + "/" + rel
@@ -208,6 +227,7 @@ class DbStore:
         data = json.loads(content.decode("utf-8"))      # 깨진 응답이 캐시를 덮어쓰지 않도록 먼저 검증
         if not isinstance(data, dict) or not data:
             raise ValueError("unexpected JSON")
+        self._check_not_shrunk(rel, data)
         same = False
         try:                # GitHub Pages(CDN 노드별로 ETag 가 달라짐)는 내용이 같아도 200 을 줄 수 있다
             with open(self._file_path(rel), "rb") as f:

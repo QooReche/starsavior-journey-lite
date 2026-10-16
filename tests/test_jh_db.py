@@ -359,3 +359,27 @@ def test_difficulty_header_tone_is_not_failure():
         row("하드 인내 175 필요", "r17", "failure"), row("집중 +10", "r19", "success")]}
     _, opts = jh_db.parse_table_event(ev, jh_db.InfoIndex({}, "ko"))
     assert "[FAIL]" not in opts[0]["reward"] and "[SUCCESS]" not in opts[0]["reward"]
+
+
+def test_shrunk_or_restructured_response_does_not_overwrite_cache(tmp_path):
+    """새 DB 사이트가 형식을 바꾸거나 내용이 절반 미만으로 줄어든 응답을 주면 정상 캐시를 유지한다."""
+    st = jh_db.DbStore(str(tmp_path), session=FakeSession(ok_handler))
+    assert st.update(manual=False).status == "updated"
+    good = open(st._file_path("journey/ko/journey.json"), "rb").read()
+    j = json.loads(good)
+    j["events"] = j["events"][:2]                                    # 크게 줄어든 응답
+    bad = json.dumps(j, ensure_ascii=False).encode("utf-8")
+
+    def shrink(url, headers):
+        if url.endswith("journey/ko/journey.json"):
+            return FakeResp(200, bad, {"ETag": '"v2"'})
+        return ok_handler(url, headers)
+    st.clock = lambda: 10 ** 9
+    st._session = FakeSession(shrink)
+    res = st.update(manual=True)
+    assert res.status == "offline" and "캐시 유지" in res.message
+    assert open(st._file_path("journey/ko/journey.json"), "rb").read() == good
+    j2 = json.loads(good); j2.pop("events")                          # 구조가 바뀐 응답
+    st._session = FakeSession(lambda u, h: FakeResp(200, json.dumps(j2).encode(), {}) if u.endswith("journey/ko/journey.json") else ok_handler(u, h))
+    st.meta["last_manual"] = 0; st.meta["last_fail"] = 0
+    assert st.update(manual=True).status == "offline"
