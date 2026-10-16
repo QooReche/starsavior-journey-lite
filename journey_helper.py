@@ -172,6 +172,7 @@ _TRANSLATIONS_EN = {
     "🔽 여정 시 펼쳐주세요": "🔽 Expand during Journey",
     "🟡 준비 중...": "🟡 Getting ready...",
     "🟡 [DB 불러오는 중] 이벤트 데이터를 가져오는 중...": "🟡 [Loading DB] Fetching event database...",
+    "🔴 [OCR 모델 로딩 실패] 잠시 후 자동으로 다시 시도합니다 (log.txt 확인)": "🔴 [OCR model failed to load] Retrying automatically (see log.txt)",
     "🟡 [OCR 모델 로딩 중] 처음 한 번만 몇 초 걸려요...": "🟡 [Loading OCR Model] Only takes a few seconds, once...",
     "⚪ [헬퍼 대기 중] 여정 이벤트 화면을 찾고 있습니다...": "⚪ [Waiting] Looking for a Journey event screen...",
     "🌕 [로딩 중] 다음 화면으로 이동하는 중...": "🌕 [Loading] Moving to the next screen...",
@@ -532,6 +533,25 @@ def read_title_candidates(ocr, gray, scales=TITLE_SCALES, min_conf=0.4):
     return out
 
 
+class RetryBackoff:
+    """실패한 작업의 재시도 간격(초)을 단계적으로 늘린다: DELAYS 를 차례로 쓰고 마지막 값에서 고정."""
+    DELAYS = (5.0, 15.0, 30.0, 60.0)
+
+    def __init__(self, clock=time.monotonic):
+        self.clock, self.fails, self._next = clock, 0, 0.0
+
+    def ready(self):
+        return self.clock() >= self._next
+
+    def failed(self):
+        self.fails += 1
+        self._next = self.clock() + self.DELAYS[min(self.fails, len(self.DELAYS)) - 1]
+        return self.fails
+
+    def success(self):
+        self.fails, self._next = 0, 0.0
+
+
 class LeaveGrace:
     """라벨이 found<->unseen/other 로 깜빡일 때 '이탈'을 곧바로 확정하지 않기 위한 유예 타이머."""
 
@@ -693,6 +713,7 @@ class ScreenWatcher(QThread):
     journey_status_changed = pyqtSignal(bool)
     model_loading = pyqtSignal()
     model_ready = pyqtSignal()
+    model_failed = pyqtSignal(str)       # OCR 모델 로딩 실패 (연속 실패 중 한 번만 보냄)
 
     LEAVE_AFTER_OTHER = 3     # 라벨 자리에 다른 글자가 읽힘 -> 이벤트 화면이 아니라고 확신 (연속 횟수)
     LEAVE_AFTER_UNSEEN = 8    # 아무것도 못 읽음 -> 스캔 실패일 수 있으니 더 오래 기다림
@@ -706,6 +727,8 @@ class ScreenWatcher(QThread):
         self.pause_getter = pause_getter or (lambda: False)
         self.low_spec_getter = low_spec_getter or (lambda: False)
         self.ocr = None
+        self._ocr_retry = RetryBackoff()
+        self._ocr_failed_notified = False
         self._stop = False
         # (2) 실제로 확인되기 전까지는 항상 False
         self.label_visible = False
@@ -778,6 +801,34 @@ class ScreenWatcher(QThread):
             self._cached_title = read_title_candidates(self.ocr, gray)
         return self._cached_title
 
+    def _ensure_ocr(self):
+        """OCR 모델을 (필요하면) 로드한다. 실패하면 백오프 간격으로만 재시도하고 상단바에는 한 번만 알린다. 사용 가능하면 True."""
+        if self.ocr is not None:
+            return True
+        if not self._ocr_retry.ready():
+            return False
+        first = self._ocr_retry.fails == 0
+        if first:
+            self.model_loading.emit()
+            log("[지연 로딩] 게임 감지됨 -> 제목/라벨 인식용 OCR 모델 로딩 시작...")
+        try:
+            self.ocr = KoreanOCR()
+        except Exception as e:
+            n = self._ocr_retry.failed()
+            if n <= 3:
+                log(f"[OCR 모델 로딩 실패 {n}회] {e}\n{traceback.format_exc()}")
+            else:
+                log(f"[OCR 모델 로딩 실패 {n}회] {e}")
+            if not self._ocr_failed_notified:
+                self._ocr_failed_notified = True
+                self.model_failed.emit(str(e))
+            return False
+        self._ocr_retry.success()
+        self._ocr_failed_notified = False
+        log("[지연 로딩] 제목/라벨 인식용 OCR 모델 로딩 완료")
+        self.model_ready.emit()
+        return True
+
     def run(self):
         sct = mss.mss()
         while not self._stop:
@@ -801,12 +852,9 @@ class ScreenWatcher(QThread):
                 if self._was_inactive:
                     self._was_inactive = False
                     self._last_label_gray = self._last_title_gray = None
-                if self.ocr is None:
-                    self.model_loading.emit()
-                    log("[지연 로딩] 게임 감지됨 -> 제목/라벨 인식용 OCR 모델 로딩 시작...")
-                    self.ocr = KoreanOCR()
-                    log("[지연 로딩] 제목/라벨 인식용 OCR 모델 로딩 완료")
-                    self.model_ready.emit()
+                if not self._ensure_ocr():
+                    self.msleep(500)
+                    continue
                 lr = self._last_rect
                 if lr and any(abs(rect[k] - lr[k]) > 5 for k in ("left", "top", "width", "height")):
                     # 게임 창이 이동/리사이즈됨: 영역은 매 주기 창 기준 비율로 다시 계산되므로 캐시만 비우고 재스캔한다
@@ -1205,6 +1253,9 @@ class MouseHoverManager(QWidget):
         self.watcher.journey_status_changed.connect(self.on_journey_status)
         self.watcher.model_loading.connect(
             lambda: self.status.set_status(tr("🟡 [OCR 모델 로딩 중] 처음 한 번만 몇 초 걸려요..."), "#ffcc00", flash=True))
+        self.watcher.model_failed.connect(
+            lambda msg: self.status.set_status(tr("🔴 [OCR 모델 로딩 실패] 잠시 후 자동으로 다시 시도합니다 (log.txt 확인)"), "#ff5c5c",
+                                               protect_sec=8, flash=True))
         self.watcher.model_ready.connect(lambda: self.status.set_status(self._idle_text(), "#888888"))
         self.watcher.start()
         log(f"[시작] {APP_NAME} {APP_VERSION} lang={self.lang} low_spec={self.settings['low_spec_mode']}")
