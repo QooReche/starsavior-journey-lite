@@ -517,18 +517,26 @@ def parse_table_event(ev, idx):
             cur.setdefault("items", [])
             if it not in cur["items"]:
                 cur["items"].append(it)
+        tones = cur.setdefault("tones", [])
         if text.lower() == "or":
             cur["lines"].append(("", "or"))
+            tones.append("")
             continue
         lines = cur["lines"]
         if lines and lines[-1][0] == region and region and lines[-1][1].rstrip().endswith(" or"):
             lines[-1] = (region, lines[-1][1].rstrip() + " " + text)    # 셀 줄바꿈으로 갈라진 'A or B or' 이어붙임
         else:
             lines.append((region, text))
+            tones.append(tone)
 
     out = []
     for o in options:
         texts = [t for _, t in o["lines"]]
+        tones = o.get("tones") or []
+        if len(tones) == len(texts) and "success" in tones and "failure" in tones:
+            # 한 선택지에 성공/실패 톤이 함께 있으면 둘 중 하나가 나오는 결과다 -> [SUCCESS]/[FAIL] 표시로 블록을 나눈다
+            texts = [(f"[SUCCESS] {t}" if tn == "success" else f"[FAIL] {t}" if tn == "failure" else t)
+                     for t, tn in zip(texts, tones)]
         info = []
         for t in texts:
             for inf in idx.find_in_text(t):

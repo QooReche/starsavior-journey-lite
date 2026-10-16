@@ -330,3 +330,18 @@ def test_buff_line_merged_and_described():
     assert jh_db._compact_result(["여정 버프 획득", "힘의 자양분 +3턴"]) == "여정 버프 획득 (힘의 자양분+3턴)"
     inf = jh_db.InfoIndex({}, "ko").find_in_text("여정 버프 획득 힘의 자양분 +3턴")
     assert inf and inf[0]["name"] == "힘의 자양분" and "계승" in inf[0]["desc"]
+
+
+def test_table_event_success_failure_tones_become_blocks():
+    """표 형태 이벤트에서 한 선택지에 성공/실패 톤 행이 함께 있으면 [SUCCESS]/[FAIL] 블록으로 나뉜다(오늘의 날씨-안개)."""
+    def row(text, region, tone):
+        return {"text": text, "region": region, "tone": tone, "fontSize": 13.6, "weight": 400, "segments": []}
+    ev = {"title": "T", "rows": [
+        {"text": "T", "region": "", "tone": "plain", "fontSize": 16, "weight": 700, "segments": []},
+        {"text": "1. 이어간다.", "region": "", "tone": "plain", "fontSize": 14.4, "weight": 700, "segments": []},
+        row("집중 +30", "r5", "success"), row("집중 -10", "r6", "failure"),
+        {"text": "2. 돌아간다.", "region": "", "tone": "plain", "fontSize": 14.4, "weight": 700, "segments": []},
+        row("스태미나 +10", "r7", "success")]}
+    _, opts = jh_db.parse_table_event(ev, jh_db.InfoIndex({}, "ko"))
+    assert opts[0]["reward"] == "[SUCCESS] 집중 +30\n[FAIL] 집중 -10"
+    assert opts[1]["reward"] == "스태미나 +10"
