@@ -118,8 +118,8 @@ def make_mgr(has_condition, panels):
     m._idle_text = lambda: "idle"
     m._journey_text = lambda: "journey"
     m._stop_transition_check = lambda: M._stop_transition_check(m)
-    m.reset_event_state = lambda: (setattr(m, "in_journey", False), setattr(m, "current_title", ""),
-                                   setattr(m, "matched", None), setattr(m, "zones", []), m._stop_transition_check())
+    m._card_threads = []
+    m.reset_event_state = lambda keep_journey=False: M.reset_event_state(m, keep_journey)
     return m
 
 
@@ -152,6 +152,8 @@ def test_real_selection_confirms_after_buttons_vanish():
     M._poll_transition(m)
     assert m.choice_lock.active and m.choice_lock.confirmed
     assert m.matched is None
+    assert m.in_journey          # 라벨이 계속 보이면 다음 이벤트 툴팁이 나와야 한다 (진입 신호가 다시 오지 않음)
+    assert m.zones == [] and m.current_title == ""
 
 
 def test_conditional_choice_not_hidden_immediately():

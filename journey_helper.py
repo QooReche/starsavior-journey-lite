@@ -1107,8 +1107,11 @@ class MouseHoverManager(QWidget):
         self.start_db(manual=False)
 
     # --- 상태 ---
-    def reset_event_state(self):
-        self.in_journey = False
+    def reset_event_state(self, keep_journey=False):
+        """이벤트 필드/툴팁을 비운다. keep_journey=True 면 '이벤트 화면 안' 상태는 유지한다
+        (선택 확정 뒤 라벨이 계속 보이면 워처가 진입 신호를 다시 보내지 않으므로, 다음 이벤트 툴팁이 막히지 않게)."""
+        if not keep_journey:
+            self.in_journey = False
         self.current_title = ""
         self.matched = None
         self.not_found = ""
@@ -1195,7 +1198,7 @@ class MouseHoverManager(QWidget):
         if res == "confirm":
             log("[화면 전환 감지] 선택지 버튼이 사라짐 -> 선택 확정으로 판단, 정리")
             self.choice_lock.confirm()
-            self.reset_event_state()
+            self.reset_event_state(keep_journey=True)
             self.status.set_status(self._idle_text(), "#888888")
         elif res == "release":
             log("[선택 오감지로 판단] 패널이 안 변했거나 선택지가 새로 나타남 -> 잠금 해제, 툴팁 유지")
