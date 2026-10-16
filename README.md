@@ -39,7 +39,8 @@ python -m venv .venv
 ## 사용법
 - 상단바는 **접힌 상태**로 시작합니다(`🔽 여정 시 펼쳐주세요`). 여정/이벤트가 감지되면 잠깐 펼쳐졌다가 자동으로 다시 접힙니다.
 - **상단바 좌클릭**: 메뉴 (펼치기/접기, DB 새로고침, 일시정지, 종료) · **우클릭**: 설정 (글자 크기, 설명 표시, 시작 상태, 언어, 위치 고정/초기화) · 위치 잠금 해제 시 드래그 이동
-- 여정 **이벤트 화면**에서 선택지에 마우스를 올리면 왼쪽에 툴팁이 뜹니다. 선택지가 하나뿐인(자동 진행) 이벤트는 바로 표시됩니다.
+- 여정 **이벤트 화면**에서 선택지에 마우스를 올리면 왼쪽에 툴팁이 뜹니다. 선택지가 없거나 하나뿐인(자동 진행) 이벤트와 DB에 없는 제목은 툴팁을 띄우지 않습니다(`custom_events.json`의 사용자 안내문은 예외).
+- 좌측 상단 **날짜 위젯**(`3월 초순` 등)에 마우스를 올리면 그 턴의 고정/확률/랜덤 일정과 다음 고정 일정이 뜹니다(설정에서 끌 수 있음). 날짜 문구를 1초마다 읽어 턴을 판단하며, 일정 데이터는 앱에 내장되어 있습니다.
 - 트레이 아이콘 우클릭으로도 같은 메뉴를 쓸 수 있습니다.
 - 언어를 바꾸면(ko/en) DB도 해당 언어로 다시 받아야 해서 재시작을 묻습니다.
 
@@ -57,8 +58,8 @@ python -m venv .venv
 ## 한계 / 알려진 위험
 - 이 도구는 **게임 화면 비율**(원작과 같은 좌표 비율)에 의존합니다. 게임 UI가 개편되면 영역 비율(`REGION_FRACTIONS`) 수정이 필요합니다.
 - 제목은 한 줄짜리 영역을 검출 없이 바로 인식(rec-only)합니다. 제목이 두 줄이 되는 화면에서는 인식이 흔들릴 수 있습니다.
-- 일반(여정) 이벤트 DB는 표(행) 형태라 선택지/보상을 행 구조(`1.` 번호, `or`, 난이도, 줄바꿈)로 복원합니다. 복잡한 표(난이도별 분기)는 줄 단위로 그대로 보여주며, 일부 표시가 DB 원문과 다를 수 있습니다. 아이템(교본, 쿠폰 등)에는 DB에 설명이 없어 이름만 표시됩니다. 설명은 **잠재력/여정 버프**만 붙습니다.
-- 같은 제목의 아르카나 이벤트가 여러 개면 카드 그림 인식 없이 **아르카나별 보상을 모두** 나열합니다.
+- 일반(여정) 이벤트 DB는 표(행) 형태라 선택지/보상을 행 구조(`1.` 번호, `or`, 난이도, 줄바꿈)로 복원합니다. 복잡한 표(난이도별 분기)는 줄 단위로 그대로 보여주며, 일부 표시가 DB 원문과 다를 수 있습니다. 아이템(교본, 쿠폰 등)에는 DB에 설명이 없어 이름만 표시됩니다. 설명은 **잠재력/여정 버프**만 붙습니다(새 DB에 없는 버프는 내장 보충 데이터 `jh_buffs.py` 사용). 성공/실패 확률은 어느 DB에도 없어서 표시하지 않습니다.
+- 같은 제목의 아르카나 이벤트가 여러 개면 카드 썸네일을 비교해 해당 아르카나만 보여 줍니다. 식별에 실패하면(화면 전환 중 등) **아르카나별 보상을 모두** 나열합니다.
 - DB(`backup-meta.json`)에 `generalJourneyFrozen: true` 표기가 있어 일반 이벤트 데이터는 고정(더 이상 갱신 안 됨)일 수 있습니다.
 - 영어 모드는 영문 이벤트 제목/라벨 인식을 허용하지만, 한국어 인식 모델의 영문 정확도는 한국어보다 낮을 수 있습니다.
 - 실제 게임 화면에서의 영역 정확도(라벨/제목/선택지 Y 좌표)는 게임을 켜고 확인해야 합니다.
@@ -75,12 +76,12 @@ PyInstaller (onedir):
 ```powershell
 python -m PyInstaller journey_helper.spec --noconfirm     # dist\JourneyHelperLite\
 ```
-- **ASCII 경로에서 빌드**하세요 (Qt 경로 조회가 한글 경로를 깨뜨려 PyInstaller Qt 훅이 실패합니다).
-- 빌드 venv의 site-packages에 `import onnxruntime` 한 줄짜리 `.pth` 파일을 두면, PyInstaller가 PyQt5 보다 먼저 onnxruntime을 불러 access violation을 피합니다. (앱 코드도 같은 이유로 onnxruntime을 PyQt5보다 먼저 import 합니다.)
+- **ASCII 경로에서 빌드**하세요 (Qt 경로 조회가 한글 경로를 깨뜨려 PyInstaller Qt 훅이 실패합니다). `tools\setup_build_env.ps1` 이 `C:\build\jh` 에 소스 사본·venv·`.pth`를 만들고 테스트까지 돌립니다.
+- 빌드 venv의 site-packages에 `import onnxruntime` 한 줄짜리 `.pth` 파일(`zz_ort_first.pth`)을 **반드시** 두세요. 없으면 PyInstaller 분석이 PyQt5 를 먼저 불러 onnxruntime 에서 access violation(0xC0000005)으로 죽습니다. (앱 코드도 같은 이유로 onnxruntime을 PyQt5보다 먼저 import 합니다.)
 - spec이 PyQt5가 동봉한 오래된 VC++ 런타임(14.26)을 번들에서 제외합니다. 포함되면 onnxruntime이 시작 시 죽습니다.
 
 ## 크레딧 / 라이선스
 - 원작: [p1021/journeyhelper](https://github.com/p1021/journeyhelper) - 화면 영역 비율, 창 탐색, 오버레이/호버 방식, 제목 매칭 점수식 등의 아이디어와 일부 코드를 가져왔습니다. 원작 저장소에는 LICENSE 파일이 없으므로(2026-10 기준) 별도 라이선스를 부여하지 않으며, 원작자의 요청이 있으면 수정/삭제합니다.
-- 데이터: [starsavior-guide.github.io](https://starsavior-guide.github.io/data/) 의 공개 DB (`journey/<언어>/journey.json`, `arcanas/arcanas.json`). 데이터의 권리는 제공자/게임사에 있으며, 이 저장소는 데이터를 포함하지 않고 실행 시 내려받습니다(테스트용 축소 샘플만 `tests/fixtures`에 포함).
+- 데이터: [starsavior-guide.github.io](https://starsavior-guide.github.io/data/) 의 공개 DB (`journey/<언어>/journey.json`, `arcanas/arcanas.json`). 데이터의 권리는 제공자/게임사에 있으며, 이 저장소는 DB 본체를 포함하지 않고 실행 시 내려받습니다(테스트용 축소 샘플만 `tests/fixtures`에 포함). 단, 새 DB에 없는 정보는 옛 DB(star-savior-arcana-db, 2026-10-15 백업)에서 추출해 코드에 내장했습니다: 여정 버프 효과 설명 `jh_buffs.py`, 턴별 일정 `jh_schedule.py`. 공개·배포 전에 제공자 허락 여부를 확인해야 합니다.
 - OCR: [RapidOCR](https://github.com/RapidAI/RapidOCR) + [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) PP-OCRv4 한국어 인식 모델(`models/`, Apache-2.0).
 - PyQt5(GPL v3/상용), onnxruntime(MIT), OpenCV(Apache-2.0), mss(MIT), requests(Apache-2.0).
