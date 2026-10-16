@@ -970,6 +970,7 @@ class StatusBadge(QWidget):
         self._text, self._color = tr("🟡 준비 중..."), "#ffcc00"
         self._protect_until = 0
         self._flash_until = 0
+        self.avoid_regions = False       # show_capture_debug 일 때 True
         self._drag = None
         self._dragging = False
         self.render()
@@ -1020,6 +1021,10 @@ class StatusBadge(QWidget):
         rect = get_game_window_rect()
         left, top, w = (rect["left"], rect["top"], rect["width"]) if rect else (0, 0, QApplication.desktop().screenGeometry().width())
         off = self.settings.get("status_badge_offset")
+        if off and self.avoid_regions and rect and any(
+                boxes_overlap((left + off[0], top + off[1], left + off[0] + self.width(), top + off[1] + self.height()), b)
+                for b in capture_region_boxes(rect)):
+            off = None                      # 디버그 모드: 캡처되는 OCR 영역을 가리는 위치면 기본 위치(맨 위)로
         if off:
             self.move(int(left + off[0]), int(top + off[1]))
         else:
@@ -1051,6 +1056,44 @@ class StatusBadge(QWidget):
         self._drag, self._dragging = None, False
 
 
+def capture_region_boxes(rect):
+    """앱이 OCR/카드 식별로 읽는 영역(라벨·제목·카드)의 화면 좌표 상자 [(x0,y0,x1,y1)]."""
+    boxes = []
+    for fr in (REGION_FRACTIONS["event_label"], REGION_FRACTIONS["event_title"]):
+        x0, y0 = rect["left"] + rect["width"] * fr["left"], rect["top"] + rect["height"] * fr["top"]
+        boxes.append((x0, y0, x0 + rect["width"] * fr["width"], y0 + rect["height"] * fr["height"]))
+    cx0, cy0, cx1, cy1 = jh_cards.CARD_REGION_FRAC
+    boxes.append((rect["left"] + rect["width"] * cx0, rect["top"] + rect["height"] * cy0,
+                  rect["left"] + rect["width"] * cx1, rect["top"] + rect["height"] * cy1))
+    return boxes
+
+
+def boxes_overlap(a, b):
+    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+
+def tooltip_below_regions_y(rect):
+    """캡처 영역 아래쪽 끝(여백 포함). show_capture_debug 일 때 툴팁은 이보다 아래에만 둔다."""
+    return int(max(b[3] for b in capture_region_boxes(rect)) + rect["height"] * 0.01)
+
+
+def place_tooltip(rect, avail, height, avoid_regions=False):
+    """툴팁의 (x, y, 잘라낼 높이 또는 None). avail=(left, top, right, bottom): 게임 창이 있는 모니터의 사용 가능 영역.
+    avoid_regions=True(show_capture_debug)면 툴팁이 캡처에 찍혀도 라벨/제목/카드 영역을 가리지 않게 그 아래에만 두고,
+    넘치면 위로 밀지 않고 아래를 자른다."""
+    al, at, ar, ab = avail
+    if rect:
+        x, y = rect["left"] + 25, rect["top"] + int(rect["height"] * 0.30)
+    else:
+        x, y = al + 25, at + int((ab - at) * 0.30)
+    if avoid_regions and rect:
+        y = max(y, tooltip_below_regions_y(rect))
+        if y + height + 10 > ab:
+            return x, y, max(60, ab - 10 - y)
+        return x, y, None
+    return x, max(at, min(y, ab - height - 10)), None
+
+
 class FixedLeftTooltip(QWidget):
     BASE_W, BASE_PX = 440, 13
 
@@ -1065,6 +1108,7 @@ class FixedLeftTooltip(QWidget):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(self.label)
         self._src = None
+        self.avoid_regions = False       # show_capture_debug: 캡처에 찍혀도 OCR 영역을 가리지 않게
         self.set_scale(scale)
         exclude_from_capture(self)
 
@@ -1076,6 +1120,8 @@ class FixedLeftTooltip(QWidget):
         self.setFixedWidth(round(self.BASE_W * scale))
 
     def _fit(self, html):
+        self.setMinimumHeight(0)
+        self.setMaximumHeight(16777215)
         self.label.setText(html)
         self.label.adjustSize()
         self.adjustSize()
@@ -1085,6 +1131,10 @@ class FixedLeftTooltip(QWidget):
         """html: 문자열 또는 detail(0~MAX_DETAIL) -> 문자열 함수. 함수면 화면에 들어올 때까지 단계적으로 줄여 본다."""
         rect = get_game_window_rect()
         screen = QApplication.desktop().screenGeometry()
+        avail = (screen.left(), screen.top(), screen.left() + screen.width(), screen.top() + screen.height())
+        limit = screen.height() - 40
+        if self.avoid_regions and rect:
+            limit = avail[3] - 10 - max(rect["top"] + int(rect["height"] * 0.30), tooltip_below_regions_y(rect))
         if callable(html):
             fn = html
             html = fn(0)
@@ -1092,14 +1142,15 @@ class FixedLeftTooltip(QWidget):
                 self._src = html
                 self._fit(html)
                 for d in range(1, TOOLTIP_MAX_DETAIL + 1):
-                    if self.height() <= screen.height() - 40:
+                    if self.height() <= limit:
                         break
                     self._fit(fn(d))
         elif html != self._src:
             self._src = html
             self._fit(html)
-        x, y = (rect["left"] + 25, rect["top"] + int(rect["height"] * 0.30)) if rect else (25, int(screen.height() * 0.30))
-        y = max(0, min(y, screen.height() - self.height() - 10))      # 내용이 길면 위로 밀어 화면 안에 유지
+        x, y, clip = place_tooltip(rect, avail, self.height(), self.avoid_regions)
+        if clip:
+            self.setFixedHeight(clip)                   # 디버그 모드에서 넘치면 아래를 자른다
         self.move(x, y)
         self.show()
 
@@ -1582,6 +1633,7 @@ class MouseHoverManager(QWidget):
         hide = not self.settings.get("show_capture_debug", False)
         for w in (self.status, self.tooltip):
             exclude_from_capture(w, hide)
+        self.tooltip.avoid_regions = self.status.avoid_regions = not hide
 
     def reset_badge_pos(self):
         self.set_value("status_badge_offset", None)
