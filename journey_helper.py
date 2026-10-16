@@ -968,7 +968,7 @@ def grab_card_crop(sct, rect):
     return cv2.cvtColor(np.array(sct.grab(mon)), cv2.COLOR_BGRA2BGR)
 
 
-def save_card_debug(img, keep=10):
+def save_card_debug(img, keep=5):
     """카드 식별 실패 시 잘라낸 영역을 %APPDATA%\JourneyHelperLite\card_debug 에 저장(최근 keep 장만 유지) - 영역 보정 진단용."""
     try:
         d = os.path.join(get_settings_dir(), "card_debug")
@@ -986,9 +986,9 @@ class CardThread(QThread):
     """제목이 여러 아르카나에 있을 때 카드 썸네일로 어느 아르카나인지 식별 (참조 이미지 다운로드가 있어 별도 스레드)."""
     resolved = pyqtSignal(str, object, str)      # (제목, arcanaId 또는 None, 로그 문구)
 
-    def __init__(self, title, ids):
+    def __init__(self, title, ids, save_debug=False):
         super().__init__()
-        self.title, self.ids = title, list(ids)
+        self.title, self.ids, self.save_debug = title, list(ids), save_debug
 
     def run(self):
         aid, info = None, ""
@@ -1004,7 +1004,7 @@ class CardThread(QThread):
 
                 aid, score, margin, tries = jh_cards.identify_stable(grab, self.ids)
             info = f"score={score:.2f} margin={margin:.2f} tries={tries} 후보점수={ {k: round(v, 2) for k, v in jh_cards.LAST_SCORES.items()} }"
-            if aid is None and last[0] is not None:
+            if aid is None and last[0] is not None and self.save_debug:     # 진단 모드(show_capture_debug)에서만 저장 -> 평소엔 용량을 쓰지 않음
                 save_card_debug(last[0])
         except Exception as e:
             info = f"예외 {e}"
@@ -1618,7 +1618,7 @@ class MouseHoverManager(QWidget):
         ids = jh_db.arcana_ids_of(best)
         if len(ids) >= 2 and not self.ambig:
             log(f"[카드] '{best['rawTitle']}' 아르카나 {len(ids)}곳에 있음 {ids} -> 카드 썸네일로 식별 시도 (그동안 전부 표시)")
-            t = CardThread(title, ids)
+            t = CardThread(title, ids, save_debug=bool(self.settings.get("show_capture_debug")))
             t.resolved.connect(self.on_card_resolved)
             self._card_threads = [x for x in self._card_threads if x.isRunning()] + [t]
             t.start()
@@ -1687,6 +1687,7 @@ class MouseHoverManager(QWidget):
         self._game_focus_was_active = active
         self._check_lock_expiry()
         if not self._hidden:
+            reassert_topmost(self.status)       # 게임 창이 위로 올라와 상단바가 가려지는 경우(2026-10-16 실기) 매초 복구
             self.status.reposition()
 
     # --- 호버 ---
