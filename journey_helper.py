@@ -517,6 +517,9 @@ VK_LBUTTON = 0x01
 TRANSITION_POLL_MS = 120      # 선택 후 선택지 패널 변화 확인 주기 (원작 값)
 TRANSITION_DIFF = 18          # 64x36 축소 gray 평균 차이가 이 값을 넘는 프레임이 2번 연속이면 '화면 전환' (원작 값)
 CLICK_BLOCK_SEC = 2.5         # 선택 직후 추가 입력 무시 (원작 값)
+HOVER_DWELL_SEC = 0.2         # (경량판 보강) 선택지 존 위에 이만큼 머문 뒤의 클릭만 '선택'으로 인정 - 대사 넘기기 클릭 오감지 완화
+NO_REACTION_RELEASE_SEC = 3.0   # (경량판 보강) 선택 감지 후 이 시간 동안 패널이 안 변하면 '선택이 안 먹힘/오감지'로 보고 잠금 해제
+BUTTONS_GONE_RATIO = 0.75     # 패널 경계선 에너지가 클릭 때의 이 비율 이하로 줄면 '선택지 버튼이 사라짐'
 
 
 def detect_choice_input(pressed, prev_pressed, cursor_idx, n_zones):
@@ -538,6 +541,54 @@ def panel_diff(base, cur):
     if base is None or cur is None or base.shape != cur.shape:
         return None
     return float(np.mean(np.abs(cur.astype(np.int16) - base.astype(np.int16))))
+
+
+def panel_energy(gray):
+    """패널 축소 이미지의 경계선 에너지(가로·세로 인접 픽셀 차이의 평균). 선택지 버튼(테두리·글자)이 있으면 커진다."""
+    if gray is None or gray.ndim != 2 or gray.shape[0] < 2 or gray.shape[1] < 2:
+        return 0.0
+    g = gray.astype(np.int16)
+    return float(np.mean(np.abs(np.diff(g, axis=1))) + np.mean(np.abs(np.diff(g, axis=0))))
+
+
+class HoverDwell:
+    """커서가 같은 선택지 존에 머문 시간. 짧게 스친 뒤의 클릭(대사 넘기기)을 선택으로 보지 않기 위해 쓴다."""
+
+    def __init__(self, clock=time.monotonic):
+        self.clock, self.idx, self.since = clock, None, 0.0
+
+    def update(self, idx):
+        if idx != self.idx:
+            self.idx, self.since = idx, self.clock()
+
+    def dwelled(self, sec=None):
+        return self.idx is not None and self.clock() - self.since >= (HOVER_DWELL_SEC if sec is None else sec)
+
+
+class SelectionWatch:
+    """선택 입력이 감지된 뒤 선택지 패널(64x36 gray)을 지켜보며 '정말 선택돼서 버튼이 사라졌는지' 판정한다.
+    feed(cur) 결과: "confirm"(변화 2회 연속 + 버튼 사라짐), "release"(버튼이 새로 나타났거나 일정 시간 변화 없음 = 선택 아님), None(계속 관찰)."""
+
+    def __init__(self, base, clock=time.monotonic):
+        self.base, self.clock, self.t0 = base, clock, clock()
+        self.base_energy, self.hits = panel_energy(base), 0
+
+    def feed(self, cur):
+        d = panel_diff(self.base, cur)
+        if d is None:
+            return None
+        if d <= TRANSITION_DIFF:
+            self.hits = 0
+            return "release" if self.clock() - self.t0 >= NO_REACTION_RELEASE_SEC else None
+        self.hits += 1
+        if self.hits < 2:
+            return None
+        e = panel_energy(cur)
+        if self.base_energy > 1.0 and e <= self.base_energy * BUTTONS_GONE_RATIO:
+            return "confirm"
+        if e >= max(self.base_energy / BUTTONS_GONE_RATIO, self.base_energy + 2.0):
+            return "release"        # 클릭 뒤에 오히려 버튼이 나타남 = 대사를 넘긴 것
+        return None
 
 
 class ChoiceLock:
@@ -1021,8 +1072,9 @@ class MouseHoverManager(QWidget):
         self.choice_lock = ChoiceLock()
         self._prev_keys = set()
         self._click_block_until = 0.0
-        self._transition_base = None
-        self._transition_hits = 0
+        self._watch = None
+        self._pending_hide = False
+        self._dwell = HoverDwell()
         self._transition_sct = None
         self._transition_timer = None
         self.reset_event_state()
@@ -1064,6 +1116,7 @@ class MouseHoverManager(QWidget):
         self.zones = []
         self.options = []
         self.card_id = None
+        self._pending_hide = False
         self._card_threads = getattr(self, "_card_threads", [])
         self._stop_transition_check()
         if hasattr(self, "tooltip"):
@@ -1113,7 +1166,7 @@ class MouseHoverManager(QWidget):
     def _stop_transition_check(self):
         if self._transition_timer is not None:
             self._transition_timer.stop()
-        self._transition_base, self._transition_hits = None, 0
+        self._watch = None
 
     def on_choice_selected(self, idx):
         if idx is None or idx >= len(self.zones):
@@ -1124,31 +1177,32 @@ class MouseHoverManager(QWidget):
         self.choice_lock.lock(title)
         self._click_block_until = time.monotonic() + CLICK_BLOCK_SEC
         base = self._capture_choice_panel()
-        if not option.get("has_condition", True):
-            log("[조건 없는 선택지] 항상 성공하는 선택지로 판단 -> 툴팁 즉시 숨김")
-            self.choice_lock.confirm()
-            self.reset_event_state()
-            self.status.set_status(self._idle_text(), "#888888")
-            return
+        self._pending_hide = not option.get("has_condition", True)
+        if self._pending_hide:
+            # 조건 없는 선택지: 툴팁만 숨기고 잠금은 '미확정(8초)'으로 둔다. 패널에서 버튼이 사라지는 것이 확인돼야 확정한다.
+            log("[조건 없는 선택지] 항상 성공하는 선택지로 판단 -> 툴팁만 숨김 (화면 전환 확인 전에는 확정 안 함)")
+            self.tooltip.hide_and_clear()
         self.status.set_status(tr("🔵 [선택 반응 확인 중] 화면 전환 여부 확인 중..."), "#00aaff")
         if base is not None and self._transition_timer is not None:
-            self._transition_base, self._transition_hits = base, 0
+            self._watch = SelectionWatch(base)
             self._transition_timer.start(TRANSITION_POLL_MS)
 
     def _poll_transition(self):
-        if not self.choice_lock.active or self._transition_base is None:
+        if not self.choice_lock.active or self._watch is None:
             self._stop_transition_check()
             return
-        d = panel_diff(self._transition_base, self._capture_choice_panel())
-        if d is None or d <= TRANSITION_DIFF:
-            self._transition_hits = 0
-            return
-        self._transition_hits += 1
-        if self._transition_hits >= 2:
-            log(f"[화면 전환 감지] 선택지 영역 변화량 {d:.1f} -> 선택 확정으로 판단, 즉시 정리")
+        res = self._watch.feed(self._capture_choice_panel())
+        if res == "confirm":
+            log("[화면 전환 감지] 선택지 버튼이 사라짐 -> 선택 확정으로 판단, 정리")
             self.choice_lock.confirm()
             self.reset_event_state()
             self.status.set_status(self._idle_text(), "#888888")
+        elif res == "release":
+            log("[선택 오감지로 판단] 패널이 안 변했거나 선택지가 새로 나타남 -> 잠금 해제, 툴팁 유지")
+            self.choice_lock.release()
+            self._stop_transition_check()
+            self._pending_hide = False
+            self.status.set_status(self._journey_text() if self.in_journey else self._idle_text(), "#00aaff")
 
     def _check_lock_expiry(self):
         if self.choice_lock.expired():
@@ -1329,15 +1383,16 @@ class MouseHoverManager(QWidget):
             return
         rect, pos = get_game_window_rect(), QCursor.pos()
         idx = self._zone_index_at(pos, rect)
+        self._dwell.update(idx)
         keys = self._read_input_keys() if self.zones else set()
         prev, self._prev_keys = self._prev_keys, keys
         if self.zones and time.monotonic() >= self._click_block_until:
-            sel = detect_choice_input(keys, prev, idx, len(self.zones))
+            sel = detect_choice_input(keys, prev, idx if self._dwell.dwelled() else None, len(self.zones))
             if sel is not None:
                 self.on_choice_selected(sel)
                 if not self.zones:                      # 조건 없는 선택지 -> 이미 정리됨
                     return
-        if idx is not None:
+        if idx is not None and not (self._pending_hide and self.choice_lock.active):
             z = self.zones[idx]
             self.tooltip.show_html(self._option_html(z["idx"], z["option"], scale, show_info))
             return
