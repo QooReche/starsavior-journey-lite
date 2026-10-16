@@ -1125,6 +1125,38 @@ def tooltip_below_regions_y(rect):
     return int(max(b[3] for b in capture_region_boxes(rect)) + rect["height"] * 0.01)
 
 
+def pick_screen_geometry(rect, geoms):
+    """geoms: [(left, top, right, bottom)] 모니터 영역들. 게임 창 중심이 들어 있는 모니터를, 없으면 가장 많이 겹치는 모니터를 고른다."""
+    if not geoms:
+        return None
+    if not rect:
+        return geoms[0]
+    cx, cy = rect["left"] + rect["width"] / 2, rect["top"] + rect["height"] / 2
+    for g in geoms:
+        if g[0] <= cx < g[2] and g[1] <= cy < g[3]:
+            return g
+    box = (rect["left"], rect["top"], rect["left"] + rect["width"], rect["top"] + rect["height"])
+
+    def overlap(g):
+        return max(0, min(g[2], box[2]) - max(g[0], box[0])) * max(0, min(g[3], box[3]) - max(g[1], box[1]))
+    return max(geoms, key=overlap)
+
+
+def game_monitor_avail(rect):
+    """게임 창이 있는 모니터의 사용 가능 영역 (left, top, right, bottom). Qt 를 못 쓰면 주 화면."""
+    geoms = []
+    try:
+        for sc in QApplication.screens():
+            g = sc.availableGeometry()
+            geoms.append((g.left(), g.top(), g.left() + g.width(), g.top() + g.height()))
+    except Exception:
+        pass
+    if not geoms:
+        g = QApplication.desktop().screenGeometry()
+        geoms = [(g.left(), g.top(), g.left() + g.width(), g.top() + g.height())]
+    return pick_screen_geometry(rect, geoms)
+
+
 def place_tooltip(rect, avail, height, avoid_regions=False):
     """툴팁의 (x, y, 잘라낼 높이 또는 None). avail=(left, top, right, bottom): 게임 창이 있는 모니터의 사용 가능 영역.
     avoid_regions=True(show_capture_debug)면 툴팁이 캡처에 찍혀도 라벨/제목/카드 영역을 가리지 않게 그 아래에만 두고,
@@ -1178,9 +1210,8 @@ class FixedLeftTooltip(QWidget):
     def show_html(self, html):
         """html: 문자열 또는 detail(0~MAX_DETAIL) -> 문자열 함수. 함수면 화면에 들어올 때까지 단계적으로 줄여 본다."""
         rect = get_game_window_rect()
-        screen = QApplication.desktop().screenGeometry()
-        avail = (screen.left(), screen.top(), screen.left() + screen.width(), screen.top() + screen.height())
-        limit = screen.height() - 40
+        avail = game_monitor_avail(rect)
+        limit = avail[3] - avail[1] - 40
         if self.avoid_regions and rect:
             limit = avail[3] - 10 - max(rect["top"] + int(rect["height"] * 0.30), tooltip_below_regions_y(rect))
         if callable(html):
