@@ -1672,17 +1672,17 @@ class MouseHoverManager(QWidget):
 
     # --- 호버 ---
     def check_hover(self):
-        if (self.not_found and not self._hidden and not self._loading_screen and self.in_journey
-                and is_game_hovered_or_active()):
-            self.tooltip.show_html(jh_db.format_not_found_html(self.not_found, self.settings["tooltip_font_scale"], self.lang))
-            return
+        # DB에 없는 제목(예: '계승')은 상단바 문구로만 알리고 툴팁은 띄우지 않는다(선택지가 있는 이벤트만 툴팁)
         if self._hidden or self._loading_screen or not self.in_journey or not self.matched or not is_game_hovered_or_active():
             self.tooltip.hide_and_clear()
             return
         scale, show_info = self.settings["tooltip_font_scale"], self.settings["show_info"]
-        if len(self.options) == 1:                      # 선택지가 하나(자동 진행)면 호버 없이 바로 표시
+        if len(self.options) <= 1:                      # 선택지가 없거나 하나(자동 진행)면 툴팁 없음. 단 사용자 정의 안내문(note)은 표시
             self._prev_keys = set()
-            self.tooltip.show_html(self._option_html(0, self.options[0], scale, show_info))
+            if self.options and self.options[0].get("note"):
+                self.tooltip.show_html(self._option_html(0, self.options[0], scale, show_info))
+            else:
+                self.tooltip.hide_and_clear()
             return
         rect, pos = get_game_window_rect(), QCursor.pos()
         idx = self._zone_index_at(pos, rect)
