@@ -345,3 +345,17 @@ def test_table_event_success_failure_tones_become_blocks():
     _, opts = jh_db.parse_table_event(ev, jh_db.InfoIndex({}, "ko"))
     assert opts[0]["reward"] == "[SUCCESS] 집중 +30\n[FAIL] 집중 -10"
     assert opts[1]["reward"] == "스태미나 +10"
+
+
+def test_difficulty_header_tone_is_not_failure():
+    """'하드 인내 175 필요' 같은 난이도 머리 줄의 빨간(failure) 톤을 실패 결과로 오해하지 않는다(습격)."""
+    def row(text, region, tone):
+        return {"text": text, "region": region, "tone": tone, "fontSize": 13.6, "weight": 400, "segments": []}
+    ev = {"title": "T", "rows": [
+        {"text": "T", "region": "", "tone": "plain", "fontSize": 16, "weight": 700, "segments": []},
+        {"text": "1. 굳히자.", "region": "", "tone": "plain", "fontSize": 14.4, "weight": 700, "segments": []},
+        row("이지 인내 125 필요", "r11", "success"), row("집중 +10", "r13", "success"),
+        {"text": "or", "region": "", "tone": "plain", "fontSize": 14.4, "weight": 400, "segments": []},
+        row("하드 인내 175 필요", "r17", "failure"), row("집중 +10", "r19", "success")]}
+    _, opts = jh_db.parse_table_event(ev, jh_db.InfoIndex({}, "ko"))
+    assert "[FAIL]" not in opts[0]["reward"] and "[SUCCESS]" not in opts[0]["reward"]

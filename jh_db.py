@@ -527,7 +527,8 @@ def parse_table_event(ev, idx):
             lines[-1] = (region, lines[-1][1].rstrip() + " " + text)    # 셀 줄바꿈으로 갈라진 'A or B or' 이어붙임
         else:
             lines.append((region, text))
-            tones.append(tone)
+            # 난이도 머리 줄(이지/노말/하드 ...)·조건 줄(필요/사용/소모)의 톤은 난이도 색일 뿐 결과(성공/실패)가 아니다
+            tones.append("" if (_DIFF_RE_EARLY.match(text) or is_condition_line(text)) else tone)
 
     out = []
     for o in options:
