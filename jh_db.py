@@ -759,26 +759,27 @@ MAX_INFO_ITEMS = 6
 
 def _split_blocks(reward):
     """보상 문자열 -> [{'type': SUCCESS|FAIL|NORMAL, 'lines': [...]}] ('or' 와 성공/실패 전환 기준)"""
-    blocks, cur, cur_type = [], [], None
+    blocks, cur, cur_type, grp = [], [], None, 0
     for raw in [l.strip() for l in (reward or "").split("\n") if l.strip()]:
         m = _TAG_PREFIX.match(raw)
         ltype = m.group(1) if m else "NORMAL"
         line = _TAG_PREFIX.sub("", raw).strip()
         if line.lower() == "or" or (cur_type and ltype != "NORMAL" and ltype != cur_type):
             if cur:
-                blocks.append({"type": cur_type or "NORMAL", "lines": cur})
+                blocks.append({"type": cur_type or "NORMAL", "lines": cur, "grp": grp})
             cur, cur_type = [], None
         if line.lower() == "or":
+            grp += 1                                # 'or' 로 갈리는 랜덤 결과 묶음 번호 (성공/실패 쌍은 같은 묶음)
             continue
         cur.append(line)
         if ltype != "NORMAL":
             cur_type = ltype
     if cur:
-        blocks.append({"type": cur_type or "NORMAL", "lines": cur})
+        blocks.append({"type": cur_type or "NORMAL", "lines": cur, "grp": grp})
     return blocks
 
 
-def _render_block(block, esc, scale, tint, s):
+def _render_block(block, esc, scale, tint, s, inline=False):
     px = max(10, round(14 * scale))
     small = max(9, round(12 * scale))
     parts, badge, conds, bullets = [], None, [], []
@@ -802,8 +803,11 @@ def _render_block(block, esc, scale, tint, s):
             ("💰 " if ("사용" in c or "소모" in c) else "📊 ") + esc(c) for c in conds) + "</span>"
     if head:
         parts.append(head)
-    for b in bullets:
-        parts.append(f'<span style="color:#ffffff; font-size:{px}px;">• {esc(b)}</span>')
+    if inline and len(bullets) > 1:             # 압축 모드: 보상을 한 줄로 이어 붙여 높이를 줄인다
+        parts.append(f'<span style="color:#ffffff; font-size:{px}px;">{esc(" · ".join(bullets))}</span>')
+    else:
+        for b in bullets:
+            parts.append(f'<span style="color:#ffffff; font-size:{px}px;">• {esc(b)}</span>')
     inner = "<br>".join(parts) or f'<span style="color:#888888; font-size:{small}px;">{esc(s["noinfo"])}</span>'
     if tint and block["type"] in _OUTCOME_STYLE:
         bg, border = _OUTCOME_STYLE[block["type"]]
@@ -815,7 +819,7 @@ def _render_block(block, esc, scale, tint, s):
 
 DIFF_KEYS = {"이지": "easy", "노말": "normal", "하드": "hard", "Easy": "easy", "Normal": "normal", "Hard": "hard"}
 DIFFICULTIES = ("all", "easy", "normal", "hard")
-MAX_BLOCKS_COMPACT = 3      # detail 2 에서 변형 하나당 보여 줄 최대 블록 수
+MAX_BLOCKS_COMPACT = 6      # detail 2 에서 변형 하나당 보여 줄 최대 블록 수 (보상은 한 줄로 합쳐 높이를 줄인다)
 MAX_VARIANTS_COMPACT = 2
 
 
@@ -879,12 +883,13 @@ def format_option_html(option, scale=1.0, show_info=True, lang="ko", difficulty=
         for i, b in enumerate(blocks):
             if i:
                 # 난이도 표시도 성공/실패 구분도 없는 'or' 블록 = 같은 난이도에서 나올 수 있는 랜덤 결과 중 하나
-                if not tint and block_difficulty(b) is None and block_difficulty(blocks[i - 1]) is None:
+                if (b.get("grp", 0) != blocks[i - 1].get("grp", 0)
+                        and block_difficulty(b) is None and block_difficulty(blocks[i - 1]) is None):
                     pieces.append(f'<div style="color:#ffd27f; font-size:{small_c}px; text-align:center; margin:2px 0;">'
                                   f'── {esc(s["or"])} ──</div>')
                 else:
                     pieces.append(divider)
-            pieces.append(f'<div style="margin-bottom:2px;">{_render_block(b, esc, scale, tint, s)}</div>')
+            pieces.append(f'<div style="margin-bottom:2px;">{_render_block(b, esc, scale, tint, s, inline=detail >= 2)}</div>')
         if hidden_blocks:
             pieces.append(f'<span style="color:#888888; font-size:{small_c}px;">…{esc(s["more_n"].format(hidden_blocks))}</span>')
         rendered = "".join(pieces)

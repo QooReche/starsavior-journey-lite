@@ -60,10 +60,10 @@ def test_difficulty_applies_in_ambiguous_html():
 def test_detail_levels_shrink_output():
     many = opt("\nor\n".join(f"힘 +{i}" for i in range(1, 8)))
     full, d2 = jh_db.format_option_html(many), jh_db.format_option_html(many, detail=2)
-    assert full.count("힘 +") == 7 and d2.count("힘 +") == 3
-    assert "…외 4건" in d2 and len(d2) < len(full)
+    assert full.count("힘 +") == 7 and d2.count("힘 +") == 6
+    assert "…외 1건" in d2 and len(d2) < len(full)
     en = jh_db.format_option_html(many, lang="en", detail=2)
-    assert "…+4 more" in en
+    assert "…+1 more" in en
 
 
 def test_detail_drops_info_and_item_sections():
@@ -79,3 +79,17 @@ def test_detail_limits_variants():
     o["variants"] = [{"sources": [f"A{i}"], "reward": f"힘 +{i}", "info": []} for i in range(4)]
     h = jh_db.format_option_html(o, detail=2)
     assert "A0" in h and "A1" in h and "A2" not in h and "…외 2건" in h
+
+
+def test_or_groups_with_success_fail_pairs():
+    """'or' 로 갈리는 랜덤 결과 묶음 사이엔 '또는', 한 묶음의 성공/실패 사이엔 일반 구분선. 압축 모드는 6블록까지 보여 준다."""
+    reward = "\n".join(["[SUCCESS] 컨디션 +1", "[SUCCESS] 스태미나 +10", "[FAIL] 컨디션 -1", "[FAIL] 스태미나 +10", "or",
+                        "[SUCCESS] 집중 +20", "[SUCCESS] 보호 +10", "[FAIL] 집중 +15", "or",
+                        "[SUCCESS] 보호 +20", "[FAIL] 보호 +15"])
+    blocks = jh_db._split_blocks(reward)
+    assert [b["grp"] for b in blocks] == [0, 0, 1, 1, 2, 2]
+    o = {"choice": "c", "reward": reward, "info": []}
+    full = jh_db.format_option_html(o)
+    assert full.count("또는") == 2
+    d2 = jh_db.format_option_html(o, detail=2)
+    assert "외" not in d2 and "컨디션 +1 · 스태미나 +10" in d2
