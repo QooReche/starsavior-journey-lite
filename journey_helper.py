@@ -831,6 +831,15 @@ class ScreenWatcher(QThread):
 
     def run(self):
         sct = mss.mss()
+        try:
+            self._run_loop(sct)
+        finally:
+            try:
+                sct.close()
+            except Exception:
+                pass
+
+    def _run_loop(self, sct):
         while not self._stop:
             try:
                 if self.pause_getter():
@@ -914,13 +923,13 @@ class CardThread(QThread):
     def run(self):
         aid, info = None, ""
         try:
-            sct = mss.mss()
+            with mss.mss() as sct:                      # 닫지 않으면 스레드마다 GDI 핸들이 샌다
 
-            def grab():
-                rect = get_game_window_rect()
-                return grab_card_crop(sct, rect) if rect else None
+                def grab():
+                    rect = get_game_window_rect()
+                    return grab_card_crop(sct, rect) if rect else None
 
-            aid, score, margin, tries = jh_cards.identify_stable(grab, self.ids)
+                aid, score, margin, tries = jh_cards.identify_stable(grab, self.ids)
             info = f"score={score:.2f} margin={margin:.2f} tries={tries}"
         except Exception as e:
             info = f"예외 {e}"
@@ -1104,6 +1113,22 @@ class StatusBadge(QWidget):
         self._drag, self._dragging = None, False
 
 
+def join_threads(threads, total_ms):
+    """QThread 들을 최대 total_ms(밀리초) 동안 기다린다. 아직 실행 중인 것들의 목록을 돌려준다."""
+    deadline = time.monotonic() + total_ms / 1000.0
+    stuck = []
+    for t in threads:
+        try:
+            if not t.isRunning():
+                continue
+            left = max(0, int((deadline - time.monotonic()) * 1000))
+            if not t.wait(left):
+                stuck.append(t)
+        except Exception:
+            pass
+    return stuck
+
+
 def capture_region_boxes(rect):
     """앱이 OCR/카드 식별로 읽는 영역(라벨·제목·카드)의 화면 좌표 상자 [(x0,y0,x1,y1)]."""
     boxes = []
@@ -1260,6 +1285,7 @@ class MouseHoverManager(QWidget):
         self._load_hits = self._load_miss = 0
         self._game_focus_was_active = False
         self._db_threads = []
+        self.stuck_threads = []
         self._sct = None
         self.choice_lock = ChoiceLock()
         self._prev_keys = set()
@@ -1744,7 +1770,10 @@ class MouseHoverManager(QWidget):
 
     def quit_app(self):
         self.watcher.stop()
-        self.watcher.wait(1500)
+        threads = [self.watcher] + list(self._db_threads) + list(self._card_threads)
+        self.stuck_threads = join_threads(threads, 3000)
+        if self.stuck_threads:
+            log(f"[종료] {len(self.stuck_threads)}개 스레드가 시간 안에 끝나지 않음 -> 프로세스 종료로 정리")
         self.tray.hide()
         QApplication.quit()
 
@@ -1830,8 +1859,11 @@ def main(argv):
     prepare_qt_plugins()
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
-    manager = MouseHoverManager()      # noqa: F841 (참조 유지)
-    return app.exec_()
+    manager = MouseHoverManager()
+    rc = app.exec_()
+    if getattr(manager, "stuck_threads", None):
+        os._exit(rc)           # 아직 도는 QThread 가 있는 채 파괴되면 abort 되므로 바로 종료한다
+    return rc
 
 
 if __name__ == "__main__":
