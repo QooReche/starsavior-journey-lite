@@ -342,6 +342,42 @@ def is_game_hovered_or_active():
         return False
 
 
+def _is_game_window(user32, hwnd):
+    return bool(hwnd and not _is_browser(user32, hwnd) and _title_is_game(_window_text(user32, hwnd)))
+
+
+def is_game_foreground():
+    """지금 포커스(포그라운드)가 게임 창인가. 숫자키 선택 감지는 이때만 인정한다."""
+    try:
+        user32 = ctypes.windll.user32
+        return _is_game_window(user32, user32.GetForegroundWindow())
+    except Exception:
+        return False
+
+
+def is_cursor_over_game():
+    """마우스 커서 아래의 최상위 창이 게임 창인가 (다른 창이 게임을 가리고 있으면 False)."""
+    try:
+        user32 = ctypes.windll.user32
+        pt = wintypes.POINT()
+        user32.GetCursorPos(ctypes.byref(pt))
+        hwnd = user32.WindowFromPoint(pt)
+        return _is_game_window(user32, (user32.GetAncestor(hwnd, 2) or hwnd) if hwnd else None)
+    except Exception:
+        return False
+
+
+def filter_game_inputs(keys, game_foreground, cursor_over_game):
+    """전역 입력(GetAsyncKeyState) 중 게임에 향한 것만 남긴다: 숫자키 = 게임이 포그라운드일 때만,
+    좌클릭 = 커서가 게임 창 위에 있을 때(또는 게임이 포그라운드일 때)만."""
+    out = set(keys)
+    if not game_foreground:
+        out -= set(CHOICE_KEYS)
+    if not (cursor_over_game or game_foreground):
+        out.discard(VK_LBUTTON)
+    return out
+
+
 _single_instance_handle = None
 
 
@@ -1163,7 +1199,10 @@ class MouseHoverManager(QWidget):
     def _read_input_keys(self):
         try:
             gaks = ctypes.windll.user32.GetAsyncKeyState
-            return {vk for vk in (VK_LBUTTON, *CHOICE_KEYS) if gaks(vk) & 0x8000}
+            raw = {vk for vk in (VK_LBUTTON, *CHOICE_KEYS) if gaks(vk) & 0x8000}
+            if not raw:
+                return raw
+            return filter_game_inputs(raw, is_game_foreground(), is_cursor_over_game())
         except Exception:
             return set()
 
