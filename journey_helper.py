@@ -33,6 +33,7 @@ import numpy as np
 
 import jh_cards
 import jh_db
+import jh_schedule
 
 try:
     import mss
@@ -59,6 +60,7 @@ DEFAULT_SETTINGS = {
     "status_badge_offset": None,
     "difficulty": "all",            # (이전 방식, 읽기 전용) 한 난이도만 표시. hidden_difficulties 로 옮겨진다
     "hidden_difficulties": [],      # 툴팁에서 숨길 난이도 ["easy","normal","hard"] 부분집합 (원작 1.1.3 과 같은 키)
+    "show_schedule": True,          # 좌측 상단 날짜 위젯에 마우스를 올리면 턴별 고정 일정 표시
     "show_capture_debug": False,    # True: 상단바/툴팁이 스크린샷에도 보이게 함 (진단용, OCR 방해 가능)
 }
 
@@ -78,7 +80,12 @@ def snap_font_scale(v):
 REGION_FRACTIONS = {
     "event_title": {"top": 0.205, "left": 0.110, "width": 0.240, "height": 0.056},
     "event_label": {"top": 0.170, "left": 0.110, "width": 0.200, "height": 0.032},
+    "schedule_date": {"top": 0.078, "left": 0.116, "width": 0.058, "height": 0.040},      # 좌측 상단 '3월 초순' 문구 (게임 클라이언트 비율)
 }
+SCHEDULE_HOVER = (0.03, 0.03, 0.18, 0.13)      # 날짜 위젯 전체(목표 달력 + 목표/날짜 문구) 호버 범위 (left, top, right, bottom)
+DATE_SCAN_SEC = 1.0
+DATE_CONFIRM = 2          # 같은 턴이 이만큼 연속으로 읽혀야 확정
+DATE_LOST = 6             # 날짜가 이만큼 연속으로 안 읽히면 '턴 모름'으로 되돌림
 EVENT_LABEL_PHRASES = ("여정이벤트", "훈련이벤트", "아르카나이벤트")
 EVENT_LABEL_PHRASES_EN = ("journeyevent", "trainingevent", "arcanaevent")
 NOISE_TITLE_WORDS = ("여정이벤트", "훈련이벤트", "아르카나이벤트", "제목", "journeyevent", "trainingevent", "arcanaevent")
@@ -769,6 +776,7 @@ class ScreenWatcher(QThread):
     journey_status_changed = pyqtSignal(bool)
     model_loading = pyqtSignal()
     model_ready = pyqtSignal()
+    date_changed = pyqtSignal(object)    # 좌측 상단 날짜로 확정한 일정 항목(jh_schedule 튜플) 또는 None
     model_failed = pyqtSignal(str)       # OCR 모델 로딩 실패 (연속 실패 중 한 번만 보냄)
 
     LEAVE_AFTER_OTHER = 3     # 라벨 자리에 다른 글자가 읽힘 -> 이벤트 화면이 아니라고 확신 (연속 횟수)
@@ -793,6 +801,8 @@ class ScreenWatcher(QThread):
         self._was_inactive = False
         self._grace = LeaveGrace(self.LEAVE_GRACE_SEC)
         self._memo = TitleMemo(self.REENTRY_MEMO_SEC)
+        self._date_gray, self._date_next = None, 0.0
+        self._date_cand, self._date_streak, self._date_miss, self._date_row = None, 0, 0, None
         self._reset_scan_state()
 
     def _reset_scan_state(self):
@@ -857,6 +867,49 @@ class ScreenWatcher(QThread):
             self._cached_title = read_title_candidates(self.ocr, gray)
         return self._cached_title
 
+    def _scan_date(self, sct, rect):
+        """좌측 상단 날짜 문구('3월 초순')를 읽어 일정 항목으로 바꾼다. 같은 값이 연속 DATE_CONFIRM 번 나와야 확정, 연속 DATE_LOST 번 못 읽으면 None."""
+        now = time.monotonic()
+        if now < self._date_next:
+            return
+        self._date_next = now + DATE_SCAN_SEC
+        gray = cv2.cvtColor(np.array(sct.grab(region_to_monitor(REGION_FRACTIONS["schedule_date"], rect))), cv2.COLOR_BGRA2GRAY)
+        last = self._date_gray
+        if last is not None and last.shape == gray.shape and cv2.absdiff(gray, last).mean() < 1.0:
+            if self._date_cand is not None:                 # 화면이 그대로면 다시 읽지 않고, 직전 읽기를 한 번 더 확인한 것으로 센다
+                self._date_streak += 1
+                self._confirm_date(self._date_cand, "(변화 없음)")
+            return
+        self._date_gray = gray
+        row, text = None, ""
+        for sc in (2.0, 1.6):
+            g = cv2.resize(gray, None, fx=sc, fy=sc, interpolation=cv2.INTER_CUBIC)
+            text, conf = self.ocr.read_line(g)
+            if conf >= 0.6:
+                row = jh_schedule.find_turn(text)
+                if row:
+                    break
+        if row is None:
+            self._date_miss += 1
+            self._date_cand, self._date_streak = None, 0
+            if self._date_miss >= DATE_LOST and self._date_row is not None:
+                self._date_row = None
+                log(f"[일정] 날짜를 읽을 수 없음 ('{text}') -> 턴 정보 해제")
+                self.date_changed.emit(None)
+            return
+        self._date_miss = 0
+        if row is self._date_cand:
+            self._date_streak += 1
+        else:
+            self._date_cand, self._date_streak = row, 1
+        self._confirm_date(row, text)
+
+    def _confirm_date(self, row, text):
+        if self._date_streak >= DATE_CONFIRM and row is not self._date_row:
+            self._date_row = row
+            log(f"[일정] 날짜 인식 '{text}' -> 턴 {row[0]} ({row[1]}, {row[2]})")
+            self.date_changed.emit(row)
+
     def _ensure_ocr(self):
         """OCR 모델을 (필요하면) 로드한다. 실패하면 백오프 간격으로만 재시도하고 상단바에는 한 번만 알린다. 사용 가능하면 True."""
         if self.ocr is not None:
@@ -911,6 +964,7 @@ class ScreenWatcher(QThread):
                         self.msleep(300)
                         continue
                     self._leave_event_screen()      # 게임 창이 없거나 최소화됨 -> 상태 초기화
+                    self._date_gray = None
                     self._was_inactive = False
                     self.msleep(1000)
                     continue
@@ -932,6 +986,7 @@ class ScreenWatcher(QThread):
                     self.on_event_screen = False      # 라벨을 다시 확인하면 상태 True 를 새로 알린다
                     self._reset_scan_state()
 
+                self._scan_date(sct, rect)
                 state = self._scan_label(sct, rect)
                 if state == "found":
                     self._miss = 0
@@ -1368,6 +1423,7 @@ class MouseHoverManager(QWidget):
         self._watch = None
         self._pending_hide = False
         self._dwell = HoverDwell()
+        self.schedule_row = None            # 좌측 상단 날짜로 인식한 현재 턴의 일정 항목 (jh_schedule)
         self._transition_sct = None
         self._transition_timer = None
         self.reset_event_state()
@@ -1383,6 +1439,7 @@ class MouseHoverManager(QWidget):
                                      lang_getter=lambda: self.lang)
         self.watcher.title_detected.connect(self.on_title)
         self.watcher.journey_status_changed.connect(self.on_journey_status)
+        self.watcher.date_changed.connect(self.on_date_changed)
         self.watcher.model_loading.connect(
             lambda: self.status.set_status(tr("🟡 [OCR 모델 로딩 중] 처음 한 번만 몇 초 걸려요..."), "#ffcc00", flash=True))
         self.watcher.model_failed.connect(
@@ -1555,6 +1612,20 @@ class MouseHoverManager(QWidget):
         self.start_db(manual=True)
 
     # --- 워처 콜백 ---
+    def on_date_changed(self, row):
+        self.schedule_row = row
+
+    def _schedule_hover_html(self, rect, pos):
+        """좌측 상단 날짜 위젯에 마우스가 올라가 있으면 현재 턴 일정 툴팁 HTML, 아니면 None."""
+        if not (self.schedule_row and rect and self.settings.get("show_schedule", True)):
+            return None
+        l, t, r, b = SCHEDULE_HOVER
+        x0, x1 = rect["left"] + int(rect["width"] * l), rect["left"] + int(rect["width"] * r)
+        y0, y1 = rect["top"] + int(rect["height"] * t), rect["top"] + int(rect["height"] * b)
+        if x0 <= pos.x() <= x1 and y0 <= pos.y() <= y1:
+            return jh_schedule.format_schedule_html(self.schedule_row, self.settings["tooltip_font_scale"])
+        return None
+
     def on_journey_status(self, active):
         if active and self.in_journey:
             return                                      # 이미 진입 상태: 중복 알림 무시
@@ -1692,6 +1763,11 @@ class MouseHoverManager(QWidget):
 
     # --- 호버 ---
     def check_hover(self):
+        if not self._hidden and not self._loading_screen and is_game_hovered_or_active():
+            sched = self._schedule_hover_html(get_game_window_rect(), QCursor.pos())
+            if sched:
+                self.tooltip.show_html(sched)
+                return
         # DB에 없는 제목(예: '계승')은 상단바 문구로만 알리고 툴팁은 띄우지 않는다(선택지가 있는 이벤트만 툴팁)
         if self._hidden or self._loading_screen or not self.in_journey or not self.matched or not is_game_hovered_or_active():
             self.tooltip.hide_and_clear()
@@ -1779,7 +1855,8 @@ class MouseHoverManager(QWidget):
             a.triggered.connect(lambda _, v=val: self.on_language_selected(v))
             g3.addAction(a)
             lang_menu.addAction(a)
-        for text, key in ((tr("잠재력/버프 설명 표시"), "show_info"), (tr("⚡ 저사양 모드 (OCR 주기 늘림)"), "low_spec_mode"),
+        for text, key in ((tr("잠재력/버프 설명 표시"), "show_info"), (tr("📅 일정 미리보기 (좌측 상단 날짜에 마우스)"), "show_schedule"),
+                          (tr("⚡ 저사양 모드 (OCR 주기 늘림)"), "low_spec_mode"),
                           (tr("상단바 위치 고정"), "status_badge_locked"),
                           (tr("🐛 상단바/툴팁을 스크린샷에 보이게 하기"), "show_capture_debug")):
             a = QAction(text, m, checkable=True)
