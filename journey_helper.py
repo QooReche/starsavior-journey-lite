@@ -953,7 +953,11 @@ class ScreenWatcher(QThread):
                 self.arcana_screen_changed.emit(False)
 
     def request_arcana_recheck(self):
-        """마우스 클릭 직후: 다음 루프에서 바로 편성 화면 여부를 다시 판정한다 (1초 간격 대기 건너뜀)."""
+        """마우스 클릭 직후: 편성 화면 확정을 풀고(툴팁은 호출 측이 이미 숨김) 다음 루프에서 바로 다시 판정한다(1초 대기 건너뜀).
+        다음 스캔에서 긍정 신호가 한 번만 읽혀도 확정(재표시), 부정/불확실이면 숨김 유지."""
+        self._ar_on = False
+        self._ar_streak = max(0, ARCANA_CONFIRM - 1)
+        self._ar_miss = 0
         self._sv_next = 0.0
 
     def _scan_savior(self, sct, rect):
@@ -1558,7 +1562,7 @@ class FixedLeftTooltip(QWidget):
         if hfw > self.height():
             self.resize(self.width(), hfw)
 
-    def show_html(self, html, y_frac=None, x_frac=None, width_frac=None, min_top_frac=None):
+    def show_html(self, html, y_frac=None, x_frac=None, width_frac=None, min_top_frac=None, width_px=None):
         """html: 문자열 또는 detail(0~MAX_DETAIL) -> 문자열 함수. 함수면 화면에 들어올 때까지 단계적으로 줄여 본다."""
         rect = get_game_window_rect()
         avail = game_monitor_avail(rect)
@@ -1571,7 +1575,7 @@ class FixedLeftTooltip(QWidget):
             limit = bottom - 10 - (rect["top"] + int(rect["height"] * min(yf, mt)))
         if self.avoid_regions and rect:
             limit = avail[3] - 10 - max(rect["top"] + int(rect["height"] * yf), tooltip_below_regions_y(rect))
-        want_w = round(rect["width"] * width_frac) if (width_frac and rect) else round(self.BASE_W * self.scale)
+        want_w = width_px or (round(rect["width"] * width_frac) if (width_frac and rect) else round(self.BASE_W * self.scale))
         if self.width() != want_w:                       # 넓은 모드(2세트)와 보통 폭을 호출마다 바꾼다
             self.setFixedWidth(want_w)
             self._src = None
@@ -1879,6 +1883,7 @@ class MouseHoverManager(QWidget):
             down = False
         if down and not getattr(self, "_sv_click_prev", False):
             self._sv_hold_until = now + SAVIOR_CLICK_HIDE_SEC
+            self.arcana_screen = False                      # 클릭하면 새 판독에서 편성 화면이 '긍정 확정'될 때까지 계속 숨긴다(재노출 깜빡임 방지)
             self.watcher.request_arcana_recheck()
         self._sv_click_prev = down
         return now < getattr(self, "_sv_hold_until", 0.0)
@@ -1887,11 +1892,12 @@ class MouseHoverManager(QWidget):
         """'여정 시작' 화면에서 구원자를 식별한 동안(호버 없이) 계속 보이는(아르카나 편성 화면에서만) 추천 아르카나 툴팁 HTML 함수(detail -> html), 아니면 None."""
         if not (self.savior_matches and rect and self.settings.get("show_savior_reco", True)) or self.in_journey or not self.arcana_screen:
             return None
-        m, scale = self.savior_matches, self.settings["tooltip_font_scale"]
+        m = self.savior_matches
         wide = jh_savior.wide_mode(m)
-        cw = round(rect["width"] * jh_savior.WIDE_WIDTH_FRAC) - 36 if wide else None      # 넓은 모드: 툴팁 안쪽 폭(패딩 18*2 제외)
+        scale, width_px, cw = jh_savior.tooltip_geometry(rect, self.settings["tooltip_font_scale"], wide)   # 창 크기 비례 배율 k 반영
         fn = lambda d=0: jh_savior.format_html(m, scale, self._thumb_path, d, cw)
         fn.wide = wide
+        fn.width_px = width_px
         fn.max_detail = jh_savior.MAX_DETAIL                       # 썸네일을 끝까지 유지하는 단계(0~2) 뒤 마지막 수단(3)까지
         return fn
 
@@ -2046,7 +2052,8 @@ class MouseHoverManager(QWidget):
                     self.tooltip.show_html(sv, y_frac=jh_savior.WIDE_TOP_FRAC, x_frac=jh_savior.WIDE_X_FRAC,
                                            width_frac=jh_savior.WIDE_WIDTH_FRAC, min_top_frac=jh_savior.WIDE_TOP_FRAC)
                 else:
-                    self.tooltip.show_html(sv, y_frac=jh_savior.TOOLTIP_TOP_FRAC, x_frac=jh_savior.TOOLTIP_X_FRAC)
+                    self.tooltip.show_html(sv, y_frac=jh_savior.TOOLTIP_TOP_FRAC, x_frac=jh_savior.TOOLTIP_X_FRAC,
+                                           width_px=getattr(sv, "width_px", None))
                 return
         # DB에 없는 제목(예: '계승')은 상단바 문구로만 알리고 툴팁은 띄우지 않는다(선택지가 있는 이벤트만 툴팁)
         if self._hidden or self._loading_screen or not self.in_journey or not self.matched or not is_game_hovered_or_active():

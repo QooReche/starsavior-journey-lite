@@ -230,6 +230,30 @@ WIDE_WIDTH_FRAC = 0.50
 WIDE_TOP_FRAC = 0.345
 
 
+REF_WINDOW_H = 935          # 기준 게임 창 높이(사용자 현재 창 약 1600x935)
+NARROW_MAX_W_FRAC = 0.285   # 보통 모드 폭 상한(창 너비 비율): x 0.245 에서 시작해도 우측 편성 카드(0.53~)를 침범하지 않게
+NARROW_MARGIN = 12
+
+
+def window_k(height):
+    """창 높이 기반 배율 k = clamp(height/935, 0.6, 1.4). 구원자 툴팁의 글자/썸네일/패딩/폭에만 곱한다(설정 배율과 곱)."""
+    try:
+        return min(1.4, max(0.6, float(height) / REF_WINDOW_H))
+    except (TypeError, ValueError, ZeroDivisionError):
+        return 1.0
+
+
+def tooltip_geometry(rect, scale, wide):
+    """-> (유효 배율, 툴팁 가로 px, 안쪽 폭 px). 보통: min(440*scale*k, 0.285*W - 여백), 넓음: 0.50*W (글자는 k 로 줄어 줄바꿈 증가 방지)."""
+    k = window_k(rect["height"])
+    eff = scale * k
+    if wide:
+        w = round(rect["width"] * WIDE_WIDTH_FRAC)
+    else:
+        w = max(200, min(round(440 * eff), int(NARROW_MAX_W_FRAC * rect["width"] - NARROW_MARGIN)))
+    return eff, w, w - 36
+
+
 def wide_mode(matches):
     """추천이 2세트(퓨어탱커/공격탱커)인 구원자 한 명이면 넓은 모드."""
     return bool(matches) and len(matches) == 1 and bool((matches[0] or {}).get("sets"))

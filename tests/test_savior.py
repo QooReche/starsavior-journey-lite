@@ -585,30 +585,56 @@ def test_picker_negative_signal_hides_immediately_and_blocks_reshow():
     assert emitted[-1] is True
 
 
-def test_click_hold_hides_briefly_and_requests_recheck(monkeypatch):
+def test_click_hides_until_positive_reconfirmation(monkeypatch):
+    """클릭 -> 툴팁 즉시 숨김 + 편성 화면 확정 해제. 새 스캔에서 긍정 확정(1회)될 때까지 재노출 없음, 부정/불확실이면 계속 숨김, 확정되면 다시 표시."""
     import journey_helper as jh
-    calls = []
-    stub = SimpleNamespace(arcana_screen=True, savior_matches=[{"name": "x"}], watcher=SimpleNamespace(request_arcana_recheck=lambda: calls.append(1)))
+    emitted = []
+    wstub = SimpleNamespace(_ar_on=True, _ar_streak=5, _ar_miss=0, _sv_next=99.0, arcana_screen_changed=SimpleNamespace(emit=emitted.append))
+    mstub = SimpleNamespace(arcana_screen=True, savior_matches=[{"name": "x"}],
+                            watcher=SimpleNamespace(request_arcana_recheck=lambda: jh.ScreenWatcher.request_arcana_recheck(wstub)))
+    mstub.on_arcana_screen_changed = lambda on: jh.MouseHoverManager.on_arcana_screen_changed(mstub, on)
+    wstub.arcana_screen_changed = SimpleNamespace(emit=lambda on: (emitted.append(on), mstub.on_arcana_screen_changed(on)))
     state = {"down": False, "t": 100.0}
     user32 = SimpleNamespace(GetAsyncKeyState=lambda vk: 0x8000 if state["down"] else 0)
     monkeypatch.setattr(jh.ctypes, "windll", SimpleNamespace(user32=user32), raising=False)
     monkeypatch.setattr(jh, "is_game_foreground", lambda: True)
     monkeypatch.setattr(jh, "is_cursor_over_game", lambda: True)
     monkeypatch.setattr(jh.time, "monotonic", lambda: state["t"])
-
-    def hold():
-        return jh.MouseHoverManager._savior_click_hold(stub)
-    assert hold() is False and calls == []
     state["down"] = True
-    assert hold() is True and calls == [1]                                 # 클릭 순간 숨김 + 재판정 요청
+    assert jh.MouseHoverManager._savior_click_hold(mstub) is True                       # 클릭 순간 숨김
+    assert mstub.arcana_screen is False and wstub._ar_on is False and wstub._sv_next == 0.0   # 확정 해제 + 즉시 재판정 요청
     state["down"] = False
-    state["t"] = 100.3
-    assert hold() is True                                                  # 0.5초 안은 계속 숨김
-    state["t"] = 100.7
-    assert hold() is False and calls == [1]                                # 이후 다시 표시
-    stub.arcana_screen = False
-    state["down"] = True
-    assert hold() is False and calls == [1]                                # 편성 화면이 아니면 관여하지 않음
+    state["t"] = 101.5                                                                   # 0.5초가 지나도 아직 확정 전이므로 숨김 유지(재노출 없음)
+    assert jh.MouseHoverManager._savior_click_hold(mstub) is False and mstub.arcana_screen is False
+    # 다음 스캔이 부정/불확실이면 계속 숨김
+    stub, em, scan = _watcher_stub([{}, PICKER])
+    stub._ar_on, stub._ar_streak = False, jh.ARCANA_CONFIRM - 1
+    scan(); scan()
+    assert em == [] and not stub._ar_on
+    # 긍정 한 번으로 확정 -> 다시 표시
+    stub2, em2, scan2 = _watcher_stub([EQUIP])
+    jh.ScreenWatcher.request_arcana_recheck(stub2)
+    scan2()
+    assert em2 == [True] and stub2._ar_on
+
+
+def test_window_scale_k_and_geometry(saviors):
+    """창 높이 기반 k = clamp(H/935, 0.6, 1.4). 보통 모드 폭은 min(440*scale*k, 0.285*W-여백)로 좌우 카드 영역을 침범하지 않고, 넓은 모드는 0.50*W."""
+    assert sv.window_k(935) == 1.0 and sv.window_k(100) == 0.6 and sv.window_k(5000) == 1.4 and sv.window_k(None) == 1.0
+    for W, H in ((1280, 720), (1600, 935), (1920, 1080), (1000, 560), (2560, 1440)):
+        rect = {"left": 0, "top": 0, "width": W, "height": H}
+        eff, w, cw = sv.tooltip_geometry(rect, 1.0, False)
+        assert abs(eff - sv.window_k(H)) < 1e-9 and cw == w - 36
+        assert sv.TOOLTIP_X_FRAC * W + w < 0.53 * W, (W, H, w)                      # 우측 편성 카드(0.53*W~) 비침범
+        assert w <= 440 * sv.window_k(H) + 1
+        eff2, w2, _ = sv.tooltip_geometry(rect, 1.0, True)
+        assert w2 == round(W * sv.WIDE_WIDTH_FRAC) and sv.WIDE_X_FRAC * W + w2 <= 0.53 * W
+    _, w15, _ = sv.tooltip_geometry({"width": 1600, "height": 935}, 1.5, False)
+    assert w15 <= 0.285 * 1600                                                      # 설정 배율이 커도 상한으로 제한
+    s = next(x for x in saviors if x["key"] == "asherah-voyager")
+    small, big = sv.format_reco_html(s, 0.77, None, 0), sv.format_reco_html(s, 1.16, None, 0)
+    px = lambda h: max(int(v) for v in re.findall(r"font-size:(\d+)px", h))
+    assert px(small) < px(big)                                                      # 글자 크기가 배율에 따라 달라진다
 
 
 def test_defender_two_sets_both_visible_with_headings(saviors):
