@@ -5,3 +5,7 @@ dist/
 __pycache__/
 *.pyc
 
+
+# 개발 실행 시 생기는 휴대형 런타임 폴더
+/data/
+/log/

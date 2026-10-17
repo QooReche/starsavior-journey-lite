@@ -9,21 +9,21 @@ import journey_helper as jhm  # noqa: E402
 
 
 def _write(tmp_path, data):
-    d = os.path.join(str(tmp_path), jhm.APP_NAME)
+    d = os.path.join(str(tmp_path), "data")
     os.makedirs(d, exist_ok=True)
     with open(os.path.join(d, "settings.json"), "w", encoding="utf-8") as f:
         json.dump(data, f)
 
 
 def test_default_hides_nothing(tmp_path, monkeypatch):
-    monkeypatch.setenv("APPDATA", str(tmp_path))
+    monkeypatch.setenv("JH_APP_DIR", str(tmp_path))
     st = jhm.load_settings()
     assert st["hidden_difficulties"] == []
     assert st["difficulty"] == "all"
 
 
 def test_roundtrip_and_invalid_values(tmp_path, monkeypatch):
-    monkeypatch.setenv("APPDATA", str(tmp_path))
+    monkeypatch.setenv("JH_APP_DIR", str(tmp_path))
     st = jhm.load_settings()
     st["hidden_difficulties"] = ["hard", "easy"]
     jhm.save_settings(st)
@@ -37,7 +37,7 @@ def test_roundtrip_and_invalid_values(tmp_path, monkeypatch):
 
 
 def test_migrates_old_single_difficulty(tmp_path, monkeypatch):
-    monkeypatch.setenv("APPDATA", str(tmp_path))
+    monkeypatch.setenv("JH_APP_DIR", str(tmp_path))
     _write(tmp_path, {"difficulty": "hard"})
     assert jhm.load_settings()["hidden_difficulties"] == ["easy", "normal"]
     _write(tmp_path, {"difficulty": "hard", "hidden_difficulties": []})   # 새 키가 있으면 그대로
@@ -74,6 +74,6 @@ def test_font_scale_steps_match_original(tmp_path, monkeypatch):
     assert jhm.snap_font_scale(1.25) == 1.2
     assert jhm.snap_font_scale(1.5) == 1.4
     assert jhm.snap_font_scale("x") == 1.0
-    monkeypatch.setenv("APPDATA", str(tmp_path))
+    monkeypatch.setenv("JH_APP_DIR", str(tmp_path))
     _write(tmp_path, {"tooltip_font_scale": 1.5})
     assert jhm.load_settings()["tooltip_font_scale"] == 1.4

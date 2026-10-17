@@ -33,6 +33,7 @@ import numpy as np
 
 import jh_cards
 import jh_db
+import jh_paths
 import jh_savior
 import jh_schedule
 
@@ -49,7 +50,7 @@ except ImportError:  # --selftest 는 GUI 없이도 돌 수 있게
     pyqtSignal = lambda *a, **k: None
 
 APP_NAME = "JourneyHelperLite"
-APP_VERSION = "1.0.6-lite.1"
+from jh_version import APP_VERSION  # noqa: E402  (버전 단일 출처: jh_version.py)
 
 DEFAULT_SETTINGS = {
     "language": "ko",               # "ko" | "en"  (화면 문구 + DB 언어, 변경 시 재시작)
@@ -125,12 +126,8 @@ def resource_path(*parts):
 
 
 def get_settings_dir():
-    path = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), APP_NAME)
-    try:
-        os.makedirs(path, exist_ok=True)
-    except Exception:
-        pass
-    return path
+    """settings.json / custom_events.json / cache / card_debug 가 있는 data 폴더 (휴대형: 앱 폴더/data, 폴백: %APPDATA%)."""
+    return jh_paths.data_dir()
 
 
 def load_settings():
@@ -166,12 +163,12 @@ def load_settings():
     return settings
 
 
-LOG_MAX_BYTES = 256 * 1024
+LOG_MAX_BYTES = jh_paths.LOG_MAX_BYTES            # 1MB 초과 시 log.old.txt 로 교체(1개 보관)
 _log_lock = threading.Lock()
 
 
 def log(msg):
-    """%APPDATA%\\JourneyHelperLite\\log.txt 에 한 줄 기록 (256KB 에서 log.txt.1 로 회전). 어떤 실패도 앱을 멈추지 않는다."""
+    """앱 폴더/log/log.txt 에 한 줄 기록 (1MB 에서 log.old.txt 로 교체). 폴더가 지워져도 다시 만든다. 어떤 실패도 앱을 멈추지 않는다."""
     line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}"
     try:
         print(line)
@@ -179,21 +176,14 @@ def log(msg):
         pass
     try:
         with _log_lock:
-            path = os.environ.get("JH_LOG_PATH") or os.path.join(get_settings_dir(), "log.txt")
-            try:
-                if os.path.getsize(path) > LOG_MAX_BYTES:
-                    os.replace(path, path + ".1")
-            except OSError:
-                pass
-            with open(path, "a", encoding="utf-8", newline="\n") as f:
-                f.write(line + "\n")
+            jh_paths.write_log(line)
     except Exception:
         pass
 
 
 def save_settings(settings):
     try:
-        with open(os.path.join(get_settings_dir(), "settings.json"), "w", encoding="utf-8") as f:
+        with open(os.path.join(get_settings_dir(), "settings.json"), "w", encoding="utf-8") as f:     # (get_settings_dir 가 폴더를 다시 만든다)
             json.dump(settings, f, ensure_ascii=False, indent=2)
     except Exception as e:
         log(f"[설정 저장 실패] {e}")
@@ -286,6 +276,7 @@ _TRANSLATIONS_EN = {
 def set_language(lang):
     global _CURRENT_LANGUAGE
     _CURRENT_LANGUAGE = lang if lang in jh_db.SUPPORTED_LANGS else "ko"
+    jh_paths.LANG = _CURRENT_LANGUAGE
 
 
 def get_language():
@@ -301,15 +292,10 @@ def tr(text):
 
 
 def install_crash_logger():
-    path = os.path.join(get_settings_dir(), "crash_log.txt")
-
     def hook(exc_type, exc, tb):
         try:
-            try:
-                if os.path.getsize(path) > LOG_MAX_BYTES:        # 반복 예외로 무한히 커지지 않게 회전
-                    os.replace(path, path + ".1")
-            except OSError:
-                pass
+            path = os.path.join(jh_paths.log_dir(), "crash_log.txt")
+            jh_paths.rotate_if_big(path)                          # 반복 예외로 무한히 커지지 않게 회전
             with open(path, "a", encoding="utf-8") as f:
                 f.write(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} =====\n")
                 traceback.print_exception(exc_type, exc, tb, file=f)
@@ -1197,7 +1183,7 @@ def grab_card_crop(sct, rect):
 
 
 def save_card_debug(img, keep=5):
-    """카드 식별 실패 시 잘라낸 영역을 %APPDATA%\JourneyHelperLite\card_debug 에 저장(최근 keep 장만 유지) - 영역 보정 진단용."""
+    """카드 식별 실패 시 잘라낸 영역을 앱 폴더/data/card_debug 에 저장(최근 keep 장만 유지) - 영역 보정 진단용."""
     try:
         d = os.path.join(get_settings_dir(), "card_debug")
         os.makedirs(d, exist_ok=True)
@@ -2288,11 +2274,15 @@ def prepare_qt_plugins():
             if getattr(sys, "_MEIPASS", None) else os.path.join(os.path.dirname(PyQt5.__file__), "Qt5", "plugins")
         if src.isascii() or not os.path.isdir(src):
             return None
+        # 휴대형 data 폴더가 ASCII 면 거기(data\qt_plugins)에 복사. 아니면(한글 경로 앱 폴더) 기존처럼 ASCII 경로 폴백.
+        bases = [(jh_paths.data_dir(), "qt_plugins")]
         for base in (os.environ.get("LOCALAPPDATA"), os.environ.get("PUBLIC"), os.environ.get("ProgramData"),
                      (os.environ.get("SystemDrive") or "C:") + "\\"):
+            bases.append((base, os.path.join(APP_NAME, "qt_plugins")))
+        for base, rel in bases:
             if not base or not base.isascii():
                 continue
-            dst = os.path.join(base, APP_NAME, "qt_plugins")
+            dst = os.path.join(base, rel)
             try:
                 for sub in ("platforms", "styles"):
                     if os.path.isdir(os.path.join(src, sub)) and not os.path.isdir(os.path.join(dst, sub)):
@@ -2351,6 +2341,7 @@ def main(argv):
         ctypes.windll.user32.MessageBoxW(0, f"{APP_NAME}가 이미 실행 중입니다.\n트레이 아이콘을 확인하세요.", "이미 실행 중", 0x40)
         return 0
     install_crash_logger()
+    jh_paths.log_dir()                      # log\ 와 안내 파일 보장(폴백 판정·이전도 여기서)
     set_language(load_settings()["language"])
     prepare_qt_plugins()
     app = QApplication(sys.argv)

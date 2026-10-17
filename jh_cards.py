@@ -20,8 +20,11 @@ import urllib.request
 import cv2
 import numpy as np
 
+import jh_paths
+from jh_version import APP_VERSION
+
 CARD_URL = "https://starsavior-guide.github.io/data/arcana-assets/cards/{id}.webp"
-USER_AGENT = "JourneyHelperLite/1.0 (personal)"
+USER_AGENT = f"JourneyHelperLite/{APP_VERSION} (personal)"
 
 # 카드 영역(프레임 대비 비율): x0, y0, x1, y1  (1616x939 클라이언트 기준 실측)
 CARD_REGION_FRAC = (60 / 1610, 135 / 940, 190 / 1610, 295 / 940)
@@ -117,8 +120,7 @@ def extract_card_features(region_bgr, dx=0.0, dy=0.0):
 
 # ---------------------------------------------------------------- 카드 저장소
 def default_cache_dir():
-    base = os.environ.get("APPDATA") or os.path.expanduser("~")
-    return os.path.join(base, "JourneyHelperLite", "cache", "cards")
+    return jh_paths.ensure_dir(os.path.join(jh_paths.cache_dir(), "cards"))
 
 
 class CardStore:

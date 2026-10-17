@@ -17,6 +17,9 @@ import tempfile
 import time
 from collections import OrderedDict, namedtuple
 
+import jh_paths
+from jh_version import APP_VERSION
+
 BASE_URL = "https://starsavior-guide.github.io/data/"
 SUPPORTED_LANGS = ("ko", "en")
 
@@ -56,7 +59,7 @@ CHECK_INTERVAL_SEC = 12 * 60 * 60     # 자동 확인 최소 간격
 MANUAL_COOLDOWN_SEC = 10 * 60         # 수동 새로고침 쿨다운
 FAIL_BACKOFF_SEC = 10 * 60            # 실패 직후 자동 재시도 금지 시간
 HTTP_TIMEOUT = (5, 20)                # (connect, read)
-DEFAULT_USER_AGENT = "JourneyHelperLite/1.0 (+https://github.com/QooReche/journeyhelper; personal game helper)"
+DEFAULT_USER_AGENT = f"JourneyHelperLite/{APP_VERSION} (+https://github.com/QooReche/journeyhelper; personal game helper)"
 
 UpdateResult = namedtuple("UpdateResult", "status changed message")
 
@@ -65,8 +68,7 @@ UpdateResult = namedtuple("UpdateResult", "status changed message")
 # 캐시 / 조건부 갱신
 # ----------------------------------------------------------------------------
 def default_cache_dir():
-    base = os.environ.get("APPDATA") or os.path.expanduser("~")
-    return os.path.join(base, "JourneyHelperLite", "cache")
+    return jh_paths.cache_dir()
 
 
 def _atomic_write(path, data_bytes):
@@ -716,6 +718,7 @@ def load_custom_events(path, create_default=True):
     except FileNotFoundError:
         if create_default:
             try:
+                os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
                 with open(path, "w", encoding="utf-8") as f:
                     json.dump(DEFAULT_CUSTOM_EVENTS, f, ensure_ascii=False, indent=2)
             except OSError:

@@ -12,7 +12,8 @@ import sys
 import time
 
 from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QFrame, QHBoxLayout, QLabel, QPushButton,
+import jh_paths
+from PyQt5.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QFrame, QHBoxLayout, QLabel, QMessageBox, QPushButton,
                              QScrollArea, QTabWidget, QVBoxLayout, QWidget)
 
 ACCENT = "#00e5ff"
@@ -113,7 +114,11 @@ def build_diagnostics(host, jhm, now=None):
         L.append(f"savior reco: {len(reco)} saviors loaded")
     except Exception as e:
         L.append(f"savior reco: error {type(e).__name__}")
-    log_path = os.environ.get("JH_LOG_PATH") or os.path.join(jhm.get_settings_dir(), "log.txt")
+    try:
+        L.append(jh_paths.usage_summary())
+    except Exception as e:
+        L.append(f"data location: error {type(e).__name__}")
+    log_path = jh_paths.log_path()
     L.append("log.txt (last 40 lines):")
     L.extend(_tail_lines(log_path, 40))
     return scrub_paths("\n".join(L))
@@ -291,10 +296,16 @@ class SettingsDialog(QDialog):
         self._desc(lay, t("추적 중인 이벤트·선택 잠금을 비우고 화면을 다시 찾아요."), plain=True)
         self._section(lay, "📋", t("문제 확인"), "#74b9ff")
         self._button(lay, "📂  " + t("로그 폴더 열기"), self._open_log_dir)
-        self._desc(lay, "%APPDATA%\\JourneyHelperLite", plain=True)
+        self._desc(lay, jh_paths.display_path("log"), plain=True)
+        self.lbl_usage = self._desc(lay, "", plain=True)
+        self._button(lay, "🧹  " + t("캐시 지우기"), self._clear_cache)
+        self._desc(lay, t("내려받은 데이터·카드 이미지 캐시만 지워요. 설정과 사용자 정의 이벤트는 그대로이고, 필요하면 다시 내려받아요."), plain=True)
+        self._button(lay, "🗑  " + t("로그 지우기"), self._clear_logs)
+        self._desc(lay, t("log 폴더의 로그 파일을 지워요. 새 로그는 자동으로 다시 만들어져요."), plain=True)
         self.btn_copy = self._button(lay, "", self._copy_diag)
         self._reset_copy_text()
         self._desc(lay, t("버전·설정·게임 창·최근 로그를 클립보드에 복사해요. 사용자 이름과 경로는 가려져요."), plain=True)
+        self._update_usage()
 
     # ---- 동작 ----
     def refresh(self):
@@ -314,6 +325,7 @@ class SettingsDialog(QDialog):
         finally:
             self._loading = False
         self._update_pause_text()
+        self._update_usage()
 
     def _update_pause_text(self):
         self.btn_pause.setText(self.tr_("▶️ 헬퍼 재개") if self.host._hidden else self.tr_("⏸️ 헬퍼 일시정지"))
@@ -329,9 +341,43 @@ class SettingsDialog(QDialog):
         self.cb_lang.setCurrentIndex(max(0, self.cb_lang.findData(self.host.lang)))
         self._loading = False
 
+    def _confirm(self, text):
+        return QMessageBox.question(self, "JourneyHelper", text, QMessageBox.Yes | QMessageBox.No,
+                                    QMessageBox.No) == QMessageBox.Yes
+
+    def _update_usage(self):
+        try:
+            self.lbl_usage.setText(self.tr_("데이터 {} / 캐시 {}").format(
+                jh_paths.fmt_size(jh_paths.dir_size(jh_paths.data_dir())),
+                jh_paths.fmt_size(jh_paths.dir_size(jh_paths.cache_dir()))) + " (" + jh_paths.display_path("data") + ")")
+        except Exception:
+            pass
+
+    def _clear_cache(self):
+        if not self._confirm(self.tr_("캐시를 지울까요?\n내려받은 이벤트 데이터와 카드 이미지만 지워지고, 설정과 사용자 정의 이벤트는 유지돼요.")):
+            return False
+        ok = jh_paths.clear_cache()
+        store = getattr(self.host, "store", None)
+        try:
+            if store is not None and hasattr(store, "_load_meta"):
+                store.meta = store._load_meta()          # 지워진 캐시에 맞춰 갱신 메타도 초기화
+        except Exception:
+            pass
+        self.jhm.log("[캐시 지움] 사용자 요청" + ("" if ok else " (일부 실패)"))
+        self._update_usage()
+        return ok
+
+    def _clear_logs(self):
+        if not self._confirm(self.tr_("로그를 지울까요?")):
+            return False
+        ok = jh_paths.clear_logs()
+        self.jhm.log("[로그 지움] 사용자 요청" + ("" if ok else " (일부 실패)"))
+        self._update_usage()
+        return ok
+
     def _open_log_dir(self):
         try:
-            os.startfile(self.jhm.get_settings_dir())
+            os.startfile(jh_paths.log_dir())
         except Exception as e:
             self.jhm.log(f"[로그 폴더 열기 실패] {e}")
 

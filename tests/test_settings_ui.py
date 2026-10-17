@@ -111,7 +111,7 @@ def test_pause_button_and_single_instance(app):
 
 
 def test_open_settings_single_instance(app, tmp_path, monkeypatch):
-    monkeypatch.setenv("APPDATA", str(tmp_path))
+    monkeypatch.setenv("JH_APP_DIR", str(tmp_path))
     mgr = FakeHost()                # 전체 초기화(스레드·OCR) 없이 open_settings 만 빌려 쓴다
     jhm.MouseHoverManager.open_settings(mgr)
     first = mgr._settings_dlg
@@ -135,3 +135,39 @@ def test_menus_have_settings_entry():
     texts = [a.text() for a in menu.actions()]
     assert "⚙️ 설정 열기" in texts and texts[-1] == "🛑 프로그램 종료"
     assert app is not None
+
+
+def test_clear_cache_and_log_buttons(app, monkeypatch):
+    import jh_paths
+    monkeypatch.delenv("JH_LOG_PATH", raising=False)
+    jhm.save_settings(jhm.load_settings())
+    cdir = jh_paths.cache_dir()
+    open(os.path.join(cdir, "meta.json"), "w").write("{}")
+    jhm.log("log line")
+    d = ui.SettingsDialog(FakeHost(), jhm)
+    assert d.lbl_usage.text()
+    monkeypatch.setattr(d, "_confirm", lambda text: False)
+    d._clear_cache()
+    d._clear_logs()
+    assert os.path.exists(os.path.join(cdir, "meta.json")) and os.path.exists(jh_paths.log_path())
+    monkeypatch.setattr(d, "_confirm", lambda text: True)
+    d._clear_cache()
+    assert os.listdir(cdir) == [] and os.path.isdir(cdir)
+    assert os.path.exists(os.path.join(jhm.get_settings_dir(), "settings.json"))
+    d._clear_logs()
+    jhm.log("again")
+    assert "again" in open(jh_paths.log_path(), encoding="utf-8").read()
+
+
+def test_diagnostics_has_data_location(app, monkeypatch):
+    monkeypatch.delenv("JH_LOG_PATH", raising=False)
+    text = ui.build_diagnostics(FakeHost(), jhm)
+    assert "data location: portable" in text and "cache=" in text
+
+
+def test_open_log_dir_uses_new_log_dir(app, monkeypatch):
+    import jh_paths
+    opened = []
+    monkeypatch.setattr(os, "startfile", lambda p: opened.append(p), raising=False)
+    ui.SettingsDialog(FakeHost(), jhm)._open_log_dir()
+    assert opened == [jh_paths.log_dir()] and opened[0].endswith("log")

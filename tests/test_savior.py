@@ -26,7 +26,7 @@ def text_of(html):
 @pytest.fixture(scope="module")
 def saviors():
     s = sv.load_reco()
-    assert s, "data/savior_reco.json 을 읽지 못함"
+    assert s, "assets/savior_reco.json 을 읽지 못함"
     return s
 
 
@@ -200,7 +200,7 @@ def test_other_saviors_match_site_logic(saviors):
 
 @needs_site
 def test_regenerating_from_site_copy_equals_bundled_json():
-    """저장소의 data/savior_reco.json 이 사이트 사본(2026-10-17)에서 추출기로 재생성한 것과 같다."""
+    """저장소의 assets/savior_reco.json 이 사이트 사본(2026-10-17)에서 추출기로 재생성한 것과 같다."""
     rd = lambda n: open(os.path.join(SITE_ENV, n), encoding="utf-8-sig").read()
     data, rs = ex.build(rd("app-core.js"), rd("app.js"), json.loads(rd("arcanas.json")))
     assert data["unportedPatches"] == [] and rs.stats["unresolved"] == 0

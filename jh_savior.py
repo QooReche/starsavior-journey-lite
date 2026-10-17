@@ -15,7 +15,7 @@ import os
 import re
 import struct
 
-DATA_FILE = os.path.join("data", "savior_reco.json")
+DATA_FILE = os.path.join("assets", "savior_reco.json")
 
 # 클라이언트 영역 비율 (스크린샷 4장에서 검증: tests/test_savior.py)
 SAVIOR_REGIONS = {

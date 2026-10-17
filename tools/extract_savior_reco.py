@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """구원자 추천 아르카나 슬림 JSON 추출기 (오프라인 재현 가능).
 
-입력: 가이드 사이트 사본(app-core.js, app.js, arcanas.json) -> 출력: src/data/savior_reco.json
-사용: python -X utf8 tools/extract_savior_reco.py <사이트사본폴더> [--out src/data/savior_reco.json]
+입력: 가이드 사이트 사본(app-core.js, app.js, arcanas.json) -> 출력: src/assets/savior_reco.json
+사용: python -X utf8 tools/extract_savior_reco.py <사이트사본폴더> [--out src/assets/savior_reco.json]
       (사이트 재다운로드는 하지 않는다. 다시 받을 때는 docs/arcana_setting_research_2026-10-16.md 의 UA·요청 최소화 방식을 따른다.)
 
 사이트가 구원자 상세 화면(createDetailMarkup)에서 실제로 보여 주는 '최종' PVE 5슬롯 + 대체 슬롯을 그대로 재현한다.
@@ -496,7 +496,7 @@ def main(argv):
         print(__doc__)
         return 2
     d = argv[1]
-    out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "savior_reco.json")
+    out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets", "savior_reco.json")
     if "--out" in argv:
         out_path = argv[argv.index("--out") + 1]
 

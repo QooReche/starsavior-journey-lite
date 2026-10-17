@@ -86,3 +86,8 @@ python -m PyInstaller journey_helper.spec --noconfirm     # dist\JourneyHelperLi
 - 데이터: [starsavior-guide.github.io](https://starsavior-guide.github.io/data/) 의 공개 DB (`journey/<언어>/journey.json`, `arcanas/arcanas.json`). 데이터의 권리는 제공자/게임사에 있으며, 이 저장소는 여정 DB 본체를 포함하지 않고 실행 시 내려받습니다(구원자 추천 아르카나는 가이드 사이트에서 추출한 슬림 JSON `data/savior_reco.json` 을 포함)(테스트용 축소 샘플만 `tests/fixtures`에 포함). 단, 새 DB에 없는 정보는 옛 DB(star-savior-arcana-db, 2026-10-15 백업)에서 추출해 코드에 내장했습니다: 여정 버프 효과 설명 `jh_buffs.py`, 턴별 일정 `jh_schedule.py`.
 - OCR: [RapidOCR](https://github.com/RapidAI/RapidOCR) + [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) PP-OCRv4 한국어 인식 모델(`models/`, Apache-2.0).
 - PyQt5(GPL v3/상용), onnxruntime(MIT), OpenCV(Apache-2.0), mss(MIT), requests(Apache-2.0).
+
+## 데이터 위치 / 업데이트
+- 설정·캐시·로그는 모두 **프로그램 폴더 안**(`data\`, `log\`)에 저장됩니다(휴대형). 폴더를 지워도 프로그램이 다시 만들며, 용량이 부담되면 `data\cache`나 `log\`를 지워도 됩니다. 프로그램 폴더에 쓸 수 없는 위치면 `%APPDATA%\JourneyHelperLite`로 대신 저장합니다.
+- 새 버전은 기존 폴더에 **덮어쓰기**하면 설정이 유지됩니다(`data\`, `log\`는 압축 파일에 들어 있지 않습니다). 버전 표기는 `1.0.01.YYMMDD`(마지막은 빌드 날짜)입니다.
+- 문제가 생기면 설정창의 `고급·진단`에서 **진단 정보 복사**를 눌러 붙여넣어 제보해 주세요.

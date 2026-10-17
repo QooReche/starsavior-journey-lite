@@ -86,7 +86,7 @@ class LogTests(unittest.TestCase):
             with open(path, "ab") as f:
                 f.write(b"x" * (jhm.LOG_MAX_BYTES + 10))
             jhm.log("after")
-            self.assertTrue(os.path.exists(path + ".1"))
+            self.assertTrue(os.path.exists(os.path.join(d, "log.old.txt")))
             self.assertLess(os.path.getsize(path), 1000)
             os.environ["JH_LOG_PATH"] = d       # 디렉터리를 파일처럼 열면 실패 -> 예외 없이 무시
             jhm.log("무시됨")
