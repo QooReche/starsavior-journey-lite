@@ -1,0 +1,97 @@
+[
+ {
+  "id": 105040,
+  "type": "NT_CHARM",
+  "rarity": "IG_UNIQUE",
+  "name": {
+   "ko-KR": "석상의 칼",
+   "en-US": "Statue's Sword"
+  },
+  "description": {
+   "ko-KR": "외딴 곳의 석상에게서 얻은 칼. 투박한 만듦새와 다르게 쥐고 있으면 무엇이든 벨 수 있을 것 같다.",
+   "en-US": "A sword obtained from a statue in a remote location. Despite its crude construction, it seems capable of cutting through anything when held."
+  },
+  "events": [
+   {
+    "ko-KR": "[여정 이벤트] 신비한 석상",
+    "en-US": "[Journey Event] The Mysterious Statue"
+   }
+  ]
+ },
+ {
+  "id": 105043,
+  "type": "NT_CHARM",
+  "rarity": "IG_UNIQUE",
+  "name": {
+   "ko-KR": "특전 포스터",
+   "en-US": "Screening Bonus Poster"
+  },
+  "description": {
+   "ko-KR": "열세 번째 공허체 13의 상영 첫 주에 배포한 포스터. 시리즈에 개근한 조연의 충격적인 결말을 폭로하고 있다.",
+   "en-US": "A poster distributed during the first week of screenings for The 13th Voidborn 13. It spoils the shocking ending of a supporting character who appeared throughout the series."
+  },
+  "events": [
+   {
+    "ko-KR": "[여정 이벤트] 여가 시간",
+    "en-US": "[Journey Event] Leisure Time"
+   }
+  ]
+ },
+ {
+  "id": 5064002,
+  "type": "NT_CHARM",
+  "rarity": "IG_UNIQUE",
+  "name": {
+   "ko-KR": "현자의 손",
+   "en-US": "Hand of the Sage"
+  },
+  "description": {
+   "ko-KR": "토론에서 한 번도 진 적 없다는 어느 현자의 유품. 피도 눈물도 없는 상대방에게서도 공감 능력을 이끌어낸다.",
+   "en-US": "The relic of a sage said to have never lost a debate. It draws out empathy even from opponents with hearts of ice."
+  },
+  "events": [
+   {
+    "ko-KR": "[여정 이벤트] 수집가가 온다",
+    "en-US": "[Journey Event] The Collector's Visit"
+   }
+  ]
+ },
+ {
+  "id": 5064003,
+  "type": "NT_CHARM",
+  "rarity": "IG_UNIQUE",
+  "name": {
+   "ko-KR": "아담한 오아시스",
+   "en-US": "Cozy Oasis"
+  },
+  "description": {
+   "ko-KR": "닫은 채로 놔두면 정수된 물이 차오르는 물병. 미개척지를 헤매다 사라졌던 탐험가의 시신 곁에서 발견되었다.",
+   "en-US": "A water bottle that fills itself with purified water when kept closed. Found beside the body of an explorer who vanished while wandering uncharted lands."
+  },
+  "events": [
+   {
+    "ko-KR": "[여정 이벤트] 수집가가 온다",
+    "en-US": "[Journey Event] The Collector's Visit"
+   }
+  ]
+ },
+ {
+  "id": 5064006,
+  "type": "NT_CHARM",
+  "rarity": "IG_UNIQUE",
+  "name": {
+   "ko-KR": "저격수의 외투",
+   "en-US": "Sniper's Coat"
+  },
+  "description": {
+   "ko-KR": "전쟁에서 전설적인 활약을 펼친 저격수의 외투. 한 번의 총성이 울려 퍼지면 세 명의 적이 쓰러진 순간의 기억이 남아 있다.",
+   "en-US": "The coat of a sniper who performed legendary feats in war. It retains the memory of the moment when three enemies were felled by a single gunshot."
+  },
+  "events": [
+   {
+    "ko-KR": "[여정 이벤트] 수집가가 온다",
+    "en-US": "[Journey Event] The Collector's Visit"
+   }
+  ]
+ }
+]

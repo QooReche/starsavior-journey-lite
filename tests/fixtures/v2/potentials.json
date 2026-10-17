@@ -1,0 +1,17 @@
+[
+ {
+  "id": 24001,
+  "str_id": "POTEN_PASSIVE_24001",
+  "name": {
+   "ko-KR": "별빛의 인도",
+   "en-US": "Starlight Guidance"
+  },
+  "type": "특수 잠재력",
+  "unitId": 0,
+  "class": "",
+  "desc": {
+   "ko-KR": "효과 적중과 효과 저항이 4% 증가합니다.",
+   "en-US": "Increases self Effect Hit and self Effect RES by a certain percentage."
+  }
+ }
+]

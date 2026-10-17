@@ -1,0 +1,725 @@
+{
+ "출발점": [
+  {
+   "id": 10100,
+   "name": {
+    "ko-KR": "출발점",
+    "en-US": "Starting Point"
+   },
+   "type": {
+    "ko-KR": "여정 이벤트",
+    "en-US": "Journey Event"
+   },
+   "times": [],
+   "choices": [
+    {
+     "name": "",
+     "condition": null,
+     "success_rewards": [],
+     "failure_rewards": null
+    }
+   ]
+  }
+ ],
+ "기초 평가전 승리": [
+  {
+   "id": 1041,
+   "name": {
+    "ko-KR": "기초 평가전 승리",
+    "en-US": "Basic Trial Victory"
+   },
+   "type": {
+    "ko-KR": "여정 이벤트",
+    "en-US": "Journey Event"
+   },
+   "times": [],
+   "difficulties": [
+    {
+     "ko-KR": "이지",
+     "en-US": "Easy"
+    },
+    {
+     "ko-KR": "노말",
+     "en-US": "Normal"
+    },
+    {
+     "ko-KR": "하드",
+     "en-US": "Hard"
+    }
+   ],
+   "battle_names": [
+    {
+     "ko-KR": "기초 평가전",
+     "en-US": "Basic Trial"
+    }
+   ],
+   "choices": [
+    {
+     "name": "",
+     "condition": null,
+     "success_rewards": [],
+     "failure_rewards": null
+    }
+   ]
+  }
+ ],
+ "여정의 끝에서": [
+  {
+   "id": 100,
+   "name": {
+    "ko-KR": "여정의 끝에서",
+    "en-US": "At the End of the Journey"
+   },
+   "type": {
+    "ko-KR": "구원자 이벤트",
+    "en-US": "Savior Event"
+   },
+   "times": [],
+   "choices": [
+    {
+     "name": "",
+     "condition": null,
+     "success_rewards": [
+      [
+       {
+        "type": "RT_STAT",
+        "reward_stat": "JST_POWER",
+        "min": 10,
+        "max": 10
+       },
+       {
+        "type": "RT_STAT",
+        "reward_stat": "JST_HEALTH",
+        "min": 10,
+        "max": 10
+       },
+       {
+        "type": "RT_STAT",
+        "reward_stat": "JST_ENDURANCE",
+        "min": 10,
+        "max": 10
+       },
+       {
+        "type": "RT_STAT",
+        "reward_stat": "JST_FOCUS",
+        "min": 10,
+        "max": 10
+       },
+       {
+        "type": "RT_STAT",
+        "reward_stat": "JST_PROTECT",
+        "min": 10,
+        "max": 10
+       }
+      ],
+      [
+       {
+        "type": "RT_STAT_POTEN",
+        "reward_id": 10003
+       }
+      ],
+      [
+       {
+        "type": "RT_STAT_POTEN",
+        "reward_id": 10006
+       }
+      ],
+      [
+       {
+        "type": "RT_STAT_POTEN",
+        "reward_id": 10009
+       }
+      ],
+      [
+       {
+        "type": "RT_STAT_POTEN",
+        "reward_id": 10012
+       }
+      ],
+      [
+       {
+        "type": "RT_STAT_POTEN",
+        "reward_id": 10015
+       }
+      ]
+     ],
+     "failure_rewards": null
+    }
+   ]
+  },
+  {
+   "id": 110,
+   "name": {
+    "ko-KR": "여정의 끝에서",
+    "en-US": "At the End of the Journey"
+   },
+   "type": {
+    "ko-KR": "구원자 이벤트",
+    "en-US": "Savior Event"
+   },
+   "times": [],
+   "choices": [
+    {
+     "name": "",
+     "condition": null,
+     "success_rewards": [
+      [
+       {
+        "type": "RT_SE_POTEN",
+        "reward_id": 24001
+       }
+      ],
+      [
+       {
+        "type": "RT_STAT",
+        "reward_stat": "JST_POWER",
+        "min": 10,
+        "max": 10
+       },
+       {
+        "type": "RT_STAT",
+        "reward_stat": "JST_HEALTH",
+        "min": 10,
+        "max": 10
+       },
+       {
+        "type": "RT_STAT",
+        "reward_stat": "JST_ENDURANCE",
+        "min": 10,
+        "max": 10
+       },
+       {
+        "type": "RT_STAT",
+        "reward_stat": "JST_FOCUS",
+        "min": 10,
+        "max": 10
+       },
+       {
+        "type": "RT_STAT",
+        "reward_stat": "JST_PROTECT",
+        "min": 10,
+        "max": 10
+       }
+      ],
+      [
+       {
+        "type": "RT_STAT_POTEN",
+        "reward_id": 10018
+       }
+      ],
+      [
+       {
+        "type": "RT_STAT_POTEN",
+        "reward_id": 10021
+       }
+      ],
+      [
+       {
+        "type": "RT_STAT_POTEN",
+        "reward_id": 10024
+       }
+      ],
+      [
+       {
+        "type": "RT_STAT_POTEN",
+        "reward_id": 10027
+       }
+      ],
+      [
+       {
+        "type": "RT_STAT_POTEN",
+        "reward_id": 10030
+       }
+      ]
+     ],
+     "failure_rewards": null
+    }
+   ]
+  },
+  {
+   "id": 120,
+   "name": {
+    "ko-KR": "여정의 끝에서",
+    "en-US": "At the End of the Journey"
+   },
+   "type": {
+    "ko-KR": "구원자 이벤트",
+    "en-US": "Savior Event"
+   },
+   "times": [],
+   "choices": [
+    {
+     "name": "",
+     "condition": null,
+     "success_rewards": [
+      [
+       {
+        "type": "RT_STAT",
+        "reward_stat": "JST_POWER",
+        "min": 10,
+        "max": 10
+       },
+       {
+        "type": "RT_STAT",
+        "reward_stat": "JST_HEALTH",
+        "min": 10,
+        "max": 10
+       },
+       {
+        "type": "RT_STAT",
+        "reward_stat": "JST_ENDURANCE",
+        "min": 10,
+        "max": 10
+       },
+       {
+        "type": "RT_STAT",
+        "reward_stat": "JST_FOCUS",
+        "min": 10,
+        "max": 10
+       },
+       {
+        "type": "RT_STAT",
+        "reward_stat": "JST_PROTECT",
+        "min": 10,
+        "max": 10
+       }
+      ],
+      [
+       {
+        "type": "RT_STAT_POTEN",
+        "reward_id": 10031
+       }
+      ],
+      [
+       {
+        "type": "RT_STAT_POTEN",
+        "reward_id": 10032
+       }
+      ],
+      [
+       {
+        "type": "RT_STAT_POTEN",
+        "reward_id": 10033
+       }
+      ],
+      [
+       {
+        "type": "RT_STAT_POTEN",
+        "reward_id": 10034
+       }
+      ],
+      [
+       {
+        "type": "RT_STAT_POTEN",
+        "reward_id": 10035
+       }
+      ],
+      [
+       {
+        "type": "RT_STAT_POTEN",
+        "reward_id": 10036
+       }
+      ],
+      [
+       {
+        "type": "RT_STAT_POTEN",
+        "reward_id": 10037
+       }
+      ],
+      [
+       {
+        "type": "RT_STAT_POTEN",
+        "reward_id": 10038
+       }
+      ],
+      [
+       {
+        "type": "RT_STAT_POTEN",
+        "reward_id": 10039
+       }
+      ],
+      [
+       {
+        "type": "RT_STAT_POTEN",
+        "reward_id": 10040
+       }
+      ],
+      [
+       {
+        "type": "RT_STAT_POTEN",
+        "reward_id": 10041
+       }
+      ],
+      [
+       {
+        "type": "RT_STAT_POTEN",
+        "reward_id": 10042
+       }
+      ],
+      [
+       {
+        "type": "RT_STAT_POTEN",
+        "reward_id": 10043
+       }
+      ],
+      [
+       {
+        "type": "RT_STAT_POTEN",
+        "reward_id": 10044
+       }
+      ],
+      [
+       {
+        "type": "RT_STAT_POTEN",
+        "reward_id": 10045
+       }
+      ]
+     ],
+     "failure_rewards": null
+    }
+   ]
+  }
+ ],
+ "강인한 훈련은 강인한 식사로부터": [
+  {
+   "id": 2,
+   "name": {
+    "ko-KR": "강인한 훈련은 강인한 식사로부터",
+    "en-US": "Training Starts at the Table"
+   },
+   "type": {
+    "ko-KR": "구원자 이벤트",
+    "en-US": "Savior Event"
+   },
+   "times": [],
+   "choices": [
+    {
+     "name": "",
+     "condition": null,
+     "success_rewards": [
+      [
+       {
+        "type": "RT_JOURNEY_BUFF",
+        "reward_id": 24,
+        "min": 2,
+        "max": 2
+       }
+      ]
+     ],
+     "failure_rewards": null
+    }
+   ]
+  }
+ ],
+ "세계": [
+  {
+   "id": 5999922,
+   "name": {
+    "ko-KR": "세계",
+    "en-US": "The World"
+   },
+   "type": {
+    "ko-KR": "아르카나 이벤트",
+    "en-US": "Arcana Event"
+   },
+   "times": [],
+   "choices": [
+    {
+     "name": "",
+     "condition": null,
+     "success_rewards": [
+      [
+       {
+        "type": "RT_STAT",
+        "reward_stat": "JST_FOCUS",
+        "min": 5,
+        "max": 5
+       }
+      ],
+      [
+       {
+        "type": "RT_COIN",
+        "min": 8,
+        "max": 8
+       }
+      ]
+     ],
+     "failure_rewards": null
+    }
+   ]
+  }
+ ],
+ "리세트의 일과": [
+  {
+   "id": 11021,
+   "name": {
+    "ko-KR": "리세트의 일과",
+    "en-US": "Lisette's Daily Routine"
+   },
+   "type": {
+    "ko-KR": "여정 이벤트",
+    "en-US": "Journey Event"
+   },
+   "times": [],
+   "choices": [
+    {
+     "name": {
+      "ko-KR": "도와 주자.",
+      "en-US": "Let's help her."
+     },
+     "condition": {
+      "type": "RR_STAMINA_USE",
+      "value": 20
+     },
+     "success_rewards": [
+      [
+       {
+        "type": "RT_JOURNEY_BUFF",
+        "reward_id": 101,
+        "min": 1,
+        "max": 1
+       }
+      ],
+      [
+       {
+        "type": "RT_COIN",
+        "min": 30,
+        "max": 30
+       }
+      ]
+     ],
+     "failure_rewards": [
+      [
+       {
+        "type": "RT_JOURNEY_BUFF",
+        "reward_id": 101,
+        "min": 1,
+        "max": 1
+       }
+      ],
+      [
+       {
+        "type": "RT_COIN",
+        "min": 50,
+        "max": 50
+       }
+      ]
+     ]
+    },
+    {
+     "name": {
+      "ko-KR": "잠시 기다리자.",
+      "en-US": "Let's wait."
+     },
+     "condition": null,
+     "success_rewards": [],
+     "failure_rewards": null
+    }
+   ]
+  },
+  {
+   "id": 11022,
+   "name": {
+    "ko-KR": "리세트의 일과",
+    "en-US": "Lisette's Daily Routine"
+   },
+   "type": {
+    "ko-KR": "여정 이벤트",
+    "en-US": "Journey Event"
+   },
+   "times": [],
+   "choices": [
+    {
+     "name": {
+      "ko-KR": "도와 주자.",
+      "en-US": "Let's help her."
+     },
+     "condition": {
+      "type": "RR_STAMINA_USE",
+      "value": 20
+     },
+     "success_rewards": [
+      [
+       {
+        "type": "RT_JOURNEY_BUFF",
+        "reward_id": 101,
+        "min": 1,
+        "max": 1
+       }
+      ],
+      [
+       {
+        "type": "RT_CONDITION",
+        "min": 1,
+        "max": 1
+       }
+      ],
+      [
+       {
+        "type": "RT_COIN",
+        "min": 30,
+        "max": 30
+       }
+      ]
+     ],
+     "failure_rewards": null
+    },
+    {
+     "name": {
+      "ko-KR": "잠시 기다리자.",
+      "en-US": "Let's wait."
+     },
+     "condition": null,
+     "success_rewards": [],
+     "failure_rewards": null
+    }
+   ]
+  }
+ ],
+ "칼에 숨겨진 힘": [
+  {
+   "id": 18061,
+   "name": {
+    "ko-KR": "칼에 숨겨진 힘",
+    "en-US": "The Power Hidden in the Sword"
+   },
+   "type": {
+    "ko-KR": "여정 이벤트",
+    "en-US": "Journey Event"
+   },
+   "times": [],
+   "choices": [
+    {
+     "name": {
+      "ko-KR": "석상의 칼을 집어든다.",
+      "en-US": "Pick up the sword."
+     },
+     "condition": {
+      "type": "RR_ITEM_USE",
+      "target": "105040",
+      "value": 1
+     },
+     "success_rewards": [
+      [
+       {
+        "type": "RT_STAT",
+        "reward_stat": "JST_POWER",
+        "min": 20,
+        "max": 20
+       }
+      ],
+      [
+       {
+        "type": "RT_STAT",
+        "reward_stat": "JST_HEALTH",
+        "min": 20,
+        "max": 20
+       }
+      ]
+     ],
+     "failure_rewards": [
+      [
+       {
+        "type": "RT_JOURNEY_BUFF",
+        "reward_id": 170,
+        "min": 3,
+        "max": 3
+       }
+      ],
+      [
+       {
+        "type": "RT_STAT",
+        "reward_stat": "JST_POWER",
+        "min": 20,
+        "max": 20
+       }
+      ],
+      [
+       {
+        "type": "RT_STAT",
+        "reward_stat": "JST_HEALTH",
+        "min": 10,
+        "max": 10
+       }
+      ]
+     ]
+    },
+    {
+     "name": {
+      "ko-KR": "그대로 놔둔다.",
+      "en-US": "Leave it as it is."
+     },
+     "condition": null,
+     "success_rewards": [],
+     "failure_rewards": null
+    }
+   ]
+  }
+ ],
+ "수집가가 온다": [
+  {
+   "id": 18081,
+   "name": {
+    "ko-KR": "수집가가 온다",
+    "en-US": "The Collector's Visit"
+   },
+   "type": {
+    "ko-KR": "여정 이벤트",
+    "en-US": "Journey Event"
+   },
+   "times": [],
+   "choices": [
+    {
+     "name": {
+      "ko-KR": "교환을 승낙한다.",
+      "en-US": "Accept the trade."
+     },
+     "condition": {
+      "type": "RR_ITEM_USE",
+      "target": "105043",
+      "value": 1
+     },
+     "success_rewards": [
+      [
+       {
+        "type": "RT_COIN",
+        "min": 50,
+        "max": 50
+       }
+      ],
+      [
+       {
+        "type": "RT_JOURNEY_ITEM",
+        "reward_id": 5064002,
+        "min": 1,
+        "max": 1
+       },
+       {
+        "type": "RT_JOURNEY_ITEM",
+        "reward_id": 5064003,
+        "min": 1,
+        "max": 1
+       },
+       {
+        "type": "RT_JOURNEY_ITEM",
+        "reward_id": 5064006,
+        "min": 1,
+        "max": 1
+       }
+      ]
+     ],
+     "failure_rewards": null
+    },
+    {
+     "name": {
+      "ko-KR": "거래하고 싶은 마음은 없다.",
+      "en-US": "Say I'm not interested."
+     },
+     "condition": null,
+     "success_rewards": [],
+     "failure_rewards": null
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,50 @@
+[
+ {
+  "id": 24,
+  "group": 2,
+  "name": {
+   "ko-KR": "고마움",
+   "en-US": "Gratitude"
+  },
+  "desc": {
+   "ko-KR": "따뜻한 마음에 힘이 솟아납니다. 훈련 실패율이 감소합니다.",
+   "en-US": "Warm feelings of gratitude fill you with strength. Training failure rate decreases."
+  },
+  "type": "JBT_TS_UP",
+  "value": 200,
+  "turn": 2,
+  "isBuff": true
+ },
+ {
+  "id": 101,
+  "group": 10,
+  "name": {
+   "ko-KR": "일일 아르바이트생",
+   "en-US": "Daily Part-Timer"
+  },
+  "desc": {
+   "ko-KR": "아포칼립스 상단의 일일 구원자. 거래 시 상품 구매 가격이 감소합니다.",
+   "en-US": "You are the daily Savior of Apocalypse Shop. Shop prices are reduced."
+  },
+  "type": "JBT_TRADE_DISCOUNT",
+  "value": 2000,
+  "turn": 1,
+  "isBuff": true
+ },
+ {
+  "id": 170,
+  "group": 17,
+  "name": {
+   "ko-KR": "힘의 자양분",
+   "en-US": "Strength Nourishment"
+  },
+  "desc": {
+   "ko-KR": "후대에 계승될 힘을 제공하고 있습니다. 훈련 중 획득하는 체력이 감소합니다.",
+   "en-US": "You provide strength to be passed down to future generations. Vitality gained during training decreases."
+  },
+  "type": "JBT_HEALTH_TRAINING_DOWN",
+  "value": 1000,
+  "turn": 3,
+  "isBuff": false
+ }
+]

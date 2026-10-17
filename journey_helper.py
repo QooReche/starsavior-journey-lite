@@ -1078,7 +1078,23 @@ class DbThread(QThread):
 
     def _build_cache(self):
         journey, arcanas = self.store.load()
-        return jh_db.build_event_cache(journey, arcanas) if journey else []
+        if not journey:
+            return []
+        v2 = None
+        try:
+            load_v2 = getattr(self.store, "load_v2", None)
+            v2 = load_v2() if load_v2 else None          # V2 보충(없거나 깨졌으면 None -> 가이드 DB 만 사용)
+        except Exception as e:
+            log(f"[V2 로딩 예외] {e}")
+        if v2 is None:
+            return jh_db.build_event_cache(journey, arcanas)
+        try:
+            return jh_db.build_event_cache(journey, arcanas, v2=v2)
+        except Exception as e:
+            if v2 is None:
+                raise
+            log(f"[V2 반영 예외, 가이드 DB 만 사용] {e}\n{traceback.format_exc()}")
+            return jh_db.build_event_cache(journey, arcanas)
 
     def work(self, emit):
         """캐시를 먼저 내보내 바로 쓰게 하고, 네트워크 갱신은 그 뒤에 한다. 갱신 예외가 유효한 캐시를 버리게 하지 않는다."""
@@ -1098,6 +1114,16 @@ class DbThread(QThread):
         except Exception as e:
             log(f"[DB 갱신 예외] {e}\n{traceback.format_exc()}")
             status, message = "offline", str(e)
+        try:                                        # V2 보충 데이터 갱신(백그라운드, 실패는 로그만 남기고 캐시 유지)
+            upd_v2 = getattr(self.store, "update_v2", None)
+            r2 = upd_v2(manual=self.manual and status != "cooldown") if upd_v2 else None
+            if r2 is None:
+                pass
+            elif r2.status in ("updated", "offline"):
+                log(f"[V2] {r2.status}: {r2.message}")
+            changed = changed or bool(r2 and r2.changed)
+        except Exception as e:
+            log(f"[V2 갱신 예외] {e}\n{traceback.format_exc()}")
         if sent_cache and not changed:
             return                                  # 이미 캐시를 보냈고 바뀐 것이 없음
         try:

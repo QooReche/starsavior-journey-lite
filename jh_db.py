@@ -189,6 +189,23 @@ class DbStore:
             return UpdateResult("updated", True, "DB 갱신됨")
         return UpdateResult("not_modified", False, "변경 없음 (304)")
 
+    # --- V2 보충 데이터 (jh_v2): 실패해도 가이드 DB 동작에 영향 없음 ---
+    def load_v2(self):
+        try:
+            import jh_v2
+            return jh_v2.V2Store(self.cache_dir, session=self._session, user_agent=self.user_agent).load()
+        except Exception:
+            return None
+
+    def update_v2(self, manual=False):
+        """V2 파일 갱신. 예외를 내지 않고 UpdateResult 를 돌려준다."""
+        try:
+            import jh_v2
+            return jh_v2.V2Store(self.cache_dir, session=self._session, clock=self.clock,
+                                 user_agent=self.user_agent).update(manual=manual)
+        except Exception as e:
+            return UpdateResult("offline", False, f"V2 갱신 예외: {type(e).__name__} {str(e)[:100]}")
+
     # 새 DB 사이트의 구조가 바뀌거나 내용이 크게 줄어든 응답이 정상 캐시를 덮어쓰지 않게 하는 안전장치
     _GUARD_KEYS = {"journey": ("events", "arcana"), "arcanas": ("arcanas", "potentials")}
     GUARD_MIN_RATIO = 0.5
@@ -265,7 +282,7 @@ def _fmt_num(n):
 class InfoIndex:
     """잠재력/여정 버프 이름 -> 설명 (arcanas.json)"""
 
-    def __init__(self, arcanas=None, lang="ko"):
+    def __init__(self, arcanas=None, lang="ko", v2=None):
         self.lang = lang if lang in SUPPORTED_LANGS else "ko"
         self.s = STR[self.lang]
         self.potentials, self.buffs = {}, {}
@@ -280,6 +297,13 @@ class InfoIndex:
                 desc = strip_tags(_loc(obj.get("description"), self.lang))
                 if name and desc:
                     self.by_name.setdefault(name, {"name": name, "desc": desc, "kind": kind})
+        if v2:                                  # V2 journey_buffs: 가이드에 없는 버프를 내장본보다 먼저 보충
+            try:
+                import jh_v2
+                for name, desc in jh_v2.buff_desc_map(v2, self.lang).items():
+                    self.by_name.setdefault(name, {"name": name, "desc": desc, "kind": self.s["buff"]})
+            except Exception:
+                pass
         try:                                    # 새 DB 에 없는 버프(예: 힘의 자양분)는 옛 DB 백업에서 추출한 설명으로 보충
             from jh_buffs import BUFF_DESC
             for name, desc in (BUFF_DESC.get(self.lang) or BUFF_DESC.get("ko") or {}).items():
@@ -615,9 +639,10 @@ def _merge_candidates(cands):
     return merged
 
 
-def build_event_cache(journey, arcanas=None, lang="ko"):
-    """journey.json (+ arcanas.json) -> db_event_cache 리스트."""
-    idx = InfoIndex(arcanas, lang)
+def build_event_cache(journey, arcanas=None, lang="ko", v2=None):
+    """journey.json (+ arcanas.json) -> db_event_cache 리스트. v2(선택): jh_v2.V2Store.load() 결과로,
+    가이드에 없는 제목 보충·버프 설명·아이템 설명에 쓴다(실패해도 가이드 결과는 그대로)."""
+    idx = InfoIndex(arcanas, lang, v2=v2)
     groups = OrderedDict()      # cleanTitle -> {'raw','arcana','cands':[(src, opts)]}
 
     def add(title, is_arcana, src, opts, aid=None):
@@ -655,7 +680,19 @@ def build_event_cache(journey, arcanas=None, lang="ko"):
             "arcanaIds": dict(g["ids"]),        # 출처(아르카나 이름) -> arcanaId (카드 식별용)
             "timing": "" if g["arcana"] else next((s for s, _ in g["cands"] if s), ""),
         })
+    if v2:
+        try:
+            import jh_v2
+            jh_v2.supplement_cache(cache, v2, lang)
+        except Exception:
+            pass
     link_items(cache)
+    if v2:
+        try:
+            import jh_v2
+            jh_v2.attach_item_desc(cache, v2, lang)
+        except Exception:
+            pass
     return cache
 
 
