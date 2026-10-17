@@ -82,6 +82,6 @@ python -m PyInstaller journey_helper.spec --noconfirm     # dist\JourneyHelperLi
 
 ## 크레딧 / 라이선스
 - 원작: [p1021/journeyhelper](https://github.com/p1021/journeyhelper) - 화면 영역 비율, 창 탐색, 오버레이/호버 방식, 제목 매칭 점수식 등의 아이디어와 일부 코드를 가져왔습니다. 원작 저장소에는 LICENSE 파일이 없으므로(2026-10 기준) 별도 라이선스를 부여하지 않으며, 원작자의 요청이 있으면 수정/삭제합니다.
-- 데이터: [starsavior-guide.github.io](https://starsavior-guide.github.io/data/) 의 공개 DB (`journey/<언어>/journey.json`, `arcanas/arcanas.json`). 데이터의 권리는 제공자/게임사에 있으며, 이 저장소는 DB 본체를 포함하지 않고 실행 시 내려받습니다(테스트용 축소 샘플만 `tests/fixtures`에 포함). 단, 새 DB에 없는 정보는 옛 DB(star-savior-arcana-db, 2026-10-15 백업)에서 추출해 코드에 내장했습니다: 여정 버프 효과 설명 `jh_buffs.py`, 턴별 일정 `jh_schedule.py`. 공개·배포 전에 제공자 허락 여부를 확인해야 합니다.
+- 데이터: [starsavior-guide.github.io](https://starsavior-guide.github.io/data/) 의 공개 DB (`journey/<언어>/journey.json`, `arcanas/arcanas.json`). 데이터의 권리는 제공자/게임사에 있으며, 이 저장소는 DB 본체를 포함하지 않고 실행 시 내려받습니다(테스트용 축소 샘플만 `tests/fixtures`에 포함). 단, 새 DB에 없는 정보는 옛 DB(star-savior-arcana-db, 2026-10-15 백업)에서 추출해 코드에 내장했습니다: 여정 버프 효과 설명 `jh_buffs.py`, 턴별 일정 `jh_schedule.py`.
 - OCR: [RapidOCR](https://github.com/RapidAI/RapidOCR) + [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) PP-OCRv4 한국어 인식 모델(`models/`, Apache-2.0).
 - PyQt5(GPL v3/상용), onnxruntime(MIT), OpenCV(Apache-2.0), mss(MIT), requests(Apache-2.0).
