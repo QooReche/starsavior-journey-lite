@@ -248,6 +248,35 @@ _TRANSLATIONS_EN = {
     "상단바 위치 초기화": "Reset top bar position",
     "현재 버전: {}": "Current version: {}",
     "JourneyHelper가 실행 중입니다 (우클릭: 메뉴)": "JourneyHelper is running (right-click for menu)",
+    "⚙️ 설정 열기": "⚙️ Open settings",
+    "설정": "Settings", "⚙ 설정": "⚙ Settings", "일반": "General", "게임 표시": "Game display", "고급·진단": "Advanced / Diagnostics",
+    "시작": "Startup", "시작할 때 상단바 상태": "Top bar state on startup",
+    "프로그램을 켰을 때 상단바를 접어 둘지 펼칠지 정해요.": "Choose whether the top bar starts collapsed or expanded.",
+    "언어": "Language", "표시 언어": "Display language",
+    "바꾸면 이벤트 데이터를 새 언어로 다시 불러오기 위해 재시작해야 해요.": "Changing it restarts the app to reload event data in the new language.",
+    "상단바": "Top bar", "끄면 상단바를 드래그해서 옮길 수 있어요.": "When off, you can drag the top bar to move it.",
+    "성능": "Performance", "저사양 모드 (OCR 주기 늘림)": "Low-spec mode (slower OCR polling)",
+    "화면을 읽는 주기를 늘려 CPU 사용량을 줄여요. 반응이 조금 느려질 수 있어요.": "Reads the screen less often to save CPU. Reaction may be slightly slower.",
+    "툴팁": "Tooltip", "왼쪽 툴팁 글자 크기": "Left tooltip font size",
+    "선택지에 마우스를 올렸을 때 나오는 툴팁의 글자 크기예요.": "Font size of the tooltip shown when hovering a choice.",
+    "툴팁에 잠재력·버프 효과 설명을 함께 보여줘요.": "Also shows potential/buff effect descriptions in the tooltip.",
+    "체크한 난이도의 수치는 툴팁에서 빼요.": "Checked difficulties are left out of the tooltip.",
+    "기능": "Features", "📅 일정 미리보기": "📅 Schedule preview",
+    "게임 좌측 상단 날짜에 마우스를 올리면 이번 턴 일정을 보여줘요.": "Hover the date at the top-left of the game to see this turn's schedule.",
+    "🃏 구원자 추천 아르카나": "🃏 Recommended arcana",
+    "아르카나 편성 화면에서 추천·대체 카드를 보여줘요.\n카드 고르기 화면에서는 자동으로 숨겨요.":
+        "Shows recommended/alternative cards on the arcana setup screen.\nAutomatically hidden on the card picker screen.",
+    "진단": "Diagnostics", "상단바/툴팁을 스크린샷에 보이게 하기": "Show top bar/tooltip in screenshots",
+    "스크린샷·녹화에 상단바와 툴팁이 찍혀요.": "The top bar and tooltip appear in screenshots and recordings.",
+    "⚠ 진단 전용이에요. 켜 두면 화면 인식(OCR)에 영향을 줄 수 있어요.": "⚠ Diagnostic use only. Leaving it on may affect screen recognition (OCR).",
+    "관리": "Maintenance", "DB 새로고침 (10분 쿨다운)": "Refresh DB (10 min cooldown)",
+    "가이드 사이트에서 최신 데이터를 다시 받아요.": "Downloads the latest data from the guide site.",
+    "인식 상태 초기화": "Reset recognition state",
+    "추적 중인 이벤트·선택 잠금을 비우고 화면을 다시 찾아요.": "Clears the tracked event/choice lock and searches the screen again.",
+    "문제 확인": "Troubleshooting", "로그 폴더 열기": "Open log folder", "진단 정보 복사": "Copy diagnostics", "복사됨": "Copied",
+    "버전·설정·게임 창·최근 로그를 클립보드에 복사해요. 사용자 이름과 경로는 가려져요.":
+        "Copies version, settings, game window and recent log to the clipboard. User name and paths are masked.",
+    "프로그램 종료": "Quit program", "닫기": "Close",
     "재시작 필요": "Restart Required",
     "언어를 바꾸면 여정 이벤트 데이터를 새 언어로 다시 불러와야 해요.\n지금 재시작할까요? (재시작 안 하면 일부 이벤트 인식이 이전 언어\n기준으로 남아있어 오작동할 수 있어요)":
         "Changing the language requires reloading Journey event data in the new language.\nRestart now? (If you don't, some event recognition may stay on the old language and misbehave)",
@@ -1644,7 +1673,7 @@ class MouseHoverManager(QWidget):
 
         self.status = StatusBadge(self.settings)
         self.status.on_menu = self.show_main_menu
-        self.status.on_settings = self.show_settings_menu
+        self.status.on_settings = self.open_settings
         self.tooltip = FixedLeftTooltip(self.settings["tooltip_font_scale"])
         self._apply_capture_visibility()
         self._build_tray()
@@ -2104,8 +2133,24 @@ class MouseHoverManager(QWidget):
         m.addAction(tr("🔄 DB 새로고침 (10분 쿨다운)"), self.refresh_db)
         m.addAction(tr("▶️ 헬퍼 재개") if self._hidden else tr("⏸️ 헬퍼 일시정지"), self._toggle_hidden)
         m.addSeparator()
+        m.addAction(tr("⚙️ 설정 열기"), self.open_settings)
         m.addAction(tr("🛑 프로그램 종료"), self.quit_app)
         return m
+
+    def open_settings(self, *_):
+        """설정창(단일 인스턴스, 항상 위). 이미 있으면 값을 새로 반영하고 앞으로 가져온다. 닫아도 앱은 유지."""
+        try:
+            dlg = getattr(self, "_settings_dlg", None)
+            if dlg is None:
+                import jh_settings_ui
+                dlg = self._settings_dlg = jh_settings_ui.SettingsDialog(self, sys.modules[__name__])
+            dlg.refresh()
+            dlg.show()
+            dlg.raise_()
+            dlg.activateWindow()
+            exclude_from_capture(dlg, not self.settings.get("show_capture_debug", False))
+        except Exception as e:
+            log(f"[설정창 열기 실패] {type(e).__name__}: {e}")
 
     def build_settings_menu(self):
         m = QMenu()
@@ -2173,13 +2218,10 @@ class MouseHoverManager(QWidget):
     def _refresh_tray_menu(self):
         m = self._tray_menu
         m.clear()
-        main, settings = self.build_main_menu(), self.build_settings_menu()
-        self._tray_keep = [main, settings]            # 액션의 소유자(메뉴)를 살려 둬야 한다 (GC 되면 크래시)
+        main = self.build_main_menu()                 # 메인 항목 + '설정 열기' + 종료 (서브메뉴 없음)
+        self._tray_keep = [main]                      # 액션의 소유자(메뉴)를 살려 둬야 한다 (GC 되면 크래시)
         for a in main.actions():
             m.addAction(a)
-        sub = m.addMenu(tr("⚙️ 설정"))
-        for a in settings.actions():
-            sub.addAction(a)
 
     def set_scale(self, v):
         self.set_value("tooltip_font_scale", v)
