@@ -39,6 +39,7 @@ class FakeHost:
         self.set_value("tooltip_font_scale", v)
 
     def reset_badge_pos(self): pass
+    def pending_update(self): return None
     def refresh_db(self): pass
     def manual_reset(self): pass
     def quit_app(self): pass
@@ -171,3 +172,66 @@ def test_open_log_dir_uses_new_log_dir(app, monkeypatch):
     monkeypatch.setattr(os, "startfile", lambda p: opened.append(p), raising=False)
     ui.SettingsDialog(FakeHost(), jhm)._open_log_dir()
     assert opened == [jh_paths.log_dir()] and opened[0].endswith("log")
+
+
+# ---- 새 버전 알림 UI ----
+def _upd_host(latest="9.9.99.999999", dismissed=""):
+    import jh_update
+    h = FakeHost()
+    h.settings["dismissed_update_version"] = dismissed
+    h.update_checker = type("C", (), {"latest": latest, "summary": lambda self: "x"})()
+    h.pending_update = lambda: jh_update.visible_update(h.update_checker.latest, jhm.APP_VERSION, h.settings["dismissed_update_version"])
+    h.opened = []
+    h.open_release_page = lambda v=None: h.opened.append(v)
+
+    def dismiss():
+        h.settings["dismissed_update_version"] = h.update_checker.latest
+    h.dismiss_update = dismiss
+    h.pending_cb = None
+    h.check_update_now = lambda cb: setattr(h, "pending_cb", cb)
+    return h
+
+
+def test_update_banner_and_dismiss(app):
+    h = _upd_host()
+    d = ui.SettingsDialog(h, jhm)
+    assert not d.banner.isHidden()
+    assert "9.9.99.999999" in d.banner_text.text()
+    d._dismiss_update()
+    assert d.banner.isHidden() and h.settings["dismissed_update_version"] == "9.9.99.999999"
+    assert ui.SettingsDialog(_upd_host(dismissed="9.9.99.999999"), jhm).banner.isHidden()
+    assert ui.SettingsDialog(_upd_host(latest=jhm.APP_VERSION), jhm).banner.isHidden()
+
+
+def test_check_updates_toggle_saves(app):
+    h = _upd_host()
+    d = ui.SettingsDialog(h, jhm)
+    assert d.chk_upd.isChecked()
+    d.chk_upd.setChecked(False)
+    assert h.settings["check_updates"] is False
+
+
+def test_manual_check_results(app):
+    import jh_update
+    R = jh_update.UpdateResult
+    h = _upd_host(latest=None)
+    d = ui.SettingsDialog(h, jhm)
+    d._check_now()
+    assert not d.btn_check.isEnabled() and h.pending_cb is not None
+    d._on_check_done(R("updated", jhm.APP_VERSION, "", 0))
+    assert d.btn_check.isEnabled() and "최신 버전입니다" in d.lbl_check.text() and d.btn_get.isHidden()
+    d._on_check_done(R("updated", "9.9.99.999999", "", 0))
+    assert "새 버전 9.9.99.999999" in d.lbl_check.text() and not d.btn_get.isHidden()
+    d._on_check_done(R("error", None, "x", 0))
+    assert "확인하지 못했어요" in d.lbl_check.text() and d.btn_get.isHidden()
+    d._on_check_done(R("cooldown", None, "x", 301))
+    assert "6분 뒤에" in d.lbl_check.text()
+
+
+def test_manual_check_shows_dismissed_version(app):
+    import jh_update
+    h = _upd_host(latest="9.9.99.999999", dismissed="9.9.99.999999")
+    d = ui.SettingsDialog(h, jhm)
+    assert d.banner.isHidden()
+    d._on_check_done(jh_update.UpdateResult("updated", "9.9.99.999999", "", 0))
+    assert not d.btn_get.isHidden() and "새 버전" in d.lbl_check.text()

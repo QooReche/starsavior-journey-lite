@@ -169,7 +169,9 @@ def test_circuit_breaker_opens_after_3_and_resumes(tmp_path):
     st = card_store(tmp_path, clk, on_event=events.append)
     for aid in (1, 2, 3):
         assert st.get_image(aid) is None
-    assert st.calls == 3 and len(events) == 1 and "5분" in events[0]
+    net = [e for e in events if e.startswith("[네트워크]")]
+    assert st.calls == 3 and len(net) == 1 and "5분" in net[0]
+    assert len([e for e in events if "카드 이미지 실패" in e]) == 3        # 카드별 최초 실패 원인 로그
     assert st.get_image(4) is None and st.calls == 3         # 열림: 요청 없음
     clk.t += 301
     assert st.get_image(5) is None and st.calls == 4         # 재개 후 첫 시도 실패 -> 더 길게(15분) 다시 열림

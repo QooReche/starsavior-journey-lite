@@ -193,13 +193,14 @@ def test_version_format_and_single_source():
 
 def test_stamp_version_on_copy(tmp_path):
     import stamp_version
+    import jh_version
     cp = tmp_path / "jh_version.py"
     shutil.copy(os.path.join(os.path.dirname(__file__), "..", "jh_version.py"), cp)
-    assert stamp_version.stamp(str(cp), "270102") == "1.0.01.270102"
+    assert stamp_version.stamp(str(cp), "270102") == f"{jh_version.BASE_VERSION}.270102"
     assert 'BUILD_DATE = "270102"' in cp.read_text(encoding="utf-8")
     r = subprocess.run([sys.executable, "-X", "utf8", STAMP, "--file", str(cp), "--date", "261017"], capture_output=True, text=True)
-    assert r.stdout.strip() == "1.0.01.261017"
+    assert r.stdout.strip() == f"{jh_version.BASE_VERSION}.261017"
     today = subprocess.run([sys.executable, "-X", "utf8", STAMP, "--file", str(cp)], capture_output=True, text=True).stdout.strip()
-    assert re.fullmatch(r"1\.0\.01\.\d{6}", today)
+    assert re.fullmatch(re.escape(jh_version.BASE_VERSION) + r"\.\d{6}", today)
     with pytest.raises(ValueError):
         stamp_version.stamp(str(cp), "2610")

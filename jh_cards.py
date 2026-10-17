@@ -11,10 +11,14 @@
 """
 from __future__ import annotations
 
+import http.client
 import os
+import re
+import socket
 import tempfile
 import threading
 import time
+import urllib.error
 import urllib.request
 
 import cv2
@@ -52,6 +56,40 @@ LAST_SCORES = {}      # 마지막 identify 의 후보별 점수 (로그/진단�
 
 FAIL_RETRY_SEC = 20.0  # 참조 이미지 다운로드가 실패한 id 는 이 시간 동안 다시 시도하지 않음
 _REF_W = 176          # 캐시에 저장하는 참조 이미지 폭
+MISSING_RETRY_SEC = 6 * 3600   # 404/410(이미지 없음)·디코딩/저장 실패 카드는 이 시간 동안 다시 받지 않음(서킷과 무관한 카드별 음성 캐시)
+
+
+class LocalImageError(Exception):
+    """받은 데이터를 해석/저장하지 못함(네트워크 오류가 아님)"""
+
+
+def classify_error(e):
+    """-> 'network' | 'missing'. 서킷브레이커는 'network'(타임아웃·연결/DNS 오류·5xx·429)만 센다.
+    404/410 등 4xx(이미지가 없음)와 디코딩/저장 실패는 해당 카드만 'missing' 처리한다."""
+    if isinstance(e, urllib.error.HTTPError):
+        return "network" if (e.code >= 500 or e.code == 429 or e.code == 408) else "missing"
+    if isinstance(e, LocalImageError):
+        return "missing"
+    if isinstance(e, (urllib.error.URLError, socket.timeout, TimeoutError, ConnectionError, http.client.HTTPException)):
+        return "network"
+    if isinstance(e, OSError):
+        return "network"           # 그 밖의 소켓/SSL 계열 OSError
+    return "missing"
+
+
+def describe_error(e, limit=80):
+    """로그용 짧은 설명: 예외 종류 + 메시지 (경로·사용자 이름 제외)"""
+    code = f" HTTP {e.code}" if isinstance(e, urllib.error.HTTPError) else ""
+    msg = str(getattr(e, "reason", None) or e) if not code else ""
+    msg = re.sub(r"[A-Za-z]:[\\/][^\s'\"]*", "<경로>", msg)
+    try:
+        home = os.path.expanduser("~")
+        if home and home != "~":
+            msg = msg.replace(home, "<경로>")
+    except Exception:
+        pass
+    msg = " ".join(msg.split())[:limit]
+    return f"{type(e).__name__}{code}" + (f": {msg}" if msg else "")
 
 
 # ---------------------------------------------------------------- 영역 자르기
@@ -140,6 +178,8 @@ class CardStore:
         self.on_event = on_event or (lambda msg: None)       # 상태 전환 로그용 콜백
         self._desc = {}
         self._fail = {}                 # aid -> 실패 시각: 잠시 재다운로드를 쉰다 (음성 캐시)
+        self._missing = {}              # aid -> 시각: 404/디코딩 실패 등 카드별 장기 음성 캐시(서킷에 넣지 않음)
+        self._logged = set()            # 실패 원인을 이미 로그에 남긴 카드(반복 로그 방지)
         self._lock = threading.Lock()
 
     def _path(self, aid):
@@ -159,21 +199,29 @@ class CardStore:
                 if time.monotonic() - t0 > self.total_timeout:
                     raise TimeoutError("image download too slow")
         data = b"".join(chunks)
-        img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
-        if img is None:  # opencv webp 미지원 빌드 대비
-            from PIL import Image
-            import io
-            pil = Image.open(io.BytesIO(data)).convert("RGB")
-            img = cv2.cvtColor(np.asarray(pil), cv2.COLOR_RGB2BGR)
-        h, w = img.shape[:2]
-        img = cv2.resize(img, (_REF_W, max(1, int(h * _REF_W / w))), interpolation=cv2.INTER_AREA)
-        os.makedirs(self.cache_dir, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(suffix=".tmp.png", prefix=f"{int(aid)}.", dir=self.cache_dir)   # 스레드마다 고유 (경합 방지)
-        os.close(fd)
+        try:
+            img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+            if img is None:  # opencv webp 미지원 빌드 대비
+                from PIL import Image
+                import io
+                pil = Image.open(io.BytesIO(data)).convert("RGB")
+                img = cv2.cvtColor(np.asarray(pil), cv2.COLOR_RGB2BGR)
+            h, w = img.shape[:2]
+            img = cv2.resize(img, (_REF_W, max(1, int(h * _REF_W / w))), interpolation=cv2.INTER_AREA)
+        except Exception as e:
+            raise LocalImageError(f"decode failed ({type(e).__name__})") from e
+        try:
+            os.makedirs(self.cache_dir, exist_ok=True)
+            fd, tmp = tempfile.mkstemp(suffix=".tmp.png", prefix=f"{int(aid)}.", dir=self.cache_dir)   # 스레드마다 고유 (경합 방지)
+            os.close(fd)
+        except Exception as e:
+            raise LocalImageError(f"save failed ({type(e).__name__})") from e
         try:
             if not cv2.imwrite(tmp, img):
-                raise OSError("imwrite failed")
+                raise LocalImageError("imwrite failed")
             os.replace(tmp, self._path(aid))
+        except OSError as e:
+            raise LocalImageError(f"save failed ({type(e).__name__})") from e
         finally:
             if os.path.exists(tmp):
                 try:
@@ -182,6 +230,10 @@ class CardStore:
                     pass
         time.sleep(self.sleep)
         return img
+
+    def is_missing(self, aid):
+        """404/디코딩 실패 등으로 장기 음성 캐시 중인가 (재시도해도 소용없음)"""
+        return time.monotonic() - self._missing.get(aid, -1e9) < MISSING_RETRY_SEC
 
     def get_image(self, aid):
         """캐시된 참조 이미지(BGR) 또는 None. 캐시에 없으면 다운로드(허용 시)."""
@@ -192,6 +244,8 @@ class CardStore:
         if not self.download:
             return None
         if time.monotonic() - self._fail.get(aid, -1e9) < FAIL_RETRY_SEC:
+            return None
+        if time.monotonic() - self._missing.get(aid, -1e9) < MISSING_RETRY_SEC:
             return None
         now = self.clock()
         if not self.breaker.allow(now):          # 사이트 응답 없음: 서킷이 열려 있는 동안 시도하지 않음
@@ -205,8 +259,14 @@ class CardStore:
             img = self._fetch(aid)
             self.breaker.success()
             return img
-        except Exception:
+        except Exception as e:
             self._fail[aid] = time.monotonic()
+            if aid not in self._logged:                    # 카드별 최초 실패만 원인을 남긴다
+                self._logged.add(aid)
+                self.on_event(f"[카드 이미지 실패] id={aid} {describe_error(e)}")
+            if classify_error(e) == "missing":             # 이 카드만 장기 음성 캐시, 서킷/연속 실패 집계에는 넣지 않음
+                self._missing[aid] = time.monotonic()
+                return None
             if self.breaker.failure(now):
                 st = self.breaker.state(now)
                 self.on_event(f"[네트워크] 이미지 서버 연속 실패 -> {st['minutes']}분간 시도 중단")

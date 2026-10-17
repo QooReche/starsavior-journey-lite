@@ -44,6 +44,8 @@ QPushButton:hover { background: #242d42; border-color: #00e5ff; }
 QPushButton:pressed { background: #0d1119; }
 QPushButton#quit { background: #4a1b22; border-color: #8a2d3a; color: #ffd6da; font-weight: bold; }
 QPushButton#quit:hover { background: #6a2530; border-color: #ff5c6c; }
+QFrame#banner { background: #2b2540; border: 1px solid #a29bfe; border-radius: 6px; }
+QLabel#bannerText { color: #e6e1ff; font-weight: bold; }
 QFrame#sep { background: #232a3b; max-height: 1px; border: none; }
 """
 
@@ -121,6 +123,10 @@ def build_diagnostics(host, jhm, now=None):
     except Exception as e:
         L.append(f"savior reco: error {type(e).__name__}")
     try:
+        L.append(host.update_checker.summary())
+    except Exception as e:
+        L.append(f"업데이트 확인: error {type(e).__name__}")
+    try:
         L.append(jh_paths.usage_summary())
     except Exception as e:
         L.append(f"data location: error {type(e).__name__}")
@@ -151,6 +157,7 @@ class SettingsDialog(QDialog):
         title = QLabel(self.tr_("⚙ 설정"))
         title.setObjectName("title")
         root.addWidget(title)
+        self._build_update_banner(root)
         self.tabs = QTabWidget()
         root.addWidget(self.tabs, 1)
         self.tabs.addTab(self._scroll(self._build_general), self.tr_("일반"))
@@ -171,6 +178,67 @@ class SettingsDialog(QDialog):
         row.addWidget(close_btn)
         root.addLayout(row)
         self.refresh()
+
+    # ---- 새 버전 안내 (맨 위 한 줄) ----
+    def _build_update_banner(self, root):
+        t = self.tr_
+        self.banner = QFrame()
+        self.banner.setObjectName("banner")
+        row = QHBoxLayout(self.banner)
+        row.setContentsMargins(10, 6, 10, 6)
+        row.setSpacing(6)
+        self.banner_text = QLabel("")
+        self.banner_text.setObjectName("bannerText")
+        self.banner_text.setWordWrap(True)
+        b1 = QPushButton(t("받으러 가기"))
+        b1.clicked.connect(lambda _=False: self.host.open_release_page())
+        b2 = QPushButton(t("이 버전은 알리지 않음"))
+        b2.clicked.connect(lambda _=False: self._dismiss_update())
+        row.addWidget(self.banner_text, 1)
+        row.addWidget(b1)
+        row.addWidget(b2)
+        self.banner.hide()
+        root.addWidget(self.banner)
+
+    def _update_banner(self):
+        try:
+            ver = self.host.pending_update()
+        except Exception:
+            ver = None
+        if ver:
+            self.banner_text.setText("🔔 " + self.tr_("새 버전 {} 있음").format(ver))
+        self.banner.setVisible(bool(ver))
+
+    def _dismiss_update(self):
+        self.host.dismiss_update()
+        self._update_banner()
+        self.btn_get.hide()
+
+    def _check_now(self):
+        t = self.tr_
+        self.btn_check.setEnabled(False)
+        self.lbl_check.setText(t("확인 중..."))
+        self.btn_get.hide()
+        self.host.check_update_now(self._on_check_done)
+
+    def _on_check_done(self, res):
+        t = self.tr_
+        self.btn_check.setEnabled(True)
+        self.btn_get.hide()
+        status = getattr(res, "status", "error")
+        latest = getattr(res, "latest", None)
+        if status == "cooldown":
+            self.lbl_check.setText(t("{}분 뒤에 다시 확인할 수 있어요").format(max(1, -(-int(getattr(res, "remain", 0)) // 60))))
+        elif status in ("updated", "cached") and latest:
+            from jh_update import is_newer       # (수동 확인은 '알리지 않음' 으로 숨긴 버전도 다시 보여 준다)
+            if is_newer(latest, self.jhm.APP_VERSION):
+                self.lbl_check.setText(t("새 버전 {} 있음").format(latest))
+                self.btn_get.show()
+            else:
+                self.lbl_check.setText(t("최신 버전입니다 (현재 {})").format(self.jhm.APP_VERSION))
+        else:
+            self.lbl_check.setText(t("확인하지 못했어요. 잠시 뒤 다시 시도해 주세요"))
+        self._update_banner()
 
     # ---- 빌더 보조 ----
     def _scroll(self, builder):
@@ -238,6 +306,14 @@ class SettingsDialog(QDialog):
         self.cb_start.currentIndexChanged.connect(
             lambda _i: None if self._loading else self.host.set_value("startup_state", self.cb_start.currentData()))
         self._desc(lay, t("프로그램을 켰을 때 상단바를 접어 둘지 펼칠지 정해요."))
+
+        self._section(lay, "🔔", t("새 버전 알림"), "#a29bfe")
+        self.chk_upd = self._check(lay, t("새 버전 확인"), "check_updates",
+                                   t("시작할 때 GitHub 에서 최신 버전 번호만 확인해요. 개인 정보는 보내지 않아요. 자동으로 내려받거나 바꾸지는 않아요."))
+        self.btn_check = self._button(lay, t("🔔 지금 업데이트 확인"), self._check_now)
+        self.lbl_check = self._desc(lay, "", plain=True)
+        self.btn_get = self._button(lay, t("받으러 가기"), lambda: self.host.open_release_page(self.host.update_checker.latest))
+        self.btn_get.hide()
 
         self._section(lay, "🌐", t("언어"), "#4dabf7")
         self.cb_lang = self._combo_row(lay, t("표시 언어"))
@@ -323,7 +399,7 @@ class SettingsDialog(QDialog):
             self.cb_start.setCurrentIndex(max(0, self.cb_start.findData(s.get("startup_state"))))
             self.cb_lang.setCurrentIndex(max(0, self.cb_lang.findData(self.host.lang)))
             self.cb_scale.setCurrentIndex(max(0, self.cb_scale.findData(self.jhm.snap_font_scale(s.get("tooltip_font_scale")))))
-            for cb, key in ((self.chk_lock, "status_badge_locked"), (self.chk_low, "low_spec_mode"), (self.chk_info, "show_info"),
+            for cb, key in ((self.chk_lock, "status_badge_locked"), (self.chk_low, "low_spec_mode"), (self.chk_upd, "check_updates"), (self.chk_info, "show_info"),
                             (self.chk_sched, "show_schedule"), (self.chk_reco, "show_savior_reco"), (self.chk_cap, "show_capture_debug")):
                 cb.setChecked(bool(s.get(key)))
             hidden = set(s.get("hidden_difficulties") or [])
@@ -333,6 +409,7 @@ class SettingsDialog(QDialog):
             self._loading = False
         self._update_pause_text()
         self._update_usage()
+        self._update_banner()
 
     def _update_pause_text(self):
         self.btn_pause.setText(self.tr_("▶️ 헬퍼 재개") if self.host._hidden else self.tr_("⏸️ 헬퍼 일시정지"))

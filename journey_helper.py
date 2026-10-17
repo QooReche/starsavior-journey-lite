@@ -37,11 +37,12 @@ import jh_net
 import jh_paths
 import jh_savior
 import jh_schedule
+import jh_update
 
 try:
     import mss
-    from PyQt5.QtCore import Qt, QThread, QTimer, pyqtSignal
-    from PyQt5.QtGui import QBrush, QColor, QCursor, QIcon, QPainter, QPixmap
+    from PyQt5.QtCore import Qt, QThread, QTimer, QUrl, pyqtSignal
+    from PyQt5.QtGui import QBrush, QColor, QCursor, QDesktopServices, QIcon, QPainter, QPixmap
     from PyQt5.QtWidgets import (QAction, QActionGroup, QApplication, QLabel, QMenu, QMessageBox, QSystemTrayIcon,
                                  QVBoxLayout, QWidget)
 except ImportError:  # --selftest 는 GUI 없이도 돌 수 있게
@@ -65,6 +66,8 @@ DEFAULT_SETTINGS = {
     "hidden_difficulties": [],      # 툴팁에서 숨길 난이도 ["easy","normal","hard"] 부분집합 (원작 1.1.3 과 같은 키)
     "show_schedule": True,          # 좌측 상단 날짜 위젯에 마우스를 올리면 턴별 고정 일정 표시
     "show_savior_reco": True,       # '여정 시작' 화면에서 구원자 식별 동안 계속 추천 아르카나(썸네일 포함) 표시
+    "check_updates": True,          # 시작할 때 GitHub 에서 최신 버전 번호만 확인(새 버전 알림). 개인 정보는 보내지 않음
+    "dismissed_update_version": "",  # '이 버전은 알리지 않음'으로 숨긴 버전 (그 이하는 알리지 않음)
     "show_capture_debug": False,    # True: 상단바/툴팁이 스크린샷에도 보이게 함 (진단용, OCR 방해 가능)
 }
 
@@ -151,6 +154,8 @@ def load_settings():
         hidden = jh_db.hidden_set(settings["difficulty"])
     settings["hidden_difficulties"] = sorted(jh_db.hidden_set(hidden if isinstance(hidden, (list, tuple, set)) else []),
                                              key=jh_db.DIFFICULTIES.index)
+    if not isinstance(settings.get("dismissed_update_version"), str) or             jh_update.parse_version(settings["dismissed_update_version"]) is None:
+        settings["dismissed_update_version"] = ""
     settings["tooltip_font_scale"] = snap_font_scale(settings.get("tooltip_font_scale", 1.0))
     if settings.get("startup_state") not in ("collapsed", "expanded"):
         settings["startup_state"] = "collapsed"
@@ -238,6 +243,20 @@ _TRANSLATIONS_EN = {
     "🃏 [구원자 인식] {}": "🃏 [Savior] {}",
     "상단바 위치 초기화": "Reset top bar position",
     "현재 버전: {}": "Current version: {}",
+    "🔔 새 버전 {} 있음 (메뉴에서 받으러 가기)": "🔔 New version {} available (get it from the menu)",
+    "🔔 새 버전 {} 받으러 가기": "🔔 Get new version {}",
+    "새 버전 알림": "Update notice",
+    "새 버전 확인": "Check for new versions",
+    "시작할 때 GitHub 에서 최신 버전 번호만 확인해요. 개인 정보는 보내지 않아요. 자동으로 내려받거나 바꾸지는 않아요.":
+        "Checks only the latest version number on GitHub at startup. No personal data is sent. Nothing is downloaded or replaced automatically.",
+    "🔔 지금 업데이트 확인": "🔔 Check for updates now",
+    "확인 중...": "Checking...",
+    "최신 버전입니다 (현재 {})": "You are up to date (current {})",
+    "새 버전 {} 있음": "New version {} available",
+    "확인하지 못했어요. 잠시 뒤 다시 시도해 주세요": "Could not check. Please try again later",
+    "{}분 뒤에 다시 확인할 수 있어요": "You can check again in {} min",
+    "받으러 가기": "Get it",
+    "이 버전은 알리지 않음": "Don't notify for this version",
     "JourneyHelper가 실행 중입니다 (우클릭: 메뉴)": "JourneyHelper is running (right-click for menu)",
     "⚙️ 설정 열기": "⚙️ Open settings",
     "설정": "Settings", "⚙ 설정": "⚙ Settings", "일반": "General", "게임 표시": "Game display", "고급·진단": "Advanced / Diagnostics",
@@ -1238,20 +1257,28 @@ class ThumbThread(QThread):
         try:
             store = jh_cards.default_store()
             store.on_event = log
-            fails = 0
             for aid in self.ids:
                 if jh_cards.cached_path(aid):
                     continue
-                if store.get_image(aid) is None:
-                    fails += 1
-                    if fails >= jh_net.BREAKER_THRESHOLD or not store.breaker.allow(store.clock()):
-                        log("[구원자] 썸네일 다운로드 연속 실패, 일괄 다운로드 중단")
-                        break
-                else:
-                    fails = 0
+                if store.get_image(aid) is None and not store.breaker.allow(store.clock()):
+                    log("[구원자] 썸네일 다운로드 연속 실패, 일괄 다운로드 중단 (서킷이 풀리면 자동 재시도)")
+                    break
         except Exception as e:
             log(f"[구원자] 썸네일 다운로드 예외 {e}")
         self.done.emit()
+
+
+class UpdateThread(QThread):
+    """새 버전 번호 확인(HEAD 1회). UI 를 막지 않게 백그라운드에서 돈다. 예외를 밖으로 내지 않는다."""
+    finished_ok = pyqtSignal(object, bool)          # UpdateResult, manual
+
+    def __init__(self, checker, enabled, manual=False):
+        super().__init__()
+        self.checker, self.enabled, self.manual = checker, enabled, manual
+
+    def run(self):
+        res = self.checker.check(enabled=self.enabled, manual=self.manual)
+        self.finished_ok.emit(res, self.manual)
 
 
 # ----------------------------------------------------------------------------
@@ -1659,6 +1686,10 @@ class MouseHoverManager(QWidget):
         self.db_event_cache = []
         self.store = jh_db.DbStore(lang=self.lang,
                                    user_agent=f"{APP_NAME}/{APP_VERSION} (+https://github.com/QooReche/starsavior-journey-lite)")
+        self.update_checker = jh_update.UpdateChecker(
+            user_agent=f"{APP_NAME}/{APP_VERSION}")
+        self._update_threads = []
+        self._update_notified = False       # 상단바 알림은 앱 실행당 최대 1회
         self._hidden = False
         self._loading_screen = False
         self._load_hits = self._load_miss = 0
@@ -1675,7 +1706,9 @@ class MouseHoverManager(QWidget):
         self.arcana_screen = False          # '아르카나 편성 화면'일 때만 추천 툴팁을 띄운다 (구원자 고르기/인자작 화면 제외)
         self.savior_matches = None          # '여정 시작' 화면에서 식별한 구원자(들) (jh_savior)
         self._thumb_threads = []
-        self._thumb_tried = set()
+        self._thumb_done = set()            # 모든 썸네일이 캐시된 구원자 키
+        self._thumb_last = {}               # 구원자 키 -> 마지막 다운로드 시도 시각(monotonic)
+        self._thumb_clock = time.monotonic
         self.schedule_row = None            # 좌측 상단 날짜로 인식한 현재 턴의 일정 항목 (jh_schedule)
         self._transition_sct = None
         self._transition_timer = None
@@ -1714,6 +1747,7 @@ class MouseHoverManager(QWidget):
 
         self.status.set_status(tr("🟡 [DB 불러오는 중] 이벤트 데이터를 가져오는 중..."), "#ffcc00")
         self.start_db(manual=False)
+        self.start_update_check()
 
     # --- 상태 ---
     def reset_event_state(self, keep_journey=False):
@@ -1869,6 +1903,58 @@ class MouseHoverManager(QWidget):
     def refresh_db(self):
         self.start_db(manual=True)
 
+    # --- 새 버전 알림 ---
+    def pending_update(self):
+        """알려 줄 새 버전 문자열 (없거나 '알리지 않음' 처리된 버전이면 None)"""
+        return jh_update.visible_update(self.update_checker.latest, APP_VERSION,
+                                        self.settings.get("dismissed_update_version", ""))
+
+    def start_update_check(self, manual=False, callback=None):
+        """시작 시 1회(자동) 또는 설정창의 수동 확인. callback(result) 는 GUI 스레드에서 호출된다."""
+        if not manual and not self.settings.get("check_updates", True):
+            return
+        t = UpdateThread(self.update_checker, bool(self.settings.get("check_updates", True)), manual=manual)
+        t.finished_ok.connect(lambda res, man, cb=callback: self.on_update_checked(res, man, cb))
+        self._update_threads = [x for x in self._update_threads if x.isRunning()] + [t]
+        t.start()
+
+    def check_update_now(self, callback):
+        self.start_update_check(manual=True, callback=callback)
+
+    def on_update_checked(self, res, manual, callback=None):
+        try:
+            if res.status in ("error", "backoff", "capped"):
+                log(f"[업데이트 확인] {res.status}: {res.message}")
+            ver = self.pending_update()
+            if ver and not manual and not self._update_notified:
+                self._update_notified = True
+                QTimer.singleShot(5000, lambda v=ver: self._show_update_notice(v))
+        except Exception as e:
+            log(f"[업데이트 확인 처리 예외] {e}")
+        if callback:
+            try:
+                callback(res)
+            except Exception as e:
+                log(f"[업데이트 확인 콜백 예외] {e}")
+
+    def _show_update_notice(self, ver):
+        if self.pending_update() != ver:
+            return
+        self.status.set_status(tr("🔔 새 버전 {} 있음 (메뉴에서 받으러 가기)").format(ver), "#ffcc00", protect_sec=6, flash=True)
+        QTimer.singleShot(6300, lambda: self.status.set_status(self._journey_text() if self.in_journey else self._idle_text(), "#888888"))
+
+    def open_release_page(self, version=None):
+        v = version or self.update_checker.latest
+        try:
+            QDesktopServices.openUrl(QUrl(jh_update.release_url(v)))
+        except Exception as e:
+            log(f"[릴리즈 페이지 열기 실패] {e}")
+
+    def dismiss_update(self):
+        v = self.update_checker.latest
+        if jh_update.parse_version(v) is not None:
+            self.set_value("dismissed_update_version", v)
+
     # --- 워처 콜백 ---
     def on_date_changed(self, row):
         self.schedule_row = row
@@ -1894,14 +1980,41 @@ class MouseHoverManager(QWidget):
         m = self.savior_matches
         label = " / ".join(f"{x['name']}({x['subtitle']})" for x in m)
         self.status.set_status(tr("🃏 [구원자 인식] {}").format(label), "#00aaff", flash=True)
-        ids = [i for s in m for i in jh_savior.thumb_ids(s)]
-        key = jh_savior.savior_key(m)
-        if ids and key not in self._thumb_tried:
-            self._thumb_tried.add(key)
+        self.retry_thumbs()
+
+    THUMB_RETRY_SEC = 30.0
+
+    def retry_thumbs(self):
+        """식별된 구원자의 미캐시 썸네일이 있으면 ThumbThread 를 (재)시작한다. 최소 30초 간격, 서킷이 열려 있으면 쉰다.
+        모두 캐시되면 완료로 기록하고 더 이상 시도하지 않는다. 실패했으면 다음 호출(툴팁 표시 중 주기적)에 다시 시도한다."""
+        try:
+            m = self.savior_matches
+            if not m:
+                return
+            key = jh_savior.savior_key(m)
+            if key in self._thumb_done:
+                return
+            ids = [i for s in m for i in jh_savior.thumb_ids(s)]
+            todo = [i for i in dict.fromkeys(ids) if not jh_cards.cached_path(i)]
+            if not todo:
+                self._thumb_done.add(key)
+                return
+            if all(jh_cards.default_store().is_missing(i) for i in todo):
+                return                                  # 전부 '이미지 없음'(404 등)으로 장기 음성 캐시 중: 요청할 것이 없음
+            if any(x.isRunning() for x in self._thumb_threads):
+                return
+            now = self._thumb_clock()
+            if now - self._thumb_last.get(key, -1e9) < self.THUMB_RETRY_SEC:
+                return
+            store = jh_cards.default_store()
+            if not store.breaker.allow(store.clock()):
+                return
+            self._thumb_last[key] = now
             t = ThumbThread(ids)
-            t.done.connect(lambda: None)         # 다운로드가 끝나면(또는 하나 받을 때마다) 다음 호버 때 HTML 이 달라져 자동 반영된다
             self._thumb_threads = [x for x in self._thumb_threads if x.isRunning()] + [t]
             t.start()
+        except Exception as e:
+            log(f"[구원자] 썸네일 재시도 예외 {type(e).__name__}: {e}")
 
     @staticmethod
     def _thumb_path(aid):
@@ -1934,6 +2047,9 @@ class MouseHoverManager(QWidget):
         if not (self.savior_matches and rect and self.settings.get("show_savior_reco", True)) or self.in_journey or not self.arcana_screen:
             return None
         m = self.savior_matches
+        rt = getattr(self, "retry_thumbs", None)
+        if rt:
+            rt()                                                   # 미캐시 썸네일 재시도(30초 간격, 서킷 규칙 준수)
         wide = jh_savior.wide_mode(m)
         scale, width_px, cw = jh_savior.tooltip_geometry(rect, self.settings["tooltip_font_scale"], wide)   # 창 크기 비례 배율 k 반영
         fn = lambda d=0: jh_savior.format_html(m, scale, self._thumb_path, d, cw)
@@ -2140,6 +2256,10 @@ class MouseHoverManager(QWidget):
 
     def build_main_menu(self):
         m = QMenu()
+        upd = self.pending_update()
+        if upd:
+            m.addAction(tr("🔔 새 버전 {} 받으러 가기").format(upd), self.open_release_page)
+            m.addSeparator()
         m.addAction(tr("🔼 상단바 펼치기") if self.status.collapsed else tr("🔽 상단바 접기"), self._toggle_collapsed)
         m.addAction(tr("🎯 인식 상태 초기화"), self.manual_reset)
         m.addAction(tr("🔄 DB 새로고침 (10분 쿨다운)"), self.refresh_db)
@@ -2278,7 +2398,7 @@ class MouseHoverManager(QWidget):
 
     def quit_app(self):
         self.watcher.stop()
-        threads = [self.watcher] + list(self._db_threads) + list(self._card_threads) + list(self._thumb_threads)
+        threads = [self.watcher] + list(self._db_threads) + list(self._update_threads) + list(self._card_threads) + list(self._thumb_threads)
         self.stuck_threads = join_threads(threads, 3000)
         if self.stuck_threads:
             log(f"[종료] {len(self.stuck_threads)}개 스레드가 시간 안에 끝나지 않음 -> 프로세스 종료로 정리")
