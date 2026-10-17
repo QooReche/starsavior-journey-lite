@@ -167,6 +167,15 @@ def cache_dir():
     return ensure_dir(os.path.join(data_dir(), "cache"))
 
 
+def seed_dir():
+    """번들 DB 시드 폴더(읽기 전용, assets/seed). 환경변수 JH_SEED_DIR 가 있으면 그것(테스트용). 없으면 None 가능."""
+    env = os.environ.get("JH_SEED_DIR")
+    if env is not None:
+        return env or None
+    base = getattr(sys, "_MEIPASS", None) or os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base, "assets", "seed")
+
+
 def log_path():
     return os.environ.get("JH_LOG_PATH") or os.path.join(log_dir(), "log.txt")
 

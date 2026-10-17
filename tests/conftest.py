@@ -16,6 +16,9 @@ def _isolated_app_dir(tmp_path_factory, monkeypatch):
     import jh_paths
     monkeypatch.setenv("JH_APP_DIR", str(tmp_path_factory.mktemp("app")))
     monkeypatch.setenv("APPDATA", str(tmp_path_factory.mktemp("appdata")))      # 구 위치(마이그레이션 원본)도 임시
+    import jh_net
+    jh_net.reset_for_tests()                    # 프로세스 공유 서킷/상한 상태 초기화
+    monkeypatch.setenv("JH_SEED_DIR", "")      # 번들 시드 비활성(시드 테스트만 명시적으로 켠다): 기존 테스트가 시드에 영향받지 않게
     jh_paths.reset_for_tests()
     yield
     jh_paths.reset_for_tests()

@@ -33,6 +33,7 @@ import numpy as np
 
 import jh_cards
 import jh_db
+import jh_net
 import jh_paths
 import jh_savior
 import jh_schedule
@@ -1236,10 +1237,18 @@ class ThumbThread(QThread):
     def run(self):
         try:
             store = jh_cards.default_store()
+            store.on_event = log
+            fails = 0
             for aid in self.ids:
                 if jh_cards.cached_path(aid):
                     continue
-                store.get_image(aid)
+                if store.get_image(aid) is None:
+                    fails += 1
+                    if fails >= jh_net.BREAKER_THRESHOLD or not store.breaker.allow(store.clock()):
+                        log("[구원자] 썸네일 다운로드 연속 실패, 일괄 다운로드 중단")
+                        break
+                else:
+                    fails = 0
         except Exception as e:
             log(f"[구원자] 썸네일 다운로드 예외 {e}")
         self.done.emit()
@@ -1248,6 +1257,14 @@ class ThumbThread(QThread):
 # ----------------------------------------------------------------------------
 # DB 로딩 스레드
 # ----------------------------------------------------------------------------
+def _seed_in_use(store):
+    """직전 load 가 번들 시드를 썼으면 True (로그 한 줄도 남김)"""
+    if getattr(store, "using_seed", False) is True:
+        log("[DB] 번들 시드 사용(사이트 갱신 대기)")
+        return True
+    return False
+
+
 class DbThread(QThread):
     finished_ok = pyqtSignal(object, str, str)      # cache(list), status, message
 
@@ -1282,7 +1299,10 @@ class DbThread(QThread):
             try:
                 cache = self._build_cache()
                 if cache:
-                    emit(cache, "cache", "저장된 DB 사용 (백그라운드에서 갱신 확인)")
+                    if _seed_in_use(self.store):
+                        emit(cache, "seed", "번들 시드 사용 (사이트 갱신 대기)")
+                    else:
+                        emit(cache, "cache", "저장된 DB 사용 (백그라운드에서 갱신 확인)")
                     sent_cache = True
             except Exception as e:
                 log(f"[DB 캐시 로딩 예외] {e}\n{traceback.format_exc()}")
@@ -1290,6 +1310,8 @@ class DbThread(QThread):
         try:
             res = self.store.update(manual=self.manual)
             status, message, changed = res.status, res.message, bool(res.changed)
+            if status in ("offline", "capped"):          # 실제 시도 실패/상한 도달 때만 기록 (backoff 대기 중 호출은 조용히)
+                log(f"[DB] {status}: {message}")
         except Exception as e:
             log(f"[DB 갱신 예외] {e}\n{traceback.format_exc()}")
             status, message = "offline", str(e)
@@ -1312,6 +1334,8 @@ class DbThread(QThread):
             cache = []
         if not cache and sent_cache:
             return                                  # 갱신 뒤 읽기에 실패해도 이미 쓰고 있는 캐시는 유지
+        if cache and status != "cooldown" and _seed_in_use(self.store):
+            status, message = "seed", "번들 시드 사용 (사이트 갱신 대기): " + message
         emit(cache, status, message)
 
     def run(self):
@@ -1825,6 +1849,8 @@ class MouseHoverManager(QWidget):
             self.db_event_cache = jh_db.merge_custom_events(cache, customs)
             log(f"[DB] 이벤트 {len(cache)}개 + 사용자 정의 {len(self.db_event_cache) - len(cache)}개 ({status}: {message})")
             text = tr("🟢 [DB 준비 완료] 이벤트 {}개").format(len(cache))
+            if status == "seed":
+                text = tr("🟡 [DB 준비 완료 - 번들 시드] 이벤트 {}개, 사이트 갱신 대기").format(len(cache))
             if manual and status == "cooldown":
                 text = tr("⏳ 수동 새로고침은 잠시 후 다시 가능합니다 (10분 쿨다운)")
             elif manual and status == "offline":

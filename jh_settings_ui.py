@@ -107,8 +107,14 @@ def build_diagnostics(host, jhm, now=None):
     meta = getattr(getattr(host, "store", None), "meta", {}) or {}
     last = meta.get("last_check") or 0
     last_s = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(last)) if last else "-"
+    seed = getattr(getattr(host, "store", None), "using_seed", False) is True
+    L.append(f"DB 출처: {'시드 사용 중 (사이트 데이터 아직 못 받음)' if seed else '캐시'}")
     L.append(f"DB: events={len(cache)} lang={getattr(host, 'lang', '?')} base={getattr(host.store, 'base_url', '?')} "
              f"files={len(meta.get('files', {}))} last_check={last_s}")
+    try:
+        L.append(host.store.network_summary())
+    except Exception as e:
+        L.append(f"네트워크: error {type(e).__name__}")
     try:
         reco = jhm.jh_savior.load_reco()
         L.append(f"savior reco: {len(reco)} saviors loaded")

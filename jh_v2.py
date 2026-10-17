@@ -16,6 +16,8 @@ import time
 from collections import OrderedDict
 
 import jh_db
+import jh_net
+import jh_paths
 
 V2_BASE_URL = "https://starsavior-journey-choice.pages.dev/json/"
 V2_FILES = OrderedDict([("journeys", "journeys.json"), ("journey_items", "journey_items.json"),
@@ -66,23 +68,33 @@ class V2Store:
     """V2 JSON 로컬 캐시 + 조건부 GET 갱신기 (jh_db.DbStore 와 같은 방식: 검증 실패/급감 시 캐시 유지)"""
 
     def __init__(self, cache_dir=None, session=None, base_url=V2_BASE_URL, clock=time.time,
-                 user_agent=jh_db.DEFAULT_USER_AGENT):
+                 user_agent=jh_db.DEFAULT_USER_AGENT, seed_dir=jh_db._DEFAULT):
         self.dir = os.path.join(cache_dir or jh_db.default_cache_dir(), "v2")
+        # 번들 시드 폴더(v2 파일이 직접 들어 있는 폴더). None 이면 사용 안 함
+        if seed_dir is jh_db._DEFAULT:
+            sd = jh_paths.seed_dir()
+            seed_dir = os.path.join(sd, "v2") if sd else None
+        self.seed_dir = seed_dir
+        self.seed_used = False
         self.base_url, self.clock, self.user_agent = base_url, clock, user_agent
         self._session = session
         self.meta_path = os.path.join(self.dir, "meta.json")
         self.meta = self._load_meta()
 
     def _load_meta(self):
-        meta = {"last_check": 0, "last_fail": 0, "files": {}}
+        meta = {"last_check": 0, "last_fail": 0, "files": {}, "consecutive_fail": 0, "next_retry": 0, "manual_bypass": False}
         try:
             with open(self.meta_path, "r", encoding="utf-8") as f:
                 saved = json.load(f)
             if isinstance(saved, dict):
-                for k in ("last_check", "last_fail"):
+                for k in ("last_check", "last_fail", "next_retry"):
                     v = saved.get(k)
                     if isinstance(v, (int, float)) and not isinstance(v, bool):
                         meta[k] = v
+                cf = saved.get("consecutive_fail")
+                if isinstance(cf, int) and not isinstance(cf, bool) and cf > 0:
+                    meta["consecutive_fail"] = cf
+                meta["manual_bypass"] = saved.get("manual_bypass") is True
                 if isinstance(saved.get("files"), dict):
                     meta["files"] = {k: v for k, v in saved["files"].items() if isinstance(v, dict)}
         except Exception:
@@ -105,40 +117,77 @@ class V2Store:
             self._session = requests.Session()
         return self._session
 
+    @staticmethod
+    def _read_valid(path, name):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            validate(name, data)
+            return data
+        except Exception:
+            return None
+
+    def _seed_data(self, name):
+        if not self.seed_dir:
+            return None
+        return self._read_valid(os.path.join(self.seed_dir, V2_FILES[name]), name)
+
+    def has_cache(self):
+        return self._read_valid(self._path("journeys"), "journeys") is not None
+
     def load(self):
-        """{이름: 데이터} 반환. journeys 가 없거나 깨졌으면 None. 나머지 파일이 없으면 빈 리스트로 대체."""
-        out = {}
+        """{이름: 데이터} 반환. 파일별로 캐시 우선, 없거나 깨졌을 때만 번들 시드. journeys 가 없으면 None.
+        나머지 파일이 없으면 빈 리스트로 대체. 시드는 메모리로만 읽는다(캐시/meta 생성 없음)."""
+        out, self.seed_used = {}, False
         for name in V2_FILES:
-            try:
-                with open(self._path(name), "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                validate(name, data)
-                out[name] = data
-            except Exception:
-                out[name] = {} if name == "journeys" else []
+            data = self._read_valid(self._path(name), name)
+            if data is None:
+                data = self._seed_data(name)
+                if data is not None:
+                    self.seed_used = True
+            out[name] = data if data is not None else ({} if name == "journeys" else [])
         return out if out["journeys"] else None
 
+    def retry_at(self):
+        lf = self.meta.get("last_fail", 0)
+        return max(self.meta.get("next_retry", 0), lf + jh_db.FAIL_BACKOFF_SEC if lf else 0)
+
     def update(self, manual=False):
-        """-> jh_db.UpdateResult. 예외를 밖으로 내지 않는다."""
+        """-> jh_db.UpdateResult. 예외를 밖으로 내지 않는다. 실패는 지수 backoff(jh_net) 로 meta 에 저장."""
         now = self.clock()
-        have = os.path.isfile(self._path("journeys"))
+        have = self.has_cache()
+        retry = self.retry_at()
         if not manual:
             if have and now - self.meta.get("last_check", 0) < jh_db.CHECK_INTERVAL_SEC:
                 return jh_db.UpdateResult("skipped_recent", False, "V2: 최근에 확인함")
-            if now - self.meta.get("last_fail", 0) < jh_db.FAIL_BACKOFF_SEC:
-                return jh_db.UpdateResult("backoff", False, "V2: 직전 실패 후 대기 중")
+            if now < retry:
+                return jh_db.UpdateResult("backoff", False, f"V2: 사이트 응답 없음, {jh_net.minutes_left(retry, now)}분 뒤 재시도")
+            if not jh_net.get_limiter("v2", jh_net.DB_ATTEMPTS_PER_DAY, 86400).allow(now):
+                return jh_db.UpdateResult("capped", False, f"V2: 오늘 자동 갱신 시도 상한({jh_net.DB_ATTEMPTS_PER_DAY}회) 도달, 중단")
+        elif now < retry:
+            if self.meta.get("manual_bypass"):
+                return jh_db.UpdateResult("backoff", False, f"V2: 사이트 응답 없음, {jh_net.minutes_left(retry, now)}분 뒤 재시도")
+            self.meta["manual_bypass"] = True
         changed, errors = False, []
         for name, rel in V2_FILES.items():
             try:
                 if self._fetch_one(name, rel) == "updated":
                     changed = True
-            except Exception as e:               # 파일별로 독립: 하나가 실패해도 다른 파일과 기존 캐시는 유지
+            except Exception as e:               # 구조 오류(ValueError)는 파일별로 독립, 네트워크/HTTP 오류는 나머지를 시도하지 않고 중단
                 errors.append(f"{rel}: {type(e).__name__} {str(e)[:100]}")
+                if not isinstance(e, ValueError):
+                    break
         if errors:
-            self.meta["last_fail"] = now
+            n = self.meta["consecutive_fail"] + 1
+            if now >= retry:
+                self.meta["manual_bypass"] = False
+            self.meta["consecutive_fail"], self.meta["last_fail"] = n, now
+            self.meta["next_retry"] = now + jh_net.backoff_sec(n)
             self._save_meta()
-            return jh_db.UpdateResult("offline", changed, "V2 갱신 일부 실패, 캐시 사용: " + "; ".join(errors))
+            return jh_db.UpdateResult("offline", changed, f"V2 갱신 일부 실패, 캐시 사용 (연속 실패 {n}회, "
+                                      f"{jh_net.backoff_sec(n) // 60}분 뒤 재시도): " + "; ".join(errors))
         self.meta["last_check"], self.meta["last_fail"] = now, 0
+        self.meta["consecutive_fail"], self.meta["next_retry"], self.meta["manual_bypass"] = 0, 0, False
         self._save_meta()
         return jh_db.UpdateResult("updated" if changed else "not_modified", changed, "V2 갱신됨" if changed else "V2 변경 없음")
 
@@ -146,7 +195,7 @@ class V2Store:
         path = self._path(name)
         headers = {"User-Agent": self.user_agent, "Accept": "application/json"}
         finfo = self.meta["files"].get(rel, {})
-        if os.path.isfile(path):
+        if self._read_valid(path, name) is not None:      # 없거나 깨진 캐시(시드 상태 포함)는 조건부 요청 금지
             if finfo.get("etag"):
                 headers["If-None-Match"] = finfo["etag"]
             if finfo.get("last_modified"):
@@ -159,11 +208,8 @@ class V2Store:
         content = r.content
         data = json.loads(content.decode("utf-8"))        # HTML 대체 응답이면 여기서 예외
         validate(name, data)
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                old = json.load(f)
-        except Exception:
-            old = None
+        # 기준: 유효한 캐시, 없으면 번들 시드(시드 상태에서 빈약한 응답이 캐시가 되는 것을 막음)
+        old = self._read_valid(path, name) or self._seed_data(name)
         if old and len(data) < len(old) * GUARD_MIN_RATIO and len(old) >= 4:
             raise ValueError(f"{rel}: {len(old)} -> {len(data)} 로 비정상 감소, 캐시 유지")
         same = False

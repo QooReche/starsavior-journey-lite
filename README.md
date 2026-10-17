@@ -38,7 +38,7 @@ python -m venv .venv
 
 ## 사용법
 - 상단바는 **접힌 상태**로 시작합니다(`🔽 여정 시 펼쳐주세요`). 여정/이벤트가 감지되면 잠깐 펼쳐졌다가 자동으로 다시 접힙니다.
-- **상단바 좌클릭**: 메뉴 (펼치기/접기, DB 새로고침, 일시정지, 종료) · **우클릭**: 설정 (글자 크기, 설명 표시, 시작 상태, 언어, 위치 고정/초기화) · 위치 잠금 해제 시 드래그 이동
+- **상단바 좌클릭**: 메뉴 (펼치기/접기, DB 새로고침, 일시정지, 종료) · **우클릭**: 설정창 (일반 / 게임 표시 / 고급·진단 탭) · 위치 잠금 해제 시 드래그 이동
 - 여정 **이벤트 화면**에서 선택지에 마우스를 올리면 왼쪽에 툴팁이 뜹니다. 선택지가 없거나 하나뿐인(자동 진행) 이벤트와 DB에 없는 제목은 툴팁을 띄우지 않습니다(`custom_events.json`의 사용자 안내문은 예외).
 - 좌측 상단 **날짜 위젯**(`3월 초순` 등)에 마우스를 올리면 그 턴의 고정/확률/랜덤 일정과 다음 고정 일정이 뜹니다(설정에서 끌 수 있음). 날짜 문구를 1초마다 읽어 턴을 판단하며, 일정 데이터는 앱에 내장되어 있습니다.
 - **구원자 추천 아르카나**: 여정 시작의 아르카나 편성 화면에서 구원자(이름+부제로 동명이인 구분)를 인식해 추천 5슬롯과 대체 카드를 썸네일과 함께 보여 줍니다(디펜더 2세트는 나란히 표시). 추천 데이터는 앱에 내장되어 있고(`data/savior_reco.json`), 설정에서 끌 수 있습니다.
@@ -83,7 +83,7 @@ python -m PyInstaller journey_helper.spec --noconfirm     # dist\JourneyHelperLi
 
 ## 크레딧 / 라이선스
 - 원작: [p1021/journeyhelper](https://github.com/p1021/journeyhelper) - 화면 영역 비율, 창 탐색, 오버레이/호버 방식, 제목 매칭 점수식 등의 아이디어와 일부 코드를 가져왔습니다. 원작 저장소에는 LICENSE 파일이 없으므로(2026-10 기준) 별도 라이선스를 부여하지 않으며, 원작자의 요청이 있으면 수정/삭제합니다.
-- 데이터: [starsavior-guide.github.io](https://starsavior-guide.github.io/data/) 의 공개 DB (`journey/<언어>/journey.json`, `arcanas/arcanas.json`). 데이터의 권리는 제공자/게임사에 있으며, 이 저장소는 여정 DB 본체를 포함하지 않고 실행 시 내려받습니다(구원자 추천 아르카나는 가이드 사이트에서 추출한 슬림 JSON `data/savior_reco.json` 을 포함)(테스트용 축소 샘플만 `tests/fixtures`에 포함). 단, 새 DB에 없는 정보는 옛 DB(star-savior-arcana-db, 2026-10-15 백업)에서 추출해 코드에 내장했습니다: 여정 버프 효과 설명 `jh_buffs.py`, 턴별 일정 `jh_schedule.py`.
+- 데이터: [starsavior-guide.github.io](https://starsavior-guide.github.io/data/) 의 공개 DB (`journey/<언어>/journey.json`, `arcanas/arcanas.json`). 데이터의 권리는 제공자/게임사에 있으며, 프로그램은 실행 시 DB를 내려받아 쓰며, 사이트가 일시적으로 응답하지 않을 때를 대비해 한국어 DB 스냅샷(`assets/seed`, 생성일은 `SEED_INFO.txt`)과 구원자 추천 아르카나 슬림 JSON(`assets/savior_reco.json`)을 함께 포함합니다. 사이트에 연속으로 응답이 없으면 대기 시간을 단계적으로 늘리고(10분→30분→2시간→6시간) 시도 횟수에도 상한을 둡니다. 단, 새 DB에 없는 정보는 옛 DB(star-savior-arcana-db, 2026-10-15 백업)에서 추출해 코드에 내장했습니다: 여정 버프 효과 설명 `jh_buffs.py`, 턴별 일정 `jh_schedule.py`.
 - OCR: [RapidOCR](https://github.com/RapidAI/RapidOCR) + [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) PP-OCRv4 한국어 인식 모델(`models/`, Apache-2.0).
 - PyQt5(GPL v3/상용), onnxruntime(MIT), OpenCV(Apache-2.0), mss(MIT), requests(Apache-2.0).
 
@@ -91,3 +91,9 @@ python -m PyInstaller journey_helper.spec --noconfirm     # dist\JourneyHelperLi
 - 설정·캐시·로그는 모두 **프로그램 폴더 안**(`data\`, `log\`)에 저장됩니다(휴대형). 폴더를 지워도 프로그램이 다시 만들며, 용량이 부담되면 `data\cache`나 `log\`를 지워도 됩니다. 프로그램 폴더에 쓸 수 없는 위치면 `%APPDATA%\JourneyHelperLite`로 대신 저장합니다.
 - 새 버전은 기존 폴더에 **덮어쓰기**하면 설정이 유지됩니다(`data\`, `log\`는 압축 파일에 들어 있지 않습니다). 버전 표기는 `1.0.01.YYMMDD`(마지막은 빌드 날짜)입니다.
 - 문제가 생기면 설정창의 `고급·진단`에서 **진단 정보 복사**를 눌러 붙여넣어 제보해 주세요.
+
+## 지원 범위
+- **한국어 게임 클라이언트 기준**입니다(한국어 OCR 모델 사용). 이벤트 툴팁은 영어 모드(설정 → 언어)도 준비되어 있지만 영어 클라이언트에서는 검증하지 못한 **실험적** 기능입니다.
+- 구원자 추천 아르카나와 일정 미리보기는 한국어 클라이언트에서만 동작합니다.
+- 화면 해상도가 달라도 비율로 영역을 잡지만, 창 모드/해상도별 동작은 일부만 확인했습니다. 문제가 있으면 설정창의 **진단 정보 복사**를 붙여넣어 알려 주세요.
+- 서명되지 않은 실행 파일이라 Windows 스마트스크린/백신 경고가 뜰 수 있습니다.

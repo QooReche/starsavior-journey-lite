@@ -20,6 +20,7 @@ import urllib.request
 import cv2
 import numpy as np
 
+import jh_net
 import jh_paths
 from jh_version import APP_VERSION
 
@@ -126,11 +127,17 @@ def default_cache_dir():
 class CardStore:
     """후보 카드 이미지를 지연 다운로드하고 디스크(PNG, 폭 176px)에 캐시한다."""
 
-    def __init__(self, cache_dir=None, download=True, sleep=0.3, timeout=10):
+    def __init__(self, cache_dir=None, download=True, sleep=0.3, timeout=5, total_timeout=10,
+                 breaker=None, limiter=None, clock=time.monotonic, on_event=None):
         self.cache_dir = cache_dir or default_cache_dir()
         self.download = download
         self.sleep = sleep
-        self.timeout = timeout
+        self.timeout = timeout                  # 연결/읽기 1회 제한
+        self.total_timeout = total_timeout      # 이미지 1장 전체 제한
+        self.breaker = breaker or jh_net.get_breaker()       # 호스트 단위 서킷브레이커(프로세스 공유)
+        self.limiter = limiter or jh_net.get_limiter("card_dl", jh_net.IMAGES_PER_HOUR, 3600)
+        self.clock = clock
+        self.on_event = on_event or (lambda msg: None)       # 상태 전환 로그용 콜백
         self._desc = {}
         self._fail = {}                 # aid -> 실패 시각: 잠시 재다운로드를 쉰다 (음성 캐시)
         self._lock = threading.Lock()
@@ -141,8 +148,17 @@ class CardStore:
     def _fetch(self, aid):
         req = urllib.request.Request(CARD_URL.format(id=int(aid)),
                                      headers={"User-Agent": USER_AGENT})
+        t0 = time.monotonic()
+        chunks = []
         with urllib.request.urlopen(req, timeout=self.timeout) as r:
-            data = r.read()
+            while True:
+                b = r.read(65536)
+                if not b:
+                    break
+                chunks.append(b)
+                if time.monotonic() - t0 > self.total_timeout:
+                    raise TimeoutError("image download too slow")
+        data = b"".join(chunks)
         img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
         if img is None:  # opencv webp 미지원 빌드 대비
             from PIL import Image
@@ -177,10 +193,23 @@ class CardStore:
             return None
         if time.monotonic() - self._fail.get(aid, -1e9) < FAIL_RETRY_SEC:
             return None
+        now = self.clock()
+        if not self.breaker.allow(now):          # 사이트 응답 없음: 서킷이 열려 있는 동안 시도하지 않음
+            return None
+        if not self.limiter.allow(now):
+            if not self.limiter.capped_logged:
+                self.limiter.capped_logged = True
+                self.on_event(f"[네트워크] 이미지 다운로드 시간당 상한({jh_net.IMAGES_PER_HOUR}장) 도달, 잠시 중단")
+            return None
         try:
-            return self._fetch(aid)
+            img = self._fetch(aid)
+            self.breaker.success()
+            return img
         except Exception:
             self._fail[aid] = time.monotonic()
+            if self.breaker.failure(now):
+                st = self.breaker.state(now)
+                self.on_event(f"[네트워크] 이미지 서버 연속 실패 -> {st['minutes']}분간 시도 중단")
             return None
 
     def get_descriptor(self, aid):

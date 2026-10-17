@@ -1,0 +1,12 @@
+generated: 2026-10-17
+events (app cache count): 280
+total: 3,980,635 bytes
+files:
+  journey.json: 1,214,599 bytes
+  arcanas.json: 985,062 bytes
+  v2/journeys.json: 578,536 bytes
+  v2/journey_items.json: 661,781 bytes
+  v2/journey_buffs.json: 63,047 bytes
+  v2/potentials.json: 477,610 bytes
+
+Source: starsavior-guide.github.io / starsavior-journey-choice.pages.dev (ko). Used only when no user cache exists.
