@@ -4,6 +4,7 @@
 from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
 
 datas = [("models", "models")]                       # 한국어 인식 모델 + 사전
+datas += [("data", "data")]                           # 구원자 추천 아르카나 슬림 JSON (tools/extract_savior_reco.py 로 생성)
 datas += collect_data_files("rapidocr_onnxruntime")  # config.yaml, 기본 det/cls/rec 모델
 binaries = collect_dynamic_libs("onnxruntime")
 

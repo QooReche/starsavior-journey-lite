@@ -198,6 +198,16 @@ class CardStore:
 _default_store = None
 
 
+def default_store():
+    return _store()
+
+
+def cached_path(aid, store=None):
+    """캐시된 참조 이미지(PNG) 경로, 없으면 None (다운로드하지 않음). 툴팁 썸네일용."""
+    p = (store or _store())._path(aid)
+    return p if os.path.exists(p) else None
+
+
 def _store():
     global _default_store
     if _default_store is None:

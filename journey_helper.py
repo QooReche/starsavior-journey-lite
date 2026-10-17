@@ -33,6 +33,7 @@ import numpy as np
 
 import jh_cards
 import jh_db
+import jh_savior
 import jh_schedule
 
 try:
@@ -61,6 +62,7 @@ DEFAULT_SETTINGS = {
     "difficulty": "all",            # (이전 방식, 읽기 전용) 한 난이도만 표시. hidden_difficulties 로 옮겨진다
     "hidden_difficulties": [],      # 툴팁에서 숨길 난이도 ["easy","normal","hard"] 부분집합 (원작 1.1.3 과 같은 키)
     "show_schedule": True,          # 좌측 상단 날짜 위젯에 마우스를 올리면 턴별 고정 일정 표시
+    "show_savior_reco": True,       # '여정 시작' 화면에서 구원자 식별 동안 계속 추천 아르카나(썸네일 포함) 표시
     "show_capture_debug": False,    # True: 상단바/툴팁이 스크린샷에도 보이게 함 (진단용, OCR 방해 가능)
 }
 
@@ -82,6 +84,16 @@ REGION_FRACTIONS = {
     "event_label": {"top": 0.170, "left": 0.110, "width": 0.200, "height": 0.032},
     "schedule_date": {"top": 0.078, "left": 0.116, "width": 0.058, "height": 0.040},      # 좌측 상단 '3월 초순' 문구 (게임 클라이언트 비율)
 }
+REGION_FRACTIONS.update(jh_savior.SAVIOR_REGIONS)      # savior_header / savior_subtitle / savior_name
+REGION_FRACTIONS.update(jh_savior.ARCANA_SCREEN_REGIONS)   # 편성 화면 고정 글자(전체 해제/자동 편성/특수재화 우선 사용/여정 시작)
+REGION_FRACTIONS.update(jh_savior.PICKER_REGIONS)          # 아르카나 고르기 화면 부정 신호(하단 안내줄/보유 수)
+SAVIOR_CLICK_HIDE_SEC = 0.5     # 왼쪽 클릭 직후 추천 툴팁을 잠깐 숨기고 다음 스캔에서 화면을 다시 판정
+SAVIOR_SCAN_SEC = 1.0
+SAVIOR_CONFIRM = 2        # 같은 구원자가 이만큼 연속으로 읽혀야 확정
+SAVIOR_LOST = 3           # '여정 시작' 머리글이 이만큼 연속으로 안 보이면 화면을 떠난 것으로 본다
+ARCANA_CONFIRM = 2        # 편성 화면 글자가 이만큼 연속으로 읽혀야 '편성 화면'으로 확정(툴팁 허용)
+ARCANA_LOST = 2           # 이만큼(약 2초) 연속으로 못 읽어야 해제 (간헐적 OCR 실패로 툴팁이 깜빡이지 않게)
+SAVIOR_NOREAD_LOST = 6    # 머리글은 보이는데 이름을 이만큼 연속으로 못 읽으면 인식 해제
 SCHEDULE_HOVER = (0.03, 0.03, 0.18, 0.13)      # 날짜 위젯 전체(목표 달력 + 목표/날짜 문구) 호버 범위 (left, top, right, bottom)
 DATE_SCAN_SEC = 1.0
 DATE_CONFIRM = 2          # 같은 턴이 이만큼 연속으로 읽혀야 확정
@@ -231,6 +243,8 @@ _TRANSLATIONS_EN = {
     "잠재력/버프 설명 표시": "Show potential/buff descriptions",
     "⚡ 저사양 모드 (OCR 주기 늘림)": "⚡ Low-spec mode (slower OCR polling)",
     "상단바 위치 고정": "Lock top bar position",
+    "🃏 구원자 추천 아르카나 (여정 시작 화면에서 이름에 마우스)": "🃏 Recommended arcana (hover the savior name on the Journey Start screen)",
+    "🃏 [구원자 인식] {}": "🃏 [Savior] {}",
     "상단바 위치 초기화": "Reset top bar position",
     "현재 버전: {}": "Current version: {}",
     "JourneyHelper가 실행 중입니다 (우클릭: 메뉴)": "JourneyHelper is running (right-click for menu)",
@@ -579,6 +593,7 @@ def toggle_hidden_difficulty(hidden, value, checked):
     else:
         s.discard(value)
     return sorted(jh_db.hidden_set(s), key=jh_db.DIFFICULTIES.index)
+TOOLTIP_MIN_TOP_FRAC = 0.13   # 구원자 추천 툴팁이 위로 밀려 올라갈 수 있는 한계(창 높이 비율): 상단바 바로 아래
 TOOLTIP_MAX_DETAIL = 2      # 툴팁이 화면보다 길 때 jh_db.format_*_html 의 detail 을 이 단계까지 올려 줄인다
 TITLE_SCALES = (2.0, 1.6, 1.0)      # 배율마다 오인식이 달라 후보를 모두 모은다 (2.0 이 평균적으로 가장 정확)
 
@@ -777,6 +792,8 @@ class ScreenWatcher(QThread):
     model_loading = pyqtSignal()
     model_ready = pyqtSignal()
     date_changed = pyqtSignal(object)    # 좌측 상단 날짜로 확정한 일정 항목(jh_schedule 튜플) 또는 None
+    arcana_screen_changed = pyqtSignal(bool)   # '아르카나 편성 화면'인가 (구원자 추천 툴팁은 이 화면에서만)
+    savior_changed = pyqtSignal(object)  # '여정 시작' 화면에서 식별한 구원자 리스트(동명이인이면 여러 명) 또는 None
     model_failed = pyqtSignal(str)       # OCR 모델 로딩 실패 (연속 실패 중 한 번만 보냄)
 
     LEAVE_AFTER_OTHER = 3     # 라벨 자리에 다른 글자가 읽힘 -> 이벤트 화면이 아니라고 확신 (연속 횟수)
@@ -784,8 +801,12 @@ class ScreenWatcher(QThread):
     LEAVE_GRACE_SEC = 1.5     # 위 횟수를 채워도 이만큼 계속 안 보여야 이탈 확정 (깜빡임 디바운스)
     REENTRY_MEMO_SEC = 4.0    # 이탈 직후 이 시간 안에 같은 제목 이미지가 다시 보이면 OCR 생략
 
-    def __init__(self, pause_getter=None, low_spec_getter=None, lang_getter=None):
+    def __init__(self, pause_getter=None, low_spec_getter=None, lang_getter=None, savior_getter=None):
         super().__init__()
+        self.savior_getter = savior_getter or (lambda: False)       # show_savior_reco
+        self._saviors = None                                        # jh_savior.load_reco() (지연 로딩)
+        self._sv_next = 0.0
+        self._sv_reset()
         self.lang_getter = lang_getter or (lambda: "ko")
         self._last_rect = None
         self.pause_getter = pause_getter or (lambda: False)
@@ -817,6 +838,7 @@ class ScreenWatcher(QThread):
     def request_reverify(self):
         """(5) 로딩 화면 이후: 라벨을 다시 확인하기 전에는 제목 인식을 하지 않는다."""
         self._reverify = True
+        self._sv_clear("(화면 재확인)")
 
     def stop(self):
         self._stop = True
@@ -866,6 +888,119 @@ class ScreenWatcher(QThread):
         else:
             self._cached_title = read_title_candidates(self.ocr, gray)
         return self._cached_title
+
+    def _sv_reset(self):
+        self._sv_cur = None                  # 확정(emit)한 구원자 키 튜플
+        self._sv_cand, self._sv_streak = None, 0
+        self._sv_gray = None                 # (부제 gray, 이름 gray) 직전 이미지
+        self._sv_last = None                 # 직전 식별 결과 (matches, how)
+        self._sv_miss = self._sv_noread = 0
+        self._ar_on, self._ar_streak, self._ar_miss = False, 0, 0
+
+    def _sv_clear(self, why=""):
+        """구원자 인식 상태를 비우고, 켜져 있었으면 해제를 알린다."""
+        was, was_ar = self._sv_cur is not None, self._ar_on
+        self._sv_reset()
+        if was_ar:
+            self.arcana_screen_changed.emit(False)
+        if was:
+            log(f"[구원자] 인식 해제 {why}")
+            self.savior_changed.emit(None)
+
+    def _grab_gray(self, sct, rect, name):
+        return cv2.cvtColor(np.array(sct.grab(region_to_monitor(REGION_FRACTIONS[name], rect))), cv2.COLOR_BGRA2GRAY)
+
+    def _read_region(self, sct, rect, name, scales=(2.0, 1.6)):
+        gray = self._grab_gray(sct, rect, name)
+        return [self.ocr.read_line(cv2.resize(gray, None, fx=sc, fy=sc, interpolation=cv2.INTER_CUBIC)) for sc in scales]
+
+    def _scan_arcana_screen(self, sct, rect):
+        """아르카나 '편성' 화면인지 판별한다 (구원자 추천 툴팁은 이 화면에서만).
+        - 부정 신호(아르카나 고르기 화면: 하단 '동일한 타이틀' 안내줄 / 우측 상단 보유 수 '78/81')가 한 번이라도 읽히면 즉시 해제.
+        - 긍정 신호는 변하지 않는 고정 글자만(프리셋 이름은 사용자가 바꿀 수 있어 쓰지 않는다): '전체 해제'/'자동 편성' 버튼 하나,
+          또는 '특수재화 우선 사용' + '여정 시작' 버튼 둘 다. 연속 ARCANA_CONFIRM 회 읽혀야 확정, 연속 ARCANA_LOST 회 못 읽어야 해제."""
+        def read(name, scales=(2.0,)):
+            return self._read_region(sct, rect, name, scales)
+
+        if any(c >= 0.5 and jh_savior.match_picker(t, "count") for t, c in read("picker_count")) or                 any(c >= 0.5 and jh_savior.match_picker(t, "guide") for t, c in read("picker_guide")):
+            self._ar_streak, self._ar_miss = 0, ARCANA_LOST
+            if self._ar_on:
+                self._ar_on = False
+                log("[구원자] 아르카나 고르기 화면 글자 감지 -> 추천 툴팁 즉시 숨김")
+                self.arcana_screen_changed.emit(False)
+            return
+        found = set()
+        for name in ("arcana_special", "arcana_start"):
+            if any(c >= 0.6 and jh_savior.match_arcana_screen(t, jh_savior.ARCANA_KINDS[name]) for t, c in read(name)):
+                found.add(jh_savior.ARCANA_KINDS[name])
+        if not jh_savior.arcana_screen_hit(found):
+            for name in ("arcana_btn_clear", "arcana_btn_auto"):
+                if any(c >= 0.4 and jh_savior.match_arcana_screen(t, jh_savior.ARCANA_KINDS[name]) for t, c in read(name, (2.0, 3.0))):
+                    found.add(jh_savior.ARCANA_KINDS[name])
+        if jh_savior.arcana_screen_hit(found):
+            self._ar_miss = 0
+            self._ar_streak += 1
+            if self._ar_streak >= ARCANA_CONFIRM and not self._ar_on:
+                self._ar_on = True
+                log(f"[구원자] 아르카나 편성 화면 확인 {sorted(found)} -> 추천 툴팁 허용")
+                self.arcana_screen_changed.emit(True)
+        else:
+            self._ar_streak = 0
+            self._ar_miss += 1
+            if self._ar_on and self._ar_miss >= ARCANA_LOST:
+                self._ar_on = False
+                log("[구원자] 편성 화면 글자가 안 보임 -> 추천 툴팁 숨김")
+                self.arcana_screen_changed.emit(False)
+
+    def request_arcana_recheck(self):
+        """마우스 클릭 직후: 다음 루프에서 바로 편성 화면 여부를 다시 판정한다 (1초 간격 대기 건너뜀)."""
+        self._sv_next = 0.0
+
+    def _scan_savior(self, sct, rect):
+        """'여정 시작' 머리글이 보이면 [부제][이름] 줄을 읽어 구원자를 식별한다(1초 간격). 이벤트 화면에서는 호출하지 않는다."""
+        now = time.monotonic()
+        if now < self._sv_next:
+            return
+        self._sv_next = now + SAVIOR_SCAN_SEC
+        if self._saviors is None:
+            self._saviors = jh_savior.load_reco()
+            log(f"[구원자] 추천 데이터 {len(self._saviors)}명 로드")
+        if not self._saviors:
+            return
+        text, conf = self.ocr.read_line(cv2.resize(self._grab_gray(sct, rect, "savior_header"), None, fx=2.0, fy=2.0,
+                                                   interpolation=cv2.INTER_CUBIC))
+        if not (conf >= 0.4 and jh_savior.match_header(text)):
+            self._sv_miss += 1
+            self._sv_cand, self._sv_streak = None, 0
+            if self._sv_miss >= SAVIOR_LOST:
+                self._sv_clear("('여정 시작' 화면이 아님)")
+            return
+        self._sv_miss = 0
+        self._scan_arcana_screen(sct, rect)
+        sub_g, name_g = self._grab_gray(sct, rect, "savior_subtitle"), self._grab_gray(sct, rect, "savior_name")
+        last = self._sv_gray
+        same = (last is not None and last[0].shape == sub_g.shape and last[1].shape == name_g.shape
+                and cv2.absdiff(sub_g, last[0]).mean() < 1.0 and cv2.absdiff(name_g, last[1]).mean() < 1.0)
+        if not same or self._sv_last is None:
+            self._sv_gray = (sub_g, name_g)
+            subs = read_title_candidates(self.ocr, sub_g, min_conf=0.3)
+            names = read_title_candidates(self.ocr, name_g, min_conf=0.3)
+            self._sv_last = (jh_savior.identify(self._saviors, subs, names), subs, names)
+        (matches, how), subs, names = self._sv_last
+        if not matches:
+            self._sv_noread += 1
+            self._sv_cand, self._sv_streak = None, 0
+            if self._sv_noread >= SAVIOR_NOREAD_LOST:
+                self._sv_clear(f"(이름을 읽을 수 없음 부제={subs} 이름={names})")
+            return
+        self._sv_noread = 0
+        key = jh_savior.savior_key(matches)
+        self._sv_streak = self._sv_streak + 1 if key == self._sv_cand else 1
+        self._sv_cand = key
+        if self._sv_streak >= SAVIOR_CONFIRM and key != self._sv_cur:
+            self._sv_cur = key
+            log(f"[구원자] 식별 {how}: 부제={subs} 이름={names} -> {[(m['subtitle'], m['name']) for m in matches]}")
+            self.savior_changed.emit(list(matches))
 
     def _scan_date(self, sct, rect):
         """좌측 상단 날짜 문구('3월 초순')를 읽어 일정 항목으로 바꾼다. 같은 값이 연속 DATE_CONFIRM 번 나와야 확정, 연속 DATE_LOST 번 못 읽으면 None."""
@@ -964,6 +1099,7 @@ class ScreenWatcher(QThread):
                         self.msleep(300)
                         continue
                     self._leave_event_screen()      # 게임 창이 없거나 최소화됨 -> 상태 초기화
+                    self._sv_clear("(게임 창 없음)")
                     self._date_gray = None
                     self._was_inactive = False
                     self.msleep(1000)
@@ -988,6 +1124,10 @@ class ScreenWatcher(QThread):
 
                 self._scan_date(sct, rect)
                 state = self._scan_label(sct, rect)
+                if state == "found" or self.on_event_screen or not self.savior_getter():
+                    self._sv_clear("(이벤트 화면 또는 설정 꺼짐)")      # 이벤트 화면에서는 구원자 툴팁을 쓰지 않는다
+                else:
+                    self._scan_savior(sct, rect)
                 if state == "found":
                     self._miss = 0
                     self._grace.good()
@@ -1064,6 +1204,26 @@ class CardThread(QThread):
         except Exception as e:
             info = f"예외 {e}"
         self.resolved.emit(self.title, aid, info)
+
+
+class ThumbThread(QThread):
+    """구원자 추천 툴팁의 아르카나 썸네일을 지연 다운로드해 카드 캐시(jh_cards)에 저장한다. 실패해도 텍스트만 표시된다."""
+    done = pyqtSignal()
+
+    def __init__(self, ids):
+        super().__init__()
+        self.ids = list(dict.fromkeys(ids))
+
+    def run(self):
+        try:
+            store = jh_cards.default_store()
+            for aid in self.ids:
+                if jh_cards.cached_path(aid):
+                    continue
+                store.get_image(aid)
+        except Exception as e:
+            log(f"[구원자] 썸네일 다운로드 예외 {e}")
+        self.done.emit()
 
 
 # ----------------------------------------------------------------------------
@@ -1338,21 +1498,28 @@ def game_monitor_avail(rect):
     return pick_screen_geometry(rect, geoms)
 
 
-def place_tooltip(rect, avail, height, avoid_regions=False):
+def place_tooltip(rect, avail, height, avoid_regions=False, y_frac=0.30, x_frac=None, min_top_frac=None):
     """툴팁의 (x, y, 잘라낼 높이 또는 None). avail=(left, top, right, bottom): 게임 창이 있는 모니터의 사용 가능 영역.
     avoid_regions=True(show_capture_debug)면 툴팁이 캡처에 찍혀도 라벨/제목/카드 영역을 가리지 않게 그 아래에만 두고,
     넘치면 위로 밀지 않고 아래를 자른다."""
     al, at, ar, ab = avail
     if rect:
-        x, y = rect["left"] + 25, rect["top"] + int(rect["height"] * 0.30)
+        x = rect["left"] + (int(rect["width"] * x_frac) if x_frac is not None else 25)
+        y = rect["top"] + int(rect["height"] * y_frac)
     else:
-        x, y = al + 25, at + int((ab - at) * 0.30)
+        x, y = al + 25, at + int((ab - at) * y_frac)
     if avoid_regions and rect:
         y = max(y, tooltip_below_regions_y(rect))
         if y + height + 10 > ab:
             return x, y, max(60, ab - 10 - y)
         return x, y, None
-    return x, max(at, min(y, ab - height - 10)), None
+    top = at
+    if rect and x_frac is not None:                  # 구원자 추천 툴팁: 넘쳐도 상단바(창 top + 높이*TOOLTIP_MIN_TOP_FRAC) 위로는 올리지 않는다
+        top = max(at, rect["top"] + int(rect["height"] * (TOOLTIP_MIN_TOP_FRAC if min_top_frac is None else min_top_frac)))
+    bottom = ab
+    if rect and x_frac is not None:
+        bottom = min(ab, rect["top"] + rect["height"] - 6)
+    return x, max(top, min(y, bottom - height - 10)), None
 
 
 class FixedLeftTooltip(QWidget):
@@ -1387,28 +1554,41 @@ class FixedLeftTooltip(QWidget):
         self.label.adjustSize()
         self.adjustSize()
         self.resize(self.sizeHint())
+        hfw = self.label.heightForWidth(self.width())          # 표/이미지가 들어간 리치텍스트는 sizeHint 가 작게 나올 수 있어 높이를 다시 확인
+        if hfw > self.height():
+            self.resize(self.width(), hfw)
 
-    def show_html(self, html):
+    def show_html(self, html, y_frac=None, x_frac=None, width_frac=None, min_top_frac=None):
         """html: 문자열 또는 detail(0~MAX_DETAIL) -> 문자열 함수. 함수면 화면에 들어올 때까지 단계적으로 줄여 본다."""
         rect = get_game_window_rect()
         avail = game_monitor_avail(rect)
         limit = avail[3] - avail[1] - 40
+        yf = y_frac if y_frac is not None else 0.30
+        if y_frac is not None and rect:
+            # place_tooltip 은 넘치면 위로 밀 수 있으므로, 상단바 아래(창 top + 높이*TOOLTIP_MIN_TOP_FRAC)까지 올라가는 것까지 허용해 한도를 잡는다
+            bottom = min(avail[3], rect["top"] + rect["height"] - 6)              # 게임 창 아래끝(작업표시줄/다른 창 영역)도 넘지 않게
+            mt = TOOLTIP_MIN_TOP_FRAC if min_top_frac is None else min_top_frac
+            limit = bottom - 10 - (rect["top"] + int(rect["height"] * min(yf, mt)))
         if self.avoid_regions and rect:
-            limit = avail[3] - 10 - max(rect["top"] + int(rect["height"] * 0.30), tooltip_below_regions_y(rect))
+            limit = avail[3] - 10 - max(rect["top"] + int(rect["height"] * yf), tooltip_below_regions_y(rect))
+        want_w = round(rect["width"] * width_frac) if (width_frac and rect) else round(self.BASE_W * self.scale)
+        if self.width() != want_w:                       # 넓은 모드(2세트)와 보통 폭을 호출마다 바꾼다
+            self.setFixedWidth(want_w)
+            self._src = None
         if callable(html):
             fn = html
             html = fn(0)
             if html != self._src:                       # 원본이 같으면 이미 맞춰 둔 크기/내용을 그대로 쓴다
                 self._src = html
                 self._fit(html)
-                for d in range(1, TOOLTIP_MAX_DETAIL + 1):
+                for d in range(1, getattr(fn, "max_detail", TOOLTIP_MAX_DETAIL) + 1):
                     if self.height() <= limit:
                         break
                     self._fit(fn(d))
         elif html != self._src:
             self._src = html
             self._fit(html)
-        x, y, clip = place_tooltip(rect, avail, self.height(), self.avoid_regions)
+        x, y, clip = place_tooltip(rect, avail, self.height(), self.avoid_regions, yf, x_frac, min_top_frac)
         if clip:
             self.setFixedHeight(clip)                   # 디버그 모드에서 넘치면 아래를 자른다
         self.move(x, y)
@@ -1449,6 +1629,10 @@ class MouseHoverManager(QWidget):
         self._watch = None
         self._pending_hide = False
         self._dwell = HoverDwell()
+        self.arcana_screen = False          # '아르카나 편성 화면'일 때만 추천 툴팁을 띄운다 (구원자 고르기/인자작 화면 제외)
+        self.savior_matches = None          # '여정 시작' 화면에서 식별한 구원자(들) (jh_savior)
+        self._thumb_threads = []
+        self._thumb_tried = set()
         self.schedule_row = None            # 좌측 상단 날짜로 인식한 현재 턴의 일정 항목 (jh_schedule)
         self._transition_sct = None
         self._transition_timer = None
@@ -1462,7 +1646,10 @@ class MouseHoverManager(QWidget):
         self._build_tray()
 
         self.watcher = ScreenWatcher(pause_getter=lambda: self._hidden, low_spec_getter=lambda: self.settings["low_spec_mode"],
-                                     lang_getter=lambda: self.lang)
+                                     lang_getter=lambda: self.lang,
+                                     savior_getter=lambda: bool(self.settings.get("show_savior_reco", True)))
+        self.watcher.savior_changed.connect(self.on_savior_changed)
+        self.watcher.arcana_screen_changed.connect(self.on_arcana_screen_changed)
         self.watcher.title_detected.connect(self.on_title)
         self.watcher.journey_status_changed.connect(self.on_journey_status)
         self.watcher.date_changed.connect(self.on_date_changed)
@@ -1652,6 +1839,62 @@ class MouseHoverManager(QWidget):
             return jh_schedule.format_schedule_html(self.schedule_row, self.settings["tooltip_font_scale"])
         return None
 
+    def on_arcana_screen_changed(self, on):
+        self.arcana_screen = bool(on)
+
+    def on_savior_changed(self, matches):
+        self.savior_matches = list(matches) if matches else None
+        if not self.savior_matches:
+            return
+        m = self.savior_matches
+        label = " / ".join(f"{x['name']}({x['subtitle']})" for x in m)
+        self.status.set_status(tr("🃏 [구원자 인식] {}").format(label), "#00aaff", flash=True)
+        ids = [i for s in m for i in jh_savior.thumb_ids(s)]
+        key = jh_savior.savior_key(m)
+        if ids and key not in self._thumb_tried:
+            self._thumb_tried.add(key)
+            t = ThumbThread(ids)
+            t.done.connect(lambda: None)         # 다운로드가 끝나면(또는 하나 받을 때마다) 다음 호버 때 HTML 이 달라져 자동 반영된다
+            self._thumb_threads = [x for x in self._thumb_threads if x.isRunning()] + [t]
+            t.start()
+
+    @staticmethod
+    def _thumb_path(aid):
+        try:
+            return jh_cards.cached_path(aid)
+        except Exception:
+            return None
+
+    def _savior_click_hold(self):
+        """추천 툴팁이 떠 있는 동안 게임 위 왼쪽 클릭이 눌리면 SAVIOR_CLICK_HIDE_SEC 동안 True(툴팁 숨김) + 워처에 즉시 재판정 요청.
+        선택지 감지(_read_input_keys/ChoiceLock)와 별개로 마우스 버튼만 본다."""
+        now = time.monotonic()
+        if not (self.arcana_screen and self.savior_matches):
+            self._sv_click_prev = False
+            return False
+        try:
+            down = bool(ctypes.windll.user32.GetAsyncKeyState(VK_LBUTTON) & 0x8000) and bool(
+                filter_game_inputs({VK_LBUTTON}, is_game_foreground(), is_cursor_over_game()))
+        except Exception:
+            down = False
+        if down and not getattr(self, "_sv_click_prev", False):
+            self._sv_hold_until = now + SAVIOR_CLICK_HIDE_SEC
+            self.watcher.request_arcana_recheck()
+        self._sv_click_prev = down
+        return now < getattr(self, "_sv_hold_until", 0.0)
+
+    def _savior_hover_html(self, rect, pos):
+        """'여정 시작' 화면에서 구원자를 식별한 동안(호버 없이) 계속 보이는(아르카나 편성 화면에서만) 추천 아르카나 툴팁 HTML 함수(detail -> html), 아니면 None."""
+        if not (self.savior_matches and rect and self.settings.get("show_savior_reco", True)) or self.in_journey or not self.arcana_screen:
+            return None
+        m, scale = self.savior_matches, self.settings["tooltip_font_scale"]
+        wide = jh_savior.wide_mode(m)
+        cw = round(rect["width"] * jh_savior.WIDE_WIDTH_FRAC) - 36 if wide else None      # 넓은 모드: 툴팁 안쪽 폭(패딩 18*2 제외)
+        fn = lambda d=0: jh_savior.format_html(m, scale, self._thumb_path, d, cw)
+        fn.wide = wide
+        fn.max_detail = jh_savior.MAX_DETAIL                       # 썸네일을 끝까지 유지하는 단계(0~2) 뒤 마지막 수단(3)까지
+        return fn
+
     def on_journey_status(self, active):
         if active and self.in_journey:
             return                                      # 이미 진입 상태: 중복 알림 무시
@@ -1794,6 +2037,17 @@ class MouseHoverManager(QWidget):
             if sched:
                 self.tooltip.show_html(sched)
                 return
+            if self._savior_click_hold():                 # 클릭 직후 0.5초: 카드 고르기 화면으로 넘어가는 중일 수 있어 숨김
+                self.tooltip.hide_and_clear()
+                return
+            sv = self._savior_hover_html(get_game_window_rect(), QCursor.pos())
+            if sv:
+                if getattr(sv, "wide", False):               # 2세트 구원자: 좌측 스탯 패널까지 넓게(이름 블록 아래, 우측 편성 카드 왼쪽까지)
+                    self.tooltip.show_html(sv, y_frac=jh_savior.WIDE_TOP_FRAC, x_frac=jh_savior.WIDE_X_FRAC,
+                                           width_frac=jh_savior.WIDE_WIDTH_FRAC, min_top_frac=jh_savior.WIDE_TOP_FRAC)
+                else:
+                    self.tooltip.show_html(sv, y_frac=jh_savior.TOOLTIP_TOP_FRAC, x_frac=jh_savior.TOOLTIP_X_FRAC)
+                return
         # DB에 없는 제목(예: '계승')은 상단바 문구로만 알리고 툴팁은 띄우지 않는다(선택지가 있는 이벤트만 툴팁)
         if self._hidden or self._loading_screen or not self.in_journey or not self.matched or not is_game_hovered_or_active():
             self.tooltip.hide_and_clear()
@@ -1882,6 +2136,7 @@ class MouseHoverManager(QWidget):
             g3.addAction(a)
             lang_menu.addAction(a)
         for text, key in ((tr("잠재력/버프 설명 표시"), "show_info"), (tr("📅 일정 미리보기 (좌측 상단 날짜에 마우스)"), "show_schedule"),
+                          (tr("🃏 구원자 추천 아르카나 (여정 시작 화면에서 표시)"), "show_savior_reco"),
                           (tr("⚡ 저사양 모드 (OCR 주기 늘림)"), "low_spec_mode"),
                           (tr("상단바 위치 고정"), "status_badge_locked"),
                           (tr("🐛 상단바/툴팁을 스크린샷에 보이게 하기"), "show_capture_debug")):
@@ -1962,7 +2217,7 @@ class MouseHoverManager(QWidget):
 
     def quit_app(self):
         self.watcher.stop()
-        threads = [self.watcher] + list(self._db_threads) + list(self._card_threads)
+        threads = [self.watcher] + list(self._db_threads) + list(self._card_threads) + list(self._thumb_threads)
         self.stuck_threads = join_threads(threads, 3000)
         if self.stuck_threads:
             log(f"[종료] {len(self.stuck_threads)}개 스레드가 시간 안에 끝나지 않음 -> 프로세스 종료로 정리")
