@@ -257,9 +257,9 @@ _TRANSLATIONS_EN = {
     "🃏 구원자 추천 아르카나": "🃏 Recommended arcana",
     "아르카나 편성 화면에서 추천·대체 카드를 보여줘요.\n카드 고르기 화면에서는 자동으로 숨겨요.":
         "Shows recommended/alternative cards on the arcana setup screen.\nAutomatically hidden on the card picker screen.",
-    "진단": "Diagnostics", "상단바/툴팁을 스크린샷에 보이게 하기": "Show top bar/tooltip in screenshots",
-    "스크린샷·녹화에 상단바와 툴팁이 찍혀요.": "The top bar and tooltip appear in screenshots and recordings.",
-    "⚠ 진단 전용이에요. 켜 두면 화면 인식(OCR)에 영향을 줄 수 있어요.": "⚠ Diagnostic use only. Leaving it on may affect screen recognition (OCR).",
+    "방송·녹화": "Streaming / recording", "방송·녹화·스크린샷에 오버레이 보이기": "Show overlay in streams, recordings and screenshots",
+    "켜면 상단바와 툴팁이 캡처 화면에도 보여요.": "When on, the top bar and tooltip also appear in captures.",
+    "⚠ 평소에는 꺼 두세요. 켜 두면 화면 인식(OCR)에 영향을 줄 수 있어요.": "⚠ Keep it off normally. Leaving it on may affect screen recognition (OCR).",
     "관리": "Maintenance", "DB 새로고침 (10분 쿨다운)": "Refresh DB (10 min cooldown)",
     "가이드 사이트에서 최신 데이터를 다시 받아요.": "Downloads the latest data from the guide site.",
     "인식 상태 초기화": "Reset recognition state",
@@ -2203,7 +2203,7 @@ class MouseHoverManager(QWidget):
                           (tr("🃏 구원자 추천 아르카나 (여정 시작 화면에서 표시)"), "show_savior_reco"),
                           (tr("⚡ 저사양 모드 (OCR 주기 늘림)"), "low_spec_mode"),
                           (tr("상단바 위치 고정"), "status_badge_locked"),
-                          (tr("🐛 상단바/툴팁을 스크린샷에 보이게 하기"), "show_capture_debug")):
+                          (tr("🎥 방송·녹화·스크린샷에 오버레이 보이기"), "show_capture_debug")):
             a = QAction(text, m, checkable=True)
             a.setChecked(bool(self.settings[key]))
             a.triggered.connect(lambda checked, k=key: self.set_value(k, bool(checked)))

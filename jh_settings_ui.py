@@ -288,14 +288,15 @@ class SettingsDialog(QDialog):
         self.chk_reco = self._check(lay, t("🃏 구원자 추천 아르카나"), "show_savior_reco",
                                     t("아르카나 편성 화면에서 추천·대체 카드를 보여줘요.\n카드 고르기 화면에서는 자동으로 숨겨요."))
 
+        self._section(lay, "🎥", t("방송·녹화"), "#ff7675")
+        self.chk_cap = self._check(lay, t("방송·녹화·스크린샷에 오버레이 보이기"), "show_capture_debug",
+                                   t("켜면 상단바와 툴팁이 캡처 화면에도 보여요."),
+                                   warn=t("⚠ 평소에는 꺼 두세요. 켜 두면 화면 인식(OCR)에 영향을 줄 수 있어요."))
+
     # ---- 탭: 고급·진단 ----
     def _build_advanced(self, lay):
         t = self.tr_
-        self._section(lay, "🐛", t("진단"), "#ff7675", first=True)
-        self.chk_cap = self._check(lay, t("상단바/툴팁을 스크린샷에 보이게 하기"), "show_capture_debug",
-                                   t("스크린샷·녹화에 상단바와 툴팁이 찍혀요."),
-                                   warn=t("⚠ 진단 전용이에요. 켜 두면 화면 인식(OCR)에 영향을 줄 수 있어요."))
-        self._section(lay, "🛠", t("관리"), "#55efc4")
+        self._section(lay, "🛠", t("관리"), "#55efc4", first=True)
         self._button(lay, "🔄  " + t("DB 새로고침 (10분 쿨다운)"), self.host.refresh_db)
         self._desc(lay, t("가이드 사이트에서 최신 데이터를 다시 받아요."), plain=True)
         self._button(lay, "🎯  " + t("인식 상태 초기화"), self.host.manual_reset)
