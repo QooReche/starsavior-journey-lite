@@ -229,12 +229,12 @@ class SettingsDialog(QDialog):
         latest = getattr(res, "latest", None)
         if status == "cooldown":
             self.lbl_check.setText(t("{}분 뒤에 다시 확인할 수 있어요").format(max(1, -(-int(getattr(res, "remain", 0)) // 60))))
-        elif status in ("updated", "cached") and latest:
+        elif status in ("updated", "cached"):
             from jh_update import is_newer       # (수동 확인은 '알리지 않음' 으로 숨긴 버전도 다시 보여 준다)
-            if is_newer(latest, self.jhm.APP_VERSION):
+            if latest and is_newer(latest, self.jhm.APP_VERSION):
                 self.lbl_check.setText(t("새 버전 {} 있음").format(latest))
                 self.btn_get.show()
-            else:
+            else:                                # 같거나 낮거나, 게시된 릴리즈가 없는 경우(latest 비어 있음) 모두 '최신'
                 self.lbl_check.setText(t("최신 버전입니다 (현재 {})").format(self.jhm.APP_VERSION))
         else:
             self.lbl_check.setText(t("확인하지 못했어요. 잠시 뒤 다시 시도해 주세요"))

@@ -59,7 +59,7 @@ def test_parse_location_and_ignore_abnormal():
     c, f, _ = mk(OK)
     r = c.check()
     assert r.status == "updated" and r.latest == "1.0.01.261099" and c.latest == "1.0.01.261099"
-    for resp in ((200, None), (302, None), (302, "https://github.com/x/releases"), (404, None),
+    for resp in ((200, None), (302, None), (404, None),   # (302 -> .../releases = 릴리즈 없음 은 정상 응답: test_no_release_is_success_not_error)
                  (302, "https://github.com/x/releases/tag/nightly"), OSError("net")):
         os.remove(c.path()) if os.path.exists(c.path()) else None
         c, f, _ = mk(resp)
@@ -282,3 +282,48 @@ def test_on_update_checked_notice_once_and_dismissed(app, monkeypatch):
     h3._update_notified = False
     f(h3, res, True)
     assert calls == []                               # 수동 확인은 상단바 알림을 예약하지 않음
+
+
+# ---- 게시된 릴리즈가 없을 때(GitHub 가 /releases 로 보냄): 실패가 아니라 '최신' ----
+NO_REL = (302, "https://github.com/QooReche/starsavior-journey-lite/releases")
+
+
+def test_no_release_is_success_not_error():
+    c, f, clock = mk(NO_REL)
+    r = c.check(enabled=True, manual=True)
+    assert r.status == "updated" and r.latest == ""                 # 실패(error) 가 아님
+    assert c.state["consecutive_fail"] == 0 and c.state["next_retry"] == 0 and c.state["last_status"] == "정상"
+    assert ju.visible_update(r.latest, "1.0.02.261017") is None      # 새 버전으로 표시되지 않음
+
+
+def test_no_release_respects_12h_cache():
+    c, f, clock = mk(NO_REL)
+    c.check(enabled=True)
+    assert f.calls == 1
+    r = c.check(enabled=True)                                        # 12시간 안: 다시 묻지 않음
+    assert f.calls == 1 and r.status == "cached"
+
+
+def test_no_release_ui_says_latest():
+    import journey_helper as jhm
+    import jh_settings_ui as ui
+    from types import SimpleNamespace
+    res = ju.UpdateResult("updated", "", "확인함", 0)
+    d = ui.SettingsDialog.__new__(ui.SettingsDialog)
+    texts = {}
+    d.tr_ = lambda s: s
+    d.jhm = jhm
+    d.btn_check = SimpleNamespace(setEnabled=lambda v: None)
+    d.btn_get = SimpleNamespace(hide=lambda: None, show=lambda: texts.setdefault("get", True))
+    d.lbl_check = SimpleNamespace(setText=lambda s: texts.__setitem__("t", s))
+    d._update_banner = lambda: None
+    d._on_check_done(res)
+    assert "최신 버전입니다" in texts["t"] and "get" not in texts
+
+
+def test_real_error_still_error():
+    c, f, clock = mk((200, None))                                    # 302 가 아닌 응답은 여전히 실패
+    assert c.check(enabled=True, manual=True).status == "error"
+    os.remove(c.path())                                              # 앞 검사기의 저장 상태(쿨다운)를 이어받지 않게
+    c2, f2, _ = mk(OSError("net"))
+    assert c2.check(enabled=True, manual=True).status == "error"

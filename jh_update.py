@@ -25,6 +25,7 @@ STATE_FILE = "update_state.json"
 CHECK_INTERVAL_SEC = 12 * 3600
 MANUAL_COOLDOWN_SEC = 10 * 60
 TIMEOUT_SEC = 6
+NO_RELEASE = object()          # _request 가 '게시된 릴리즈 없음(정상 응답)' 을 알릴 때 쓰는 표시
 _TAG_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)\.(\d+)$")
 _VER_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)\.(\d+)$")
 
@@ -151,6 +152,8 @@ class UpdateChecker:
         if status != 302 or not isinstance(loc, str):
             return None
         tag = loc.split("?")[0].rstrip("/").rsplit("/", 1)[-1]
+        if tag == "releases":                       # 게시된 릴리즈가 없으면 GitHub 가 .../releases 로 보낸다 = 정상 응답, 새 버전 없음
+            return NO_RELEASE
         return tag_to_version(tag)
 
     def check(self, enabled=True, manual=False):
@@ -176,7 +179,7 @@ class UpdateChecker:
         else:
             if not enabled:
                 return UpdateResult("disabled", self.latest, "확인 꺼짐", 0)
-            if st["latest"] and now - st["last_check"] < CHECK_INTERVAL_SEC and st["last_check"] <= now:
+            if (st["latest"] or st["last_status"] == "정상") and now - st["last_check"] < CHECK_INTERVAL_SEC and st["last_check"] <= now:
                 return UpdateResult("cached", self.latest, "최근에 확인함 (12시간 이내)", 0)
             if now < retry:
                 return UpdateResult("backoff", self.latest, f"{jh_net.minutes_left(retry, now)}분 뒤 재시도", 0)
@@ -197,6 +200,8 @@ class UpdateChecker:
             st["last_status"] = "실패"
             self._save()
             return UpdateResult("error", self.latest, f"{err} ({jh_net.backoff_sec(n) // 60}분 뒤 재시도)", 0)
+        if ver is NO_RELEASE:
+            ver = ""                                # 릴리즈 없음: 성공으로 기록(실패 단계 올리지 않음), 최신 버전 값은 비움
         st.update(last_check=now, latest=ver, consecutive_fail=0, next_retry=0, manual_bypass=False, last_status="정상")
         self._save()
         return UpdateResult("updated", ver, "확인함", 0)
