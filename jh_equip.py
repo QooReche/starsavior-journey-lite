@@ -1,0 +1,220 @@
+# -*- coding: utf-8 -*-
+"""구원자 '장비' 화면: PVE 추천 장비 세팅 툴팁 (GUI 의존성 없음).
+
+구원자 화면(머리글 '구원자')에서 오른쪽 패널 제목이 '장비' 이고 아래 버튼('전체 해제'/'자동 착장')이 보일 때만 장비 화면으로 본다.
+같은 화면의 부제·이름 줄로 구원자를 식별한다(좌표는 '여정 시작' 화면보다 위쪽). 데이터는 가이드 사이트 구원자 상세의 PVE 장비
+(savior_reco.json 의 equipment) 이며, 없는 구원자는 아무것도 띄우지 않는다. 같은 이름이 여럿이라 하나로 못 정해도 띄우지 않는다.
+"""
+import html as _html
+import re
+import time
+
+import jh_common
+import jh_savior
+
+# 클라이언트 영역 비율 (스크린샷 2장으로 보정: tests/test_equip.py). 머리글은 jh_savior 의 savior_header 영역을 그대로 쓴다.
+EQUIP_REGIONS = {
+    "equip_title": {"top": 0.125, "left": 0.745, "width": 0.060, "height": 0.040},         # 우측 패널 제목 '장비'
+    "equip_btn_clear": {"top": 0.925, "left": 0.765, "width": 0.065, "height": 0.050},     # '전체 해제'
+    "equip_btn_auto": {"top": 0.925, "left": 0.880, "width": 0.065, "height": 0.050},      # '자동 착장'
+    "equip_subtitle": {"top": 0.153, "left": 0.097, "width": 0.170, "height": 0.033},      # 등급 줄 아래 부제/소속
+    "equip_name": {"top": 0.187, "left": 0.097, "width": 0.170, "height": 0.040},          # 구원자 이름
+}
+HEADER_PHRASE = "구원자"
+BUTTON_PHRASE = {"clear": "전체해제", "auto": ("자동착장", "자동장착")}     # OCR 이 '착장'을 '장착'으로 읽기도 한다
+TITLE_SCALES = (1.5, 2.0, 2.5, 3.0)   # 이름 OCR 배율: 이 화면의 글꼴은 '웬' 같은 글자가 배율에 따라 오인식돼 넓게 모은다
+CONFIRM = 2                      # 연속 판독 횟수(화면/구원자 확정)
+LOST = 3                         # 연속으로 못 읽으면 해제
+NOREAD_LOST = 4
+SCAN_SEC = 1.0
+TOOLTIP_TOP_FRAC = 0.20
+TOOLTIP_X_FRAC = 0.30            # 좌우 화살표(0.26 / 0.59) 사이, 우측 장비 패널(0.74~) 왼쪽
+TOOLTIP_MAX_W_FRAC = 0.28
+BASE_W = 430
+
+COL_LABEL, COL_VALUE, COL_NOTE, COL_HEAD, COL_FOOT = "#9fe8ff", jh_common.COL_WHITE, "#90a4ae", "#ffd27f", "#78909c"
+COL_DIVIDER = jh_savior.COL_DIVIDER
+LABEL_W = 68                    # 항목 이름 칸 폭(px): '추천 세트' 가 두 줄로 꺾이지 않는 정도(글꼴이 달라도 넉넉하게)
+
+
+# ---------------------------------------------------------------- 화면 판별
+def _ko(text):
+    return re.sub(r"[^가-힣]", "", text or "")
+
+
+def match_header(text):
+    """OCR 문자열이 구원자 화면 머리글 '구원자' 인가 (뒤에 붙는 '?' 아이콘 잡음은 허용)."""
+    ko = _ko(text)
+    return 3 <= len(ko) <= 5 and HEADER_PHRASE in ko
+
+
+def match_title(text):
+    """우측 패널 제목 '장비' ('I장비' 같은 앞 잡음 허용)."""
+    ko = _ko(text)
+    return 2 <= len(ko) <= 3 and "장비" in ko
+
+
+def match_button(text, kind):
+    ko = _ko(text)
+    phrases = BUTTON_PHRASE[kind]
+    phrases = (phrases,) if isinstance(phrases, str) else phrases
+    return len(ko) >= 3 and any(p in ko or jh_savior._sim(ko[:4], p) >= 0.75 for p in phrases)
+
+
+def screen_hit(title, buttons):
+    """장비 화면 확정 조건: 제목 '장비' + 버튼 하나 이상."""
+    return bool(title) and bool(buttons)
+
+
+# ---------------------------------------------------------------- 상태기계
+class EquipTracker:
+    """장비 화면 확정/해제와 구원자 식별을 1초 간격 판독으로 이어 가는 상태기계(OCR/화면 접근은 주입).
+
+    io: gray(name) -> 영역 그레이 이미지 / lines(gray, scales) -> [(text, conf)] / titles(gray) -> [후보 문자열]
+    step(header) -> None 또는 ('savior', matches|None). matches 가 한 명일 때만 툴팁을 띄운다(호출 측 판단)."""
+
+    def __init__(self, saviors, io, clock=time.monotonic):
+        self.saviors, self.io, self.clock = saviors, io, clock
+        self._next = 0.0
+        self.reset()
+
+    def reset(self):
+        self.on = False
+        self.cur = None                 # 확정한 구원자 키
+        self.cand, self.cand_n = None, 0
+        self.hit_n = self.miss_n = self.noread_n = 0
+        self.quick = False
+        self.gray = None
+        self.last = None
+
+    def recheck(self):
+        """클릭 직후: 구원자 확정을 풀고 다음 판독 한 번으로 다시 확정한다(좌우 화살표로 구원자가 바뀔 수 있다)."""
+        self.cur = None
+        self.last = self.gray = None
+        self.cand, self.cand_n = None, 0
+        self.quick = True                  # 다음 식별은 한 번 읽히면 확정(화살표를 누른 직후라 구원자가 바뀐 것이 확실)
+        self._next = 0.0
+
+    def due(self):
+        now = self.clock()
+        if now < self._next:
+            return False
+        self._next = now + SCAN_SEC
+        return True
+
+    def _off(self):
+        was = self.cur is not None
+        self.reset()
+        return ("savior", None) if was else None
+
+    def step(self, header):
+        text, conf = header
+        if not (conf >= 0.4 and match_header(text)):
+            self.miss_n += 1
+            return self._off() if self.miss_n >= LOST else None
+        gi = self.io.gray
+        title = any(c >= 0.5 and match_title(t) for t, c in self.io.lines(gi("equip_title"), (2.0, 3.0)))
+        buttons = {k for k, n in (("clear", "equip_btn_clear"), ("auto", "equip_btn_auto"))
+                   if any(c >= 0.4 and match_button(t, k) for t, c in self.io.lines(gi(n), (2.0, 3.0)))}
+        if not screen_hit(title, buttons):
+            self.hit_n = 0
+            self.miss_n += 1
+            return self._off() if self.miss_n >= LOST else None
+        self.miss_n = 0
+        self.hit_n += 1
+        if self.hit_n < CONFIRM and not self.on:
+            return None
+        self.on = True
+        sub_g, name_g = gi("equip_subtitle"), gi("equip_name")
+        last = self.gray
+        same = (last is not None and last[0].shape == sub_g.shape and last[1].shape == name_g.shape
+                and abs(_mean_diff(sub_g, last[0])) < 1.0 and abs(_mean_diff(name_g, last[1])) < 1.0)
+        if not same or self.last is None:
+            self.gray = (sub_g, name_g)
+            self.last = jh_savior.identify(self.saviors, self.io.titles(sub_g), self.io.titles(name_g))
+        matches, _how = self.last
+        if not matches:
+            self.noread_n += 1
+            self.cand, self.cand_n = None, 0
+            return self._off() if self.noread_n >= NOREAD_LOST else None
+        self.noread_n = 0
+        key = jh_savior.savior_key(matches)
+        self.cand_n = self.cand_n + 1 if key == self.cand else 1
+        self.cand = key
+        if self.cand_n >= (1 if self.quick else CONFIRM) and key != self.cur:
+            self.cur, self.quick = key, False
+            return ("savior", list(matches))
+        return None
+
+
+def _mean_diff(a, b):
+    import cv2
+    return float(cv2.absdiff(a, b).mean())
+
+
+# ---------------------------------------------------------------- 툴팁
+def usable(matches):
+    """툴팁을 띄울 수 있는 식별 결과인가: 구원자 한 명, 신규(데이터 없음) 아님, 장비 데이터 있음."""
+    if not matches or len(matches) != 1:
+        return False
+    s = matches[0] or {}
+    return bool(s.get("equipment")) and not s.get("unknown")
+
+
+def geometry(rect, scale):
+    """-> (유효 배율, 툴팁 가로 px, 안쪽 폭 px)"""
+    eff = scale * jh_savior.window_k(rect["height"])
+    w = max(220, min(round(BASE_W * eff), int(TOOLTIP_MAX_W_FRAC * rect["width"])))
+    return eff, w, w - 36
+
+
+def _rows(equipment):
+    """장비 데이터 -> [(항목 이름, [(값, 메모)...], [아래 메모...])]  (값이 없는 항목은 뺀다)"""
+    out = []
+    for label, key in (("목걸이", "necklace"), ("반지", "ring"), ("추천 세트", "sets")):
+        vals = [(o["value"], o.get("note") or "") for o in equipment.get(key) or []]
+        if vals:
+            out.append((label, vals, equipment.get("setNotes") or [] if key == "sets" else []))
+    pot = equipment.get("potential")
+    if pot:
+        lines = [x.strip() for x in pot.split("\n") if x.strip()]
+        main = [(x, "") for x in lines if not x.startswith("※")]
+        out.append(("잠재력", main, [x for x in lines if x.startswith("※")]))
+    return out
+
+
+def format_html(savior, scale=1.0, detail=0):
+    """장비 추천 툴팁 HTML (장비 데이터가 없으면 ''). detail 0 보통 / 1 한 단계 작게."""
+    eq = (savior or {}).get("equipment")
+    if not eq:
+        return ""
+    esc = _html.escape
+    px = max(10, round((14 if detail == 0 else 13) * scale))
+    small = max(9, round((12 if detail == 0 else 11) * scale))
+    name = esc(savior.get("name") or "")
+    meta = " · ".join(x for x in (savior.get("subtitle"), jh_savior.ELEMENT_KO.get(savior.get("element"), savior.get("element")),
+                                   savior.get("className")) if x)
+    head = (jh_common.span(f"🛡️ <b>{name}</b> PVE 추천 장비", COL_HEAD, px + 1) + "<br>"
+            + jh_common.span(esc(meta) + " · 작전·회랑·코스모 게이트 기준", COL_NOTE, small))
+    div = f'<tr><td colspan="2" style="background-color:{COL_DIVIDER}; font-size:1px;">&nbsp;</td></tr>'
+    trs = []
+    rows = _rows(eq)
+    for i, (label, vals, notes) in enumerate(rows):
+        cell = []
+        for v, n in vals:
+            line = jh_common.span(esc(v), COL_VALUE, px, bold=True)
+            if n:
+                line += "<br>" + jh_common.span("&nbsp;&nbsp;" + esc(n), COL_NOTE, small)
+            cell.append(line)
+        body = "<br>".join(cell) + "".join("<br>" + jh_common.span(esc(n), COL_NOTE, small) for n in notes)
+        trs.append(f'<tr><td valign="top" width="{LABEL_W}" style="white-space:nowrap;">{jh_common.span(esc(label), COL_LABEL, small, bold=True)}</td>'
+                   f'<td valign="top">{body}</td></tr>')
+        if i < len(rows) - 1:
+            trs.append(div)
+    table = '<table cellspacing="0" cellpadding="3" width="100%">' + "".join(trs) + "</table>"
+    foot = jh_common.span("출처: 스타세이비어 가이드(참고용, 절대적인 정답 아님)", COL_FOOT, small)
+    return head + '<div style="font-size:6px;">&nbsp;</div>' + table + '<div style="font-size:6px;">&nbsp;</div>' + foot
+
+
+def format_matches_html(matches, scale=1.0, detail=0):
+    return format_html(matches[0], scale, detail) if usable(matches) else ""

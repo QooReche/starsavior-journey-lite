@@ -48,8 +48,11 @@ const out = vm.runInContext(`(() => {
     createSaviorArcanaSettingMarkup = (sv, pve, alt) => { cap = { pve, alt }; return ""; };
     try { createDetailMarkup(s); } catch (e) { if (!cap) { res[s.id] = { error: String(e) }; continue; } }
     const defender = s.className === "디펜더" && s.id !== "white-pearl-luna";
+    const statMarkup = createJourneyStatPriorityMarkup(s);
     res[s.id] = { kind: defender ? "defender" : "normal", pve: cap.pve, alt: cap.alt,
-      pveChoices: (cap.pve || []).map(names), altChoices: (cap.alt || []).map(names) };
+      pveChoices: (cap.pve || []).map(names), altChoices: (cap.alt || []).map(names),
+      stat: getJourneyStatPriorityRows(s), equipPve: getBuild(s).equipment.pve,
+      statNotes: [...statMarkup.matchAll(/class="journey-stat-priority-note"[^>]*>([^<]*)</g)].map((m) => m[1]) };
   }
   createSaviorArcanaSettingMarkup = orig;
   return JSON.stringify(res);

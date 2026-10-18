@@ -25,10 +25,12 @@ import os
 import re
 import sys
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
+# app.js 가 스탯 우선순위 아래에 덧붙이는 문구 (구원자 id -> 문구)
+STAT_NOTES = {"waltz-asherah": "왈츠 오브 스타라이트 아세라는 힘 1,000 / 체력 1,000을 목표로 세팅 권장"}
 COMMON = "공용 아르카나"
 # 포팅한 app.js/app-core.js 패치 대상. 이 밖의 구원자를 사이트가 따로 패치하면 경고한다(포팅 누락 감지).
-PORTED_PATCH_IDS = {"gwen", "clarissa", "roberta", "lydia", "lydia-moon-caster"}
+PORTED_PATCH_IDS = {"gwen", "clarissa", "roberta", "lydia", "lydia-moon-caster", "waltz-asherah"}
 
 # '노 페인' 처럼 note 가 비어 있을 때, 사이트의 공통 자동 대체 규칙(buildAlternativeArcana)이 쓰는 대체 대상 (표시용 추정)
 DEFAULT_TARGETS = {"노 페인, 노 게인": "단점 보완 맞춤 훈련", "메이드 바이 페트라♡": "꽃들에게 죽음을", "별을 보며 꿈을": "꽃들에게 죽음을",
@@ -113,6 +115,78 @@ def parse_site_constants(core_js):
         "swap_ids": set(_literal_after(core_js, r"const\s+STRIKER_ARCANA_SWAP_IDS\s*=\s*new\s+Set\(\s*\[", "[", "]")),
         "target_ids": set(_literal_after(core_js, r"const\s+STRIKER_ARCANA_TARGET_IDS\s*=\s*new\s+Set\(\s*\[", "[", "]")),
     }
+
+
+# ---------------------------------------------------------------- 여정 스탯 우선순위 / PVE 장비
+def parse_stat_priority(core_js):
+    """사이트의 여정 스탯 우선순위 패턴({이름: [[스탯..]..]})과 예외 구원자({id: 패턴})를 읽는다."""
+    m = re.search(r"const\s+JOURNEY_STAT_PRIORITY_EXCEPTIONS\s*=\s*Object\.freeze\(\s*\{", core_js)
+    if not m or not re.search(r"const\s+JOURNEY_STAT_PRIORITY_PATTERNS\s*=", core_js):
+        return {}, {}                                                      # 사이트에 이 기능이 없으면 스탯 우선순위는 싣지 않는다
+    patterns = _literal_after(core_js, r"const\s+JOURNEY_STAT_PRIORITY_PATTERNS\s*=\s*Object\.freeze\(\s*\{", "{", "}")
+    s = m.end() - 1
+    body = core_js[s:_balanced(core_js, s, "{", "}") + 1]
+    body = re.sub(r"//[^\n]*", "", body)                                  # 주석 속 id 는 제외
+    exceptions = {k: patterns[v] for k, v in re.findall(r'"([^"]+)"\s*:\s*JOURNEY_STAT_PRIORITY_PATTERNS\.(\w+)', body)}
+    return patterns, exceptions
+
+
+def stat_priority(savior, patterns, exceptions):
+    """사이트 getJourneyStatPriorityRows 의 포팅: [{label, note, groups}] (같은 묶음 안은 '=', 묶음 사이는 '>')."""
+    row = lambda label, groups, note="": {"label": label, "note": note, "groups": groups}
+    exc = exceptions.get(savior.get("id"))
+    if exc:
+        return [row("", exc)]
+    cls = savior.get("className")
+    if cls == "레인저":
+        return [row("", patterns["focusOffense"])]
+    if cls == "디펜더":              # 일반 디펜더는 두 기준을 모두 보여 준다
+        return [row("퓨어탱커", patterns["defenderPure"]),
+                row("공격력 탱커", patterns["defenderAttack"], "이터널 프로미스 카르멘 없을시 사용불가")]
+    if cls == "서포터":
+        return [row("", patterns["supporterCommon"])]
+    return [row("", patterns["offenseCommon"])]
+
+
+_NO_DATA = ("미정", "엑셀에 없음")
+
+
+def _has(v):
+    v = str(v or "").strip()
+    return bool(v) and not any(w in v for w in _NO_DATA)
+
+
+def slim_equipment(pve):
+    """사이트 PVE 장비 카드(createEquipmentCard)가 보여 주는 값만: 목걸이/반지/세트/잠재력. 미정·없음은 뺀다. 전부 없으면 None."""
+    def opts(options, single, note=""):
+        if isinstance(options, list) and options:
+            got = [{"value": str((o or {}).get("value") or "").strip(), "note": str((o or {}).get("note") or "").strip()} for o in options]
+        else:
+            got = [{"value": str(single or "").strip(), "note": str(note or "").strip()}]
+        return [o for o in got if _has(o["value"])]
+
+    pve = pve or {}
+    out = {}
+    necklace = opts(pve.get("necklaceOptions"), pve.get("necklace"), pve.get("necklaceNote"))
+    if necklace:
+        out["necklace"] = necklace
+    ring = opts(pve.get("ringOptions"), pve.get("ring"))
+    if ring:
+        out["ring"] = ring
+    if isinstance(pve.get("setOptions"), list) and pve["setOptions"]:
+        sets = opts(pve["setOptions"], "")
+    else:
+        raw = pve.get("sets")
+        sets = [{"value": str(x).strip(), "note": ""} for x in (raw if isinstance(raw, list) else [raw]) if _has(x)]
+        notes = pve.get("setNotes") if isinstance(pve.get("setNotes"), list) else ([pve["setNote"]] if pve.get("setNote") else [])
+        notes = [str(n).strip() for n in notes if _has(n)]
+        if sets and notes:
+            out["setNotes"] = notes
+    if sets:
+        out["sets"] = sets
+    if _has(pve.get("potential")):
+        out["potential"] = str(pve["potential"]).strip()
+    return out or None
 
 
 # ---------------------------------------------------------------- 카드 라이브러리 (ARCANA_LIBRARY + 하이드레이트)
@@ -256,7 +330,9 @@ def apply_load_time_patches(saviors, consts):
     by_id = {s.get("id"): s for s in saviors}
     g = by_id.get("gwen")
     if g is not None:
-        g["detail"] = {"arcana": {"pve": striker_recommended("gwen"), "pvp": _pend(), "alternatives": striker_alternatives()}}
+        g["detail"] = {"equipment": {"pve": {"necklace": "속도", "ring": "공격력%", "sets": ["통찰(4) + 투지(2)", "파괴(4) + 투지(2)"],
+                                             "potential": "AX5 - 치명타 확률이 부족한 경우\nAX6 - 치명타 확률이 95% 이상인 경우", "note": ""}},
+                       "arcana": {"pve": striker_recommended("gwen"), "pvp": _pend(), "alternatives": striker_alternatives()}}
     for s in saviors:
         if s.get("id") in consts["target_ids"] and s.get("detail"):
             arc = s["detail"].setdefault("arcana", {"pve": [], "pvp": _pend(), "alternatives": []})
@@ -292,7 +368,9 @@ def apply_load_time_patches(saviors, consts):
             {"name": "노 페인, 노 게인", "note": "단점 보완 맞춤 훈련 대체"},
             {"name": "메이드 바이 페트라♡ or 별을 보며 꿈을", "note": "꽃들에게 죽음을 대체"},
             {"name": "하얀 달의 온기는 햇빛처럼 or 어느 한 기사의 맹세", "note": "부족한 자리 대체"}, None]
-        lm["detail"] = {**(lm.get("detail") or {}), "arcana": arc}
+        eq = dict((lm.get("detail") or {}).get("equipment") or {})
+        eq["pve"] = {"necklace": "속도", "ring": "공격력%", "sets": ["파괴(4) + 투지(2)"], "potential": "AX", "note": ""}      # app.js 가 통째로 바꾼다
+        lm["detail"] = {**(lm.get("detail") or {}), "equipment": eq, "arcana": arc}
     wl = by_id.get("lydia")
     if wl is not None and (wl.get("detail") or {}).get("arcana"):
         arc = wl["detail"]["arcana"]
@@ -463,6 +541,7 @@ def build(core_js, app_js, arcanas_json):
     warn = unported_patches(core_js, app_js)
     apply_load_time_patches(saviors, consts)
     R = Resolver(arcanas_json.get("arcanas", []), parse_detail_ids(core_js), parse_arcana_library(core_js), consts["common"])
+    sp_patterns, sp_exceptions = parse_stat_priority(core_js)
     out = []
     for s in saviors:
         kind, pve, alts = final_build(s, R, consts)
@@ -481,6 +560,13 @@ def build(core_js, app_js, arcanas_json):
         pot = str((((s.get("detail") or {}).get("equipment") or {}).get("pve") or {}).get("potential") or "").strip()
         if pot and "엑셀에 없음" not in pot:
             entry["potential"] = pot                            # PVE 특수 잠재력(AX5 등) 추천 문구 (훈련의 방향성 툴팁용)
+        if sp_patterns:
+            entry["statPriority"] = stat_priority(s, sp_patterns, sp_exceptions)   # 여정 시작(인자 고르기) 화면용
+            if s.get("id") in STAT_NOTES:
+                entry["statNote"] = STAT_NOTES[s["id"]]
+        eq = slim_equipment((((s.get("detail") or {}).get("equipment") or {}).get("pve")))
+        if eq:
+            entry["equipment"] = eq                                                  # 장비 화면용 PVE 추천 세팅
         out.append(entry)
     data = {"version": SCHEMA_VERSION, "unportedPatches": warn, "saviors": out}
     return data, R

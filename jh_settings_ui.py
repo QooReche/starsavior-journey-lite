@@ -374,6 +374,10 @@ class SettingsDialog(QDialog):
                                      t("게임 좌측 상단 날짜에 마우스를 올리면 이번 턴 일정과\n고정 이벤트의 주요 보상(참고용)을 보여줘요."))
         self.chk_reco = self._check(lay, t("🃏 구원자 추천 아르카나"), "show_savior_reco",
                                     t("아르카나 편성 화면에서 추천·대체 카드를 보여줘요.\n카드 고르기 화면에서는 자동으로 숨겨요."))
+        self.chk_stat = self._check(lay, t("📊 여정 스탯 우선순위"), "show_savior_stat",
+                                    t("구원자 추천 아르카나 아래에 힘·체력 같은 스탯 우선순위를 보여줘요.\n데이터가 없는 구원자는 표시하지 않아요."))
+        self.chk_equip = self._check(lay, t("🛡️ 구원자 PVE 추천 장비"), "show_savior_equip",
+                                     t("구원자 장비 화면에서 목걸이·반지·세트·잠재력 추천을 보여줘요.\n데이터가 없는 구원자는 표시하지 않아요."))
 
         self._section(lay, "🎥", t("방송·녹화"), "#ff7675")
         self.chk_cap = self._check(lay, t("방송·녹화·스크린샷에 오버레이 보이기"), "show_capture_debug",
@@ -429,7 +433,7 @@ class SettingsDialog(QDialog):
             self.cb_lang.setCurrentIndex(max(0, self.cb_lang.findData(self.host.lang)))
             self.cb_scale.setCurrentIndex(max(0, self.cb_scale.findData(self.jhm.snap_font_scale(s.get("tooltip_font_scale")))))
             for cb, key in ((self.chk_lock, "status_badge_locked"), (self.chk_low, "low_spec_mode"), (self.chk_upd, "check_updates"), (self.chk_info, "show_info"),
-                            (self.chk_sched, "show_schedule"), (self.chk_reco, "show_savior_reco"), (self.chk_cap, "show_capture_debug")):
+                            (self.chk_sched, "show_schedule"), (self.chk_reco, "show_savior_reco"), (self.chk_stat, "show_savior_stat"), (self.chk_equip, "show_savior_equip"), (self.chk_cap, "show_capture_debug")):
                 cb.setChecked(bool(s.get(key)))
             hidden = set(s.get("hidden_difficulties") or [])
             for val, cb in self.chk_diff.items():

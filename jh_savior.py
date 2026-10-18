@@ -458,7 +458,33 @@ def _grid_table(columns, thumb_path, P):
     return out
 
 
-def format_reco_html(savior, scale=1.0, thumb_path=None, detail=0, content_w=None):
+def stat_priority_html(savior, P):
+    """여정 스탯 우선순위 구역 HTML (데이터가 없으면 ''). 같은 묶음은 '=', 묶음 사이는 '>'. 디펜더는 퓨어탱커/공격력 탱커 두 줄."""
+    rows = savior.get("statPriority") or []
+    if not rows:
+        return ""
+    esc = _html.escape
+    px, small = P["px"], P["small"]
+    out = [jh_common.span("📊 여정 스탯 우선순위", COL_LOOSE_HEAD, small + 1, bold=True)]
+    for r in rows:
+        seq = []
+        for gi, group in enumerate(r.get("groups") or []):
+            if gi:
+                seq.append(jh_common.span("&nbsp;&gt;&nbsp;", COL_MUTED, px))
+            for si, stat in enumerate(group):
+                if si:
+                    seq.append(jh_common.span("&nbsp;=&nbsp;", COL_MUTED, px))
+                seq.append(jh_common.span(esc(stat), jh_common.COL_WHITE, px, bold=True))
+        label = jh_common.span(f"▌{esc(r['label'])}&nbsp;&nbsp;", COL_ALT, px, bold=True) if r.get("label") else ""
+        out.append(label + "".join(seq))
+        if r.get("note"):
+            out.append(jh_common.span(f"&nbsp;&nbsp;└ {esc(r['note'])}", COL_HINT, small))
+    if savior.get("statNote"):
+        out.append(jh_common.span(f"※ {esc(savior['statNote'])}", COL_HINT, small))
+    return '<div style="font-size:8px;">&nbsp;</div>' + "<br>".join(out)
+
+
+def format_reco_html(savior, scale=1.0, thumb_path=None, detail=0, content_w=None, show_stat=True):
     """구원자 추천 아르카나 툴팁 HTML.
     thumb_path: arcanaId -> 캐시된 PNG 경로 함수(없으면 썸네일 없이 텍스트만).
     detail: 0 풀 레이아웃(썸네일 40px) / 1 썸네일 30px·간격 축소 / 2 글자 15->13px·썸네일 26px / 3 썸네일 제거(마지막 수단).
@@ -475,14 +501,15 @@ def format_reco_html(savior, scale=1.0, thumb_path=None, detail=0, content_w=Non
     one_line = detail >= 1 or bool(savior.get("sets"))          # 넓은 모드(2세트)는 머리 줄을 한 줄로
     head = (f'<span style="font-size:{px + 1}px;">🃏 <b>{name}</b> 추천 아르카나</span>' + (" " if one_line else "<br>")
             + jh_common.span(esc(meta), COL_MUTED, small))
-    foot = (f'<div style="font-size:8px;">&nbsp;</div>'
+    stat = stat_priority_html(savior, P) if show_stat else ""
+    foot = (stat + f'<div style="font-size:8px;">&nbsp;</div>'
             + jh_common.span("출처: 스타세이비어 가이드(참고용, 절대적인 정답 아님)", COL_FOOT, small))
     sets = savior.get("sets") or []
     if sets:
         return head + _grid_table(sets, thumb_path, P) + foot
     slots = savior.get("slots") or []
     if not any(slots):
-        return head + f'<br>{jh_common.span("등록된 추천 아르카나가 없습니다 (미정)", COL_HINT, small)}'
+        return head + f'<br>{jh_common.span("등록된 추천 아르카나가 없습니다 (미정)", COL_HINT, small)}' + stat
     if all((not sl) or all(o.get("common") for o in sl.get("options") or []) for sl in slots):
         return head + (f'<br>{jh_common.span("특정 추천 카드 없음 - 공용 아르카나로 자유롭게 편성", COL_COMMON, px)}{foot}')
     return head + _grid_table([{"label": "", "slots": slots, "alternatives": savior.get("alternatives") or []}], thumb_path, P) + foot
@@ -493,15 +520,15 @@ def format_candidates_html(matches, scale=1.0, thumb_path=None, detail=0):
     small = max(9, round(11 * scale))
     note = (f'<span style="color:{COL_WARN}; font-size:{small}px;">⚠️ 같은 이름 구원자가 {len(matches)}명입니다 '
             f'(부제를 읽지 못함) - 후보를 모두 표시합니다</span>')
-    return "<hr>".join([note] + [format_reco_html(s, scale, thumb_path, min(detail + 1, MAX_DETAIL)) for s in matches])
+    return "<hr>".join([note] + [format_reco_html(s, scale, thumb_path, min(detail + 1, MAX_DETAIL), show_stat=False) for s in matches])
 
 
-def format_html(matches, scale=1.0, thumb_path=None, detail=0, content_w=None):
+def format_html(matches, scale=1.0, thumb_path=None, detail=0, content_w=None, show_stat=True):
     if not matches:
         return ""
     try:
         if len(matches) == 1:
-            return format_reco_html(matches[0], scale, thumb_path, detail, content_w)
+            return format_reco_html(matches[0], scale, thumb_path, detail, content_w, show_stat)
         return format_candidates_html(matches, scale, thumb_path, detail)
     except Exception:
         return ""

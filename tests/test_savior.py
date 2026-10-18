@@ -35,7 +35,7 @@ def find(saviors, name, subtitle):
 
 
 # ------------------------------------------------------------------ 슬림 JSON 변환 (사이트 로직 포팅)
-SITE_DIR = os.path.join(HERE, "..", "..", "..", "temp", "journeyhelper", "work", "site_2026-10-17")      # 사이트 사본(저장소 밖, 없으면 건너뜀)
+SITE_DIR = os.path.join(HERE, "..", "..", "..", "temp", "journeyhelper", "work", "site_2026-10-18")      # 사이트 사본(저장소 밖, 없으면 건너뜀)
 SITE_ENV = os.environ.get("JH_SITE_DIR") or SITE_DIR
 needs_site = pytest.mark.skipif(not os.path.exists(os.path.join(SITE_ENV, "app-core.js")), reason="사이트 사본 없음")
 
@@ -233,7 +233,22 @@ def test_port_equals_site_js_executed_in_node():
         assert norm(n["alt"], ka) == norm(alts, ka), s["id"]
         assert n["pveChoices"] == [R.choices(x["name"]) if x else [] for x in pve], s["id"]
         assert n["altChoices"] == [R.choices(x["name"]) if x else [] for x in alts], s["id"]
-
+@needs_site
+@pytest.mark.skipif(shutil.which("node") is None, reason="node 없음")
+def test_stat_priority_and_equipment_equal_site_js_executed_in_node():
+    """여정 스탯 우선순위(문구 포함)와 PVE 장비가 사이트 JS 를 node 로 실제 실행한 결과와 전원 같다."""
+    out = subprocess.run(["node", os.path.join(HERE, "..", "tools", "site_logic_check.js"), SITE_ENV], capture_output=True, timeout=120)
+    node = json.loads(out.stdout.decode("utf-8-sig"))
+    rd = lambda n: open(os.path.join(SITE_ENV, n), encoding="utf-8-sig").read()
+    data, _ = ex.build(rd("app-core.js"), rd("app.js"), json.loads(rd("arcanas.json")))
+    strip = lambda x: re.sub(r"^[※-]\s*", "", x or "")
+    for s in data["saviors"]:
+        n = node[s["key"]]
+        site_rows = [{"label": strip(r.get("label")), "note": strip(r.get("note")), "groups": r["groups"]} for r in n["stat"]]
+        assert s["statPriority"] == site_rows, s["key"]
+        assert ex.slim_equipment(n["equipPve"]) == s.get("equipment"), s["key"]
+        expected = [r["note"] for r in s["statPriority"] if r["note"]] + ([s["statNote"]] if s.get("statNote") else [])
+        assert [strip(x) for x in n["statNotes"]] == expected, s["key"]
 
 
 # ------------------------------------------------------------------ 식별 로직
@@ -757,3 +772,48 @@ def test_single_and_two_set_share_one_grid_renderer(saviors):
     consts = [n for n in dir(sv) if n.startswith("COL_")]
     src = open(sv.__file__, encoding="utf-8").read()
     assert len(consts) >= 10 and not _re.search(r'color:#[0-9a-fA-F]{6}', src.split("def format_candidates_html")[0].split("COL_COMMON")[1])
+
+
+# ------------------------------------------------------------------ 여정 스탯 우선순위 (여정 시작 화면 툴팁)
+def _plain(html):
+    return re.sub(r"<[^>]+>", "", html).replace("&nbsp;", " ").replace("&gt;", ">")
+
+
+def test_stat_priority_is_shown_with_groups(saviors):
+    s = find(saviors, "아세라", "보이저 구원단")
+    txt = _plain(sv.format_html([s], 1.0, None, 0, 404))
+    assert "여정 스탯 우선순위" in txt
+    assert "힘 > 체력 = 인내 > 집중 = 보호" in txt                         # 같은 묶음은 '=', 묶음 사이는 '>'
+
+
+def test_stat_priority_can_be_hidden(saviors):
+    s = find(saviors, "아세라", "보이저 구원단")
+    assert "여정 스탯 우선순위" not in sv.format_html([s], 1.0, None, 0, 404, show_stat=False)
+
+
+def test_stat_priority_hidden_when_no_data(saviors):
+    s = dict(find(saviors, "아세라", "보이저 구원단"))
+    s.pop("statPriority", None)
+    assert "여정 스탯 우선순위" not in sv.format_html([s], 1.0, None, 0, 404)
+
+
+def test_defender_shows_both_stat_priorities(saviors):
+    s = next(x for x in saviors if x.get("sets"))
+    txt = _plain(sv.format_html([s], 1.0, None, 0, 600))
+    assert "퓨어탱커  체력 = 인내 > 힘 > 집중 = 보호" in txt
+    assert "공격력 탱커  힘 > 체력 > 인내 > 집중 = 보호" in txt
+    assert "이터널 프로미스 카르멘 없을시 사용불가" in txt
+
+
+def test_waltz_asherah_stat_note(saviors):
+    s = next(x for x in saviors if x["key"] == "waltz-asherah")
+    assert "힘 1,000 / 체력 1,000" in _plain(sv.format_html([s], 1.0, None, 0, 404))
+
+
+def test_homonym_candidates_do_not_repeat_stat_priority(saviors):
+    two = [find(saviors, "아세라", "보이저 구원단"), find(saviors, "샤를", "모나스티르 기사단")]
+    assert "여정 스탯 우선순위" not in sv.format_html(two, 1.0, None, 0)
+
+
+def test_every_savior_has_stat_priority(saviors):
+    assert all(s.get("statPriority") for s in saviors)
