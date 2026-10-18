@@ -178,8 +178,11 @@ def key_rewards(event, limit=MAX_KEY_REWARDS):
         for v in (o.get("variants") or [o])[:1]:
             for line in (v.get("reward") or "").split("\n"):
                 line = re.sub(r"^\[(SUCCESS|FAIL)\]\s*", "", line.strip())
-                line = re.sub(r"^(이지|노말|하드|Easy|Normal|Hard)\s+", "", line)
-                if not line or _COST_RE.search(line) or _STAT_RE.match(line):
+                stripped = re.sub(r"^(이지|노말|하드|Easy|Normal|Hard)\s+", "", line)
+                header = stripped != line and not re.search(r"\d", stripped)        # '이지 토벌 평가전' 같은 난이도 머리 줄
+                line = stripped
+                if (not line or header or _COST_RE.search(line) or _STAT_RE.match(line)
+                        or line.startswith("스탯 인자")):
                     continue
                 if line.startswith("잠재력 포인트"):
                     if line not in poten:
@@ -189,20 +192,54 @@ def key_rewards(event, limit=MAX_KEY_REWARDS):
     return (keys + poten[:1])[:limit]
 
 
-def _reward_line(contents, events, size):
+# 일정 이름 -> DB 에서는 '<접두> - <종류>' 로 종류별 이벤트로 나뉜 것 (그 시기에 나올 수 있는 것 중 랜덤)
+GROUP_PREFIX = {"날씨": "오늘의 날씨"}
+_MAIN_STAT_RE = re.compile(r"^(힘|체력|인내|집중|보호)\s*[+-]")
+
+
+def _group_summary(prefix, events, time_label):
+    """'오늘의 날씨 - ○○' 같은 종류별 이벤트 -> ['돌풍 힘', '쾌청 잠재력 포인트 +30', ...] (그 시기에 나오는 것만, 없으면 전부)"""
+    evs = [e for e in events if not e.get("isArcana") and (e.get("rawTitle") or "").startswith(prefix + " - ")]
+    now = [e for e in evs if any(time_label in (s or "") for s in e.get("sources") or [])]
+    out = []
+    for e in now or evs:
+        name = e["rawTitle"].split(" - ", 1)[1]
+        kr = key_rewards(e, 1)
+        if not kr:                                           # 보상이 스탯뿐이면 올라가는 주요 스탯 이름만
+            stats = []
+            for o in e.get("options") or []:
+                for line in ((o.get("variants") or [o])[0].get("reward") or "").split("\n"):
+                    m = _MAIN_STAT_RE.match(re.sub(r"^\[(SUCCESS|FAIL)\]\s*", "", line.strip()))
+                    if m and m.group(1) not in stats:
+                        stats.append(m.group(1))
+            kr = ["/".join(stats[:2])] if stats else []
+        short = kr[0].replace("잠재력 포인트 ", "잠재력 ").replace("여정 버프 획득 ", "").replace("여정 버프 ", "")
+        out.append(f"{name} {short}".strip())
+    return out
+
+
+def _reward_line(contents, events, size, time_label="", named=False):
     """고정 이벤트 항목 아래에 붙일 '주요 보상' 줄 HTML 목록"""
     idx = _event_index(events)
     out = []
     if not idx:
         return out
     import jh_db
+    span = lambda t, col: f'<span style="color:{col}; font-size:{size}px;">{_html.escape(t)}</span>'
     for c in contents:
-        ev = idx.get(jh_db.clean_title(_PROMO_PREFIX.sub("", c)))
-        kr = key_rewards(ev) if ev else []
-        if kr:
-            who = f"{_PROMO_PREFIX.sub('', c)}: " if len(contents) > 1 else ""        # 한 줄에 이벤트가 여럿이면 이름을 붙인다
-            out.append(f'<span style="color:#a5d6a7; font-size:{size}px;">&nbsp;&nbsp;└ {_html.escape(who)}주요 보상: </span>'
-                       f'<span style="color:#e8f5e9; font-size:{size}px;">{_html.escape(" · ".join(kr))}</span>')
+        name = _PROMO_PREFIX.sub("", c)
+        if "평가전" in name:                                         # 평가전은 앱이 툴팁을 띄우지 않는 이벤트라 보상 요약도 하지 않는다
+            continue
+        who = f"{name}: " if (len(contents) > 1 or named) else ""      # 한 줄에 이벤트가 여럿이면 이름을 붙인다
+        ev = idx.get(jh_db.clean_title(name))
+        if ev:
+            kr = key_rewards(ev)
+            if kr:
+                out.append(span(f"  └ {who or '주요 보상: '}", "#a5d6a7") + span(" · ".join(kr), "#e8f5e9"))
+        elif name in GROUP_PREFIX:
+            sm = _group_summary(GROUP_PREFIX[name], events, time_label)
+            if sm:
+                out.append(span(f"  └ {who}랜덤 {len(sm)}종 - ", "#a5d6a7") + span(" · ".join(sm), "#e8f5e9"))
     return out
 
 
@@ -232,7 +269,7 @@ def format_schedule_html(row, scale=1.0, events=None):
             for e in evs:
                 rows.append(_line(e, px))
                 if e[1] == "고정":
-                    rows.extend(_reward_line(e[3], events, small))
+                    rows.extend(_reward_line(e[3], events, small, time_label))
             parts.append(f'<span style="color:#9fe8ff; font-size:{small}px;"><b>{label}</b></span><br>' + "<br>".join(rows))
     if not (befores or currents or afters):
         parts.append(f'<span style="color:#888888; font-size:{small}px;">이번 턴에는 알려진 고정 일정이 없습니다</span>')
@@ -244,6 +281,8 @@ def format_schedule_html(row, scale=1.0, events=None):
             names = " · ".join(esc(c) for e in fixed for c in e[3])
             rows.append(f'<span style="color:#ffd27f; font-size:{small}px;">{dist}턴 뒤 ({esc(r[1])})</span> '
                         f'<span style="color:#ffffff; font-size:{small}px;">{names}</span>')
+            for e in fixed:
+                rows.extend(_reward_line(e[3], events, small, r[1], named=True))
         parts.append(f'<span style="color:#9fe8ff; font-size:{small}px;"><b>다음 고정 일정</b></span><br>' + "<br>".join(rows))
     parts.append(f'<span style="color:#78909c; font-size:{small}px;">일정 출처: 옛 DB(턴 기준). 훈련 횟수와는 다를 수 있음</span>')
     sep = '<hr style="border:none;border-top:1px solid #444444;margin:6px 0;">'

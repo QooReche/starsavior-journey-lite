@@ -113,3 +113,32 @@ def test_multiple_contents_get_event_name_prefix_and_random_events_have_no_rewar
     html = js.format_schedule_html(js.find_turn("6월 하순"), 1.0, events)
     assert "토벌의 전리품: " in html and "리세트의 유혹: " in html
     assert "아이템C" not in js.format_schedule_html(js.find_turn("3월 중순"), 1.0, events)   # 랜덤 이벤트는 보상 줄 없음
+
+
+def test_key_rewards_skips_difficulty_header_and_hidden_stat_items():
+    ev = _ev("평가전 승리", ["이지 토벌 평가전\n힘 +5 or 체력 +5\n스탯 인자 힘 상승 Ⅱ - 힘 15\nor\n하드 토벌 평가전\n스탯 인자 힘 상승 Ⅲ - 힘 20"])
+    assert js.key_rewards(ev) == []
+
+
+def test_weather_group_shows_only_kinds_for_this_time_and_short_rewards():
+    def w(kind, reward, src):
+        e = _ev(f"오늘의 날씨 - {kind}", [reward])
+        e["sources"] = [src]
+        return e
+    events = [w("돌풍", "컨디션 -1\n힘 +15", "5월 하순 7월 중순"), w("쾌청", "잠재력 포인트 +30", "5월 하순 7월 중순"),
+              w("순풍", "여정 버프 획득 상쾌함 +3턴", "5월 하순 7월 중순"), w("폭설", "체력 +20", "11월 중순")]
+    html = js.format_schedule_html(js.find_turn("7월 중순"), 1.0, events)
+    assert "랜덤 3종" in html and "돌풍 힘" in html and "쾌청 잠재력 +30" in html and "순풍 상쾌함 +3턴" in html
+    assert "폭설" not in html                                                    # 11월 중순에만 나오는 종류는 제외
+
+
+def test_next_fixed_schedule_shows_named_key_rewards():
+    events = [_ev("습격", ["속도의 감각 20 % 할인\n잠재력 포인트 +20"])]
+    html = js.format_schedule_html(js.find_turn("7월 중순"), 1.0, events)
+    assert "└ 습격: " in html and "속도의 감각 20 % 할인" in html
+
+
+def test_evaluation_events_get_no_reward_line():
+    events = [_ev("토벌 평가전 승리", ["아이템X"]), _ev("원정 평가전 승리", ["아이템Y"])]
+    html = js.format_schedule_html(js.find_turn("6월 하순"), 1.0, events)
+    assert "아이템X" not in html and "아이템Y" not in js.format_schedule_html(js.find_turn("7월 중순"), 1.0, events)
