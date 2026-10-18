@@ -47,6 +47,12 @@ def set_savior(matches):
         _savior = matches[0] if len(matches) == 1 else None
 
 
+def clear_savior():
+    """아르카나 편성 화면에 (다시) 들어갈 때 호출: 이전 여정의 구원자를 비운다. 이번에 식별이 안 되면 추천 줄을 생략한다(틀린 추천보다 낫다)."""
+    global _savior
+    _savior = None
+
+
 def route_for(option):
     return ROUTES.get(re.sub(r"[\.\s]+$", "", (option or {}).get("choice", "")))
 

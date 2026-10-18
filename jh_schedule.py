@@ -152,13 +152,15 @@ def upcoming(row, limit=3):
     return out
 
 
-_COST_RE = re.compile(r"(사용\s*\d|필요$|^or$|^없음$|^(이지|노말|하드|쉬움|보통|어려움)\s)", re.I)
+_COST_RE = re.compile(r"(사용\s*\d|필요$|소모$|제거$|^or$|^없음$|^(이지|노말|하드|쉬움|보통|어려움)\s)", re.I)
+_DIFF_HEAD_RE = re.compile(r"(이지|노말|하드|Easy|Normal|Hard)(\s+\D*)?")      # 난이도 단어만 있거나 숫자 없는 난이도 머리 줄
+_OR_RE = re.compile(r"\s+or(?:\s+|$)")                                         # 줄 중간/끝의 택1 구분자
 _STAT_RE = re.compile(r"^(힘|체력|인내|집중|보호|스태미나|컨디션|오래된 (동전|주화))\s*[+-]")
 _PROMO_PREFIX = re.compile(r"^\([^)]*\)\s*")
 MAX_KEY_REWARDS = 3
 
 
-_IDX = (None, -1, {})        # (리스트 id, 길이, 색인) 마지막 한 번만 기억
+_IDX = (None, -1, {})        # (리스트 자체, 길이, 색인) 마지막 한 번만 기억 (id 만 기억하면 해제된 옛 캐시 주소를 재사용할 수 있다)
 
 
 def _event_index(events):
@@ -166,9 +168,22 @@ def _event_index(events):
     global _IDX
     if not events:
         return {}
-    if _IDX[0] != id(events) or _IDX[1] != len(events):
-        _IDX = (id(events), len(events), {e.get("cleanTitle"): e for e in events if not e.get("isArcana")})
+    if _IDX[0] is not events or _IDX[1] != len(events):
+        _IDX = (events, len(events), {e.get("cleanTitle"): e for e in events if not e.get("isArcana")})
     return _IDX[2]
+
+
+def _clean_reward_line(line):
+    """보상 한 줄 -> 표시할 문구 또는 None(비용/요구/난이도 머리/스탯/숨김 아이템/빈 줄). 'A or B' 택1 은 'A 등' 으로 줄인다."""
+    line = re.sub(r"^\[(SUCCESS|FAIL)\]\s*", "", line.strip())
+    if not line or _DIFF_HEAD_RE.fullmatch(line) and not re.search(r"\d", line):        # '이지', '이지 토벌 평가전' 같은 난이도 머리 줄
+        return None
+    line = re.sub(r"^(이지|노말|하드|Easy|Normal|Hard)\s+", "", line)
+    chained = bool(_OR_RE.search(line))
+    line = _OR_RE.split(line)[0].strip() if chained else line
+    if not line or _COST_RE.search(line) or _STAT_RE.match(line) or line.startswith("스탯 인자"):
+        return None
+    return line + " 등" if chained else line
 
 
 def key_rewards(event, limit=MAX_KEY_REWARDS):
@@ -176,13 +191,9 @@ def key_rewards(event, limit=MAX_KEY_REWARDS):
     keys, poten = [], []
     for o in event.get("options") or []:
         for v in (o.get("variants") or [o])[:1]:
-            for line in (v.get("reward") or "").split("\n"):
-                line = re.sub(r"^\[(SUCCESS|FAIL)\]\s*", "", line.strip())
-                stripped = re.sub(r"^(이지|노말|하드|Easy|Normal|Hard)\s+", "", line)
-                header = stripped != line and not re.search(r"\d", stripped)        # '이지 토벌 평가전' 같은 난이도 머리 줄
-                line = stripped
-                if (not line or header or _COST_RE.search(line) or _STAT_RE.match(line)
-                        or line.startswith("스탯 인자")):
+            for raw in (v.get("reward") or "").split("\n"):
+                line = _clean_reward_line(raw)
+                if not line:
                     continue
                 if line.startswith("잠재력 포인트"):
                     if line not in poten:
@@ -200,7 +211,8 @@ _MAIN_STAT_RE = re.compile(r"^(힘|체력|인내|집중|보호)\s*[+-]")
 def _group_summary(prefix, events, time_label):
     """'오늘의 날씨 - ○○' 같은 종류별 이벤트 -> ['돌풍 힘', '쾌청 잠재력 포인트 +30', ...] (그 시기에 나오는 것만, 없으면 전부)"""
     evs = [e for e in events if not e.get("isArcana") and (e.get("rawTitle") or "").startswith(prefix + " - ")]
-    now = [e for e in evs if any(time_label in (s or "") for s in e.get("sources") or [])]
+    pat = re.compile(r"(?<!\d)" + re.escape(time_label))
+    now = [e for e in evs if any(pat.search(s or "") for s in e.get("sources") or [])]
     out = []
     for e in now or evs:
         name = e["rawTitle"].split(" - ", 1)[1]
@@ -250,7 +262,7 @@ def _reward_line(contents, events, size, time_label="", named=False):
     return out
 
 
-_DELTA_RE = re.compile(r"(힘|체력|인내|집중|보호|스태미나|컨디션|잠재력 포인트)\s*([+-]\d+)(?:~([+-]?\d+))?")
+_DELTA_RE = re.compile(r"(힘|체력|인내|집중|보호|스태미나|컨디션|잠재력 포인트)\s*([+-]\d+)(?:~([+-]?\d+))?(?!\d|\s*턴)")
 _DELTA_ORDER = ("힘", "체력", "인내", "집중", "보호", "스태미나", "컨디션", "잠재력 포인트")
 MAX_EFFECT_TOKENS = 5
 
@@ -262,7 +274,7 @@ def effect_summary(event):
     for o in event.get("options") or []:
         for v in (o.get("variants") or [o])[:1]:
             for line in (v.get("reward") or "").split("\n"):
-                if _COST_RE.search(line.strip()):
+                if _COST_RE.search(line.strip()) or (_DIFF_HEAD_RE.fullmatch(line.strip()) and not re.search(r"\d", line)):
                     continue
                 found = [(m.group(1), [int(m.group(2))] + ([int(m.group(3))] if m.group(3) else [])) for m in _DELTA_RE.finditer(line)]
                 if not found:
@@ -296,7 +308,7 @@ def effect_summary(event):
     for x in key_rewards(event, 3):
         if x.startswith("잠재력 포인트"):
             continue
-        items.append(x.split(" or ")[0] + " 등" if " or " in x else x)         # 긴 택1 문구는 앞부분만
+        items.append(x)                                                        # 택1 문구는 key_rewards 가 이미 '앞부분 등' 으로 줄였다
     return items[:2] + tokens[:MAX_EFFECT_TOKENS]
 
 

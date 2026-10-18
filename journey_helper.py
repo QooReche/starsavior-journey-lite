@@ -1979,6 +1979,8 @@ class MouseHoverManager(QWidget):
         return None
 
     def on_arcana_screen_changed(self, on):
+        if on and not self.arcana_screen:
+            jh_relic.clear_savior()             # 새 편성 화면: 식별되면 다시 채워지고, 안 되면 이전 여정의 추천을 쓰지 않는다
         self.arcana_screen = bool(on)
 
     def on_savior_changed(self, matches):

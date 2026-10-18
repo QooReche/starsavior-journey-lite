@@ -183,3 +183,43 @@ def test_random_events_are_listed_one_per_row_with_summary():
 def test_random_event_without_cache_still_lists_names():
     html = js.format_schedule_html(js.find_turn("8월 하순"), 1.0)
     assert "• 단원과의 식사" in html and "자동 요약한 참고용" not in html
+
+
+# ---- 코드 리뷰(2026-10-18) 회귀 ----
+def test_lone_difficulty_word_line_is_not_a_reward():
+    assert js.key_rewards({"options": [{"reward": "이지\n스태미나 +5"}]}) == []
+    assert js.effect_summary({"options": [{"reward": "이지\n스태미나 +5"}]}) == ["스태미나 +5"]
+    ev = _ev("대회", ["이지\n노말\n하드\n정체불명의 유물"])
+    assert js.key_rewards(ev) == ["정체불명의 유물"]
+
+
+def test_buff_duration_turns_are_not_stat_deltas():
+    ev = {"options": [{"reward": "여정 버프 획득 훈련 능숙 : 보호 +3턴\n힘 +10"}]}
+    out = js.effect_summary(ev)
+    assert out[-1] == "힘 +10" and not any(t.startswith("보호") and "턴" not in t for t in out)   # '보호 +3' 같은 가짜 증감이 없다
+    ev2 = {"options": [{"reward": "힘 +10 or 보호 +3턴"}]}
+    assert js.effect_summary(ev2) == ["힘 +10"]                       # 지속 턴은 스탯이 아니므로 택1 묶음이 생기지 않는다
+
+
+def test_consume_and_remove_lines_are_costs_and_or_chains_are_trimmed():
+    ev = {"options": [{"reward": "고풍스러운 열쇠 소모\n이로운 여정 버프 제거\n스트릿 베이커스 굿즈 Ⅰ or\n스트릿 베이커스 굿즈 Ⅱ or\n리세트의 저금통"}]}
+    kr = js.key_rewards(ev, 5)
+    assert not any("소모" in x or "제거" in x for x in kr)
+    assert "스트릿 베이커스 굿즈 Ⅰ 등" in kr and not any(x.endswith(" or") for x in kr)
+
+
+def test_time_label_match_requires_word_boundary():
+    def w(src):
+        e = _ev("오늘의 날씨 - 호우", ["체력 +10"])
+        e["sources"] = [src]
+        return e
+    only_nov = [w("11월 중순"), dict(w("1월 중순"), rawTitle="오늘의 날씨 - 안개")]
+    names = [x.split()[0] for x in js._group_summary("오늘의 날씨", only_nov, "1월 중순")]
+    assert names == ["안개"]                                          # '11월 중순' 의 호우는 섞이지 않는다
+
+
+def test_event_index_rebinds_when_a_new_list_is_used():
+    a = [_ev("가", ["x"])]
+    b = [_ev("나", ["y"])]
+    assert set(js._event_index(a)) == {a[0]["cleanTitle"]}
+    assert set(js._event_index(b)) == {b[0]["cleanTitle"]}

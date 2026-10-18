@@ -74,3 +74,15 @@ def test_codes_are_in_a_table_so_wrapped_text_stays_aligned():
     html = jh_relic.section(OPT("공격에 도움이 되는 응원"))
     assert html.count("<table") == 1 and html.count("<tr>") >= 5              # 코드 칸 + 설명 칸, 행 사이 구분선
     assert jh_relic._COL_DIVIDER in html                                        # 구분선 색은 구원자 툴팁과 같은 값
+
+
+def test_clear_savior_drops_previous_journey_recommendation():
+    jh_relic.set_savior([{"name": "A", "potential": "BX"}])
+    jh_relic.clear_savior()
+    assert "추천" not in jh_relic.section(OPT("생존에 도움이 되는 응원"))
+
+
+def test_bare_xx_without_number_matches_xx_routes():
+    sv = {"name": "x", "potential": "XX - 아무거나"}
+    assert jh_relic.recommend_lines(jh_relic.ROUTES["전술 운용에 도움이 되는 응원"], sv)
+    assert not jh_relic.recommend_lines(jh_relic.ROUTES["공격에 도움이 되는 응원"], sv)
