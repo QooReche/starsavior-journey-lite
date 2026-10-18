@@ -226,9 +226,7 @@ def test_event_index_rebinds_when_a_new_list_is_used():
 
 
 def test_star_trail_potentials_are_summarized_in_one_phrase():
-    lines = "
-or
-".join(f"별빛의 궤적-{k}{n}호 잠재력 포인트 +5" for k in ("AX", "BX", "XX") for n in range(1, 4))
+    lines = "\nor\n".join(f"별빛의 궤적-{k}{n}호 잠재력 포인트 +5" for k in ("AX", "BX", "XX") for n in range(1, 4))
     ev = _ev("대마녀의 부름", [lines])
     kr = js.key_rewards(ev)
     assert kr == [js.STAR_TRAIL_SUMMARY, "잠재력 포인트 +5"]                       # 호수별 줄이 하나로, 잠재력 포인트는 뒤에
