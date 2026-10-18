@@ -36,6 +36,7 @@ import jh_db
 import jh_net
 import jh_paths
 import jh_savior
+import jh_relic
 import jh_schedule
 import jh_update
 
@@ -1984,6 +1985,7 @@ class MouseHoverManager(QWidget):
         self.savior_matches = list(matches) if matches else None
         if not self.savior_matches:
             return
+        jh_relic.set_savior(self.savior_matches)       # '훈련의 방향성' 툴팁의 구원자별 잠재력 추천용 (편성 화면을 벗어나도 기억)
         m = self.savior_matches
         label = " / ".join(f"{x['name']}({x['subtitle']})" for x in m)
         self.status.set_status(tr("🃏 [구원자 인식] {}").format(label), "#00aaff", flash=True)

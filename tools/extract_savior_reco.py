@@ -478,6 +478,9 @@ def build(core_js, app_js, arcanas_json):
             st = _slim_set("", pve, alts, R)
             if any(st["slots"]):
                 entry["slots"], entry["alternatives"] = _pad_none(st["slots"]), st["alternatives"]
+        pot = str((((s.get("detail") or {}).get("equipment") or {}).get("pve") or {}).get("potential") or "").strip()
+        if pot and "엑셀에 없음" not in pot:
+            entry["potential"] = pot                            # PVE 특수 잠재력(AX5 등) 추천 문구 (훈련의 방향성 툴팁용)
         out.append(entry)
     data = {"version": SCHEMA_VERSION, "unportedPatches": warn, "saviors": out}
     return data, R

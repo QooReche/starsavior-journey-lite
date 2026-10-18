@@ -1077,6 +1077,12 @@ def format_option_html(option, scale=1.0, show_info=True, lang="ko", difficulty=
         html += '<hr style="border:none;border-top:1px solid #444444;margin:6px 0;">' + "<br>".join(rows)
     if show_info and detail < 1:
         html += _render_item_sections(option, scale, s)
+    if show_info and lang == "ko" and detail < 2:       # '훈련의 방향성': 선택지별 특수 잠재력(AX, CX ...) 안내 (한국어 전용)
+        try:
+            import jh_relic
+            html += jh_relic.section(option, scale, detail)
+        except Exception:
+            pass
     return html
 
 
