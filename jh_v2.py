@@ -15,6 +15,7 @@ import re
 import time
 from collections import OrderedDict
 
+import jh_common
 import jh_db
 import jh_net
 import jh_paths
@@ -393,7 +394,7 @@ def _choice_option(ch, ix):
     return {
         "choice": jh_db.strip_tags(_l(ch.get("name"), ix.lang)),
         "reward": "\n".join(lines),
-        "has_condition": any(jh_db.is_condition_line(jh_db._TAG_PREFIX_EARLY.sub("", l)) for l in lines),
+        "has_condition": any(jh_db.is_condition_line(jh_common.TAG_PREFIX.sub("", l)) for l in lines),
         "recommended": False,
         "info": out["info"],
         "items": out["items"],

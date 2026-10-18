@@ -62,13 +62,14 @@ powershell -File tools\build_release.ps1 -Deploy -UpdateHandoff  # 이후: 동�
 | `jh_cards.py` | 아르카나 카드 썸네일 식별(2단계: 좁은 탐색 -> 실패 시 위치·배율 넓은 탐색, 엄격 기준) |
 | `jh_savior.py` | 구원자 식별(이름+부제 OCR)·추천 아르카나 툴팁(디펜더 2세트 포함) |
 | `jh_relic.py` | '훈련의 방향성' 선택지별 특수 잠재력(AX~XX) 안내 + 구원자별 추천 |
+| `jh_common.py` | 보상 줄 정규식(결과 태그·택1·난이도)과 툴팁 HTML 조각(`span`, 색 상수): `jh_db`/`jh_schedule`/`jh_v2`/`jh_relic` 공용 |
 | `jh_schedule.py` | 턴별 일정(내장 데이터), 고정 이벤트 주요 보상 요약, 랜덤 이벤트 증감 요약 |
 | `jh_buffs.py` | 새 DB에 없는 여정 버프 설명 보충 |
 | `jh_net.py` | 네트워크 제한(backoff, 서킷브레이커, 시간당 상한) |
 | `jh_update.py` | 새 버전 확인(`releases/latest` 302 리다이렉트 사용) |
 | `jh_paths.py` | 휴대형 데이터 경로(`data\`, `log\`), 폴백 `%APPDATA%` |
 | `jh_settings_ui.py` | 설정창(일반 / 게임 표시 / 고급·진단) |
-| `tools/` | 빌드 스크립트, 시드/추천 데이터 추출기(`make_seed.py`, `extract_savior_reco.py`) |
+| `tools/` | 빌드 스크립트, 시드/추천 데이터 추출기(`make_seed.py`, `extract_savior_reco.py`), 데이터북 대조 점검(`check_databook.py <jev.json>`: 내장 일정·유물 경로가 데이터북과 어긋나는 곳 보고) |
 | `assets/` | 시드 DB(`seed/`), 구원자 추천 슬림 JSON(`savior_reco.json`) |
 
 ## 데이터 출처와 갱신 정책

@@ -17,6 +17,7 @@ import tempfile
 import time
 from collections import OrderedDict, namedtuple
 
+import jh_common
 import jh_net
 import jh_paths
 from jh_version import APP_VERSION
@@ -523,7 +524,7 @@ def _choice_to_option(name, success_groups, failure_groups, idx, recommended=Fal
     return {
         "choice": (name or "").strip(),
         "reward": "\n".join(lines),
-        "has_condition": any(is_condition_line(re.sub(r"^\[(SUCCESS|FAIL)\]\s*", "", l)) for l in lines),
+        "has_condition": any(is_condition_line(jh_common.TAG_PREFIX.sub("", l)) for l in lines),
         "recommended": bool(recommended),
         "info": info,
     }
@@ -569,7 +570,7 @@ _NUM_PREFIX = re.compile(r"^\s*\d+\s*[.)]\s*")
 # ----------------------------------------------------------------------------
 _CONSUME_RE = re.compile(r"^(?P<n>.+?)\s*(?P<w>소모|필요|보유|Consumed?|Required?)\s*$", re.I)
 _NOT_ITEM_RE = re.compile(r"^(여정 버프|Journey Buff)|할인|%|[+＋]\s*\d+\s*(턴|Turns?)\b", re.I)
-_OR_SPLIT = re.compile(r"\s+or(?:\s+|$)")
+_OR_SPLIT = jh_common.OR_SPLIT
 
 
 def _row_images(r):
@@ -605,7 +606,7 @@ def row_items(r):
         return []
 
 
-_DIFF_RE_EARLY = re.compile(r"^(이지|노말|하드|Easy|Normal|Hard)\b")
+_DIFF_RE_EARLY = jh_common.DIFF_WORD
 
 
 _BUFF_INLINE_RE = re.compile(r"^(여정 버프 획득|Journey Buff (?:Gained|Obtained|Acquired))\s+(.+)$", re.I)
@@ -633,7 +634,7 @@ def _compact_result(lines):
     return "\n".join(parts)
 
 
-_TAG_PREFIX_EARLY = re.compile(r"^\[(SUCCESS|FAIL)\]\s*")
+_TAG_PREFIX_EARLY = jh_common.TAG_PREFIX
 
 
 
@@ -917,8 +918,8 @@ def link_items(cache):
 # 툴팁 HTML
 # ----------------------------------------------------------------------------
 DIFF_BADGE_COLORS = {"이지": "#3ddc84", "노말": "#ffcc4d", "하드": "#ff6b6b", "Easy": "#3ddc84", "Normal": "#ffcc4d", "Hard": "#ff6b6b"}
-_DIFF_RE = re.compile(r"^(이지|노말|하드|Easy|Normal|Hard)(?:\s+(.*))?$")
-_TAG_PREFIX = re.compile(r"^\[(SUCCESS|FAIL)\]\s*")
+_DIFF_RE = jh_common.DIFF_LINE
+_TAG_PREFIX = jh_common.TAG_PREFIX
 _OUTCOME_STYLE = {"SUCCESS": ("rgba(61,220,132,0.16)", "#3ddc84"), "FAIL": ("rgba(255,92,92,0.16)", "#ff5c5c")}
 MAX_INFO_ITEMS = 6
 

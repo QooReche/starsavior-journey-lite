@@ -8,6 +8,8 @@
 import html as _html
 import re
 
+import jh_common
+
 try:
     from jh_savior import COL_DIVIDER as _COL_DIVIDER      # 구분선 색은 구원자 툴팁과 한 곳(공용 스타일)
 except Exception:
@@ -27,7 +29,7 @@ ROUTES = {
     "변수 대처에 도움이 되는 응원": [
         ("GX", "효과 적중 16% 증가, 기본기 타격 후 50% 확률로 2연 출현"),
         ("HX", "효과 저항 16% 증가, 단일 공격 피격 시 50% 확률로 타격자에게 생명력 비례 피해"),
-        ("IX", "효과 적중·효과 저항 4% 증가 (유물 효과, 특수 잠재력은 아직 확인 안 됨)")],     # 데이터북(starsavior-databook) 기준 2026-10-18
+        ("IX", "전투 시작 시 효과 적중·효과 저항 4% 증가 (부적 효과만 확인됨, 같은 이름의 특수 잠재력은 미확인)")],     # 데이터북(starsavior-databook) 기준 2026-10-18: GX·HX 부적에는 있는 '특수 잠재력 획득' 안내가 IX 에는 없다
     "전술 운용에 도움이 되는 응원": [
         ("XX1", "반격 확률 20% 증가"),
         ("XX2", "생명력 흡수율 15% 증가"),
@@ -81,9 +83,9 @@ def _table(rows, small, col_head, col_body):
     div = (f'<tr><td colspan="2" style="background-color:{_COL_DIVIDER}; font-size:1px;">&nbsp;</td></tr>')
     trs = []
     for i, (c, d) in enumerate(rows):
-        head = f'<span style="color:{col_head}; font-size:{small}px;"><b>{esc(c)}</b></span>' if c else ""
+        head = jh_common.span(esc(c), col_head, small, bold=True) if c else ""
         trs.append(f'<tr><td valign="top" width="{CODE_W if c else 1}">{head}</td>'
-                   f'<td valign="top"><span style="color:{col_body}; font-size:{small}px;">{esc(d)}</span></td></tr>')
+                   f'<td valign="top">{jh_common.span(esc(d), col_body, small)}</td></tr>')
         if i < len(rows) - 1:
             trs.append(div)
     return '<table cellspacing="0" cellpadding="2" width="100%">' + "".join(trs) + "</table>"
@@ -98,8 +100,8 @@ def section(option, scale=1.0, detail=0, savior=None):
     small = max(9, round(12 * scale))
     hr = '<hr style="border:none;border-top:1px solid #444444;margin:6px 0;">'
     codes = " · ".join(c for c, _ in route)
-    out = hr + (f'<span style="color:#ffd27f; font-size:{small}px;"><b>얻을 수 있는 특수 잠재력</b></span>'
-                f' <span style="color:#ffffff; font-size:{max(10, round(14 * scale))}px;"><b>{esc(codes)}</b></span>')
+    out = hr + (jh_common.span("얻을 수 있는 특수 잠재력", jh_common.COL_GOLD, small, bold=True)
+                + " " + jh_common.span(esc(codes), jh_common.COL_WHITE, max(10, round(14 * scale)), bold=True))
     if detail >= 1:
         return out
     out += _table([(c, d) for c, d in route], small, "#9fe8ff", "#cfd8dc")
@@ -110,5 +112,5 @@ def section(option, scale=1.0, detail=0, savior=None):
         out += (hr + f'<span style="color:#a5d6a7; font-size:{small}px;"><b>⭐ {esc(who)} 추천</b></span>'
                 + _table([("", x) for x in rec], small, "#a5d6a7", "#e8f5e9")
                 + f'<br><span style="color:#90a4ae; font-size:{max(9, small - 1)}px;">{esc(HO_LEGEND)}</span>')
-    out += hr + f'<span style="color:#ffd27f; font-size:{small}px;">{esc(TIP)}</span>'
+    out += hr + jh_common.span(esc(TIP), jh_common.COL_GOLD, small)
     return out

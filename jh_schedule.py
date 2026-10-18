@@ -7,6 +7,8 @@ befores = 그 턴 훈련 전, currents = 그 턴(평가전), afters = 훈련 후
 import html as _html
 import re
 
+import jh_common
+
 SCHEDULE = [(0, '시작', '기초 평가전', [], [], [('NOA', '고정', '인자 계승', ['인자 계승'])]),
  (1,
   '3월 초순',
@@ -159,7 +161,7 @@ def upcoming(row, limit=3):
 
 _COST_RE = re.compile(r"(사용\s*\d|필요$|소모$|제거$|^or$|^없음$|^(이지|노말|하드|쉬움|보통|어려움)\s)", re.I)
 _DIFF_HEAD_RE = re.compile(r"(이지|노말|하드|Easy|Normal|Hard)(\s+\D*)?")      # 난이도 단어만 있거나 숫자 없는 난이도 머리 줄
-_OR_RE = re.compile(r"\s+or(?:\s+|$)")                                         # 줄 중간/끝의 택1 구분자
+_OR_RE = jh_common.OR_SPLIT
 _STAT_RE = re.compile(r"^(힘|체력|인내|집중|보호|스태미나|컨디션|오래된 (동전|주화))\s*[+-]")
 _PROMO_PREFIX = re.compile(r"^\([^)]*\)\s*")
 MAX_KEY_REWARDS = 3
@@ -182,7 +184,7 @@ def _event_index(events):
 
 def _clean_reward_line(line):
     """보상 한 줄 -> 표시할 문구 또는 None(비용/요구/난이도 머리/스탯/숨김 아이템/빈 줄). 'A or B' 택1 은 'A 등' 으로 줄인다."""
-    line = re.sub(r"^\[(SUCCESS|FAIL)\]\s*", "", line.strip())
+    line = jh_common.strip_tag(line)
     if not line or _DIFF_HEAD_RE.fullmatch(line) and not re.search(r"\d", line):        # '이지', '이지 토벌 평가전' 같은 난이도 머리 줄
         return None
     line = re.sub(r"^(이지|노말|하드|Easy|Normal|Hard)\s+", "", line)
@@ -216,7 +218,7 @@ def key_rewards(event, limit=MAX_KEY_REWARDS):
 
 # 일정 이름 -> DB 에서는 '<접두> - <종류>' 로 종류별 이벤트로 나뉜 것 (그 시기에 나올 수 있는 것 중 랜덤)
 GROUP_PREFIX = {"날씨": "오늘의 날씨"}
-_MAIN_STAT_RE = re.compile(r"^(힘|체력|인내|집중|보호)\s*[+-]")
+_MAIN_STAT_RE = jh_common.MAIN_STAT
 
 
 def _group_summary(prefix, events, time_label):
@@ -232,7 +234,7 @@ def _group_summary(prefix, events, time_label):
             stats = []
             for o in e.get("options") or []:
                 for line in ((o.get("variants") or [o])[0].get("reward") or "").split("\n"):
-                    m = _MAIN_STAT_RE.match(re.sub(r"^\[(SUCCESS|FAIL)\]\s*", "", line.strip()))
+                    m = _MAIN_STAT_RE.match(jh_common.strip_tag(line))
                     if m and m.group(1) not in stats:
                         stats.append(m.group(1))
             kr = ["/".join(stats[:2])] if stats else []
@@ -253,7 +255,7 @@ def _reward_line(contents, events, size, time_label="", named=False):
     if not idx:
         return out
     import jh_db
-    span = lambda t, col: f'<span style="color:{col}; font-size:{size}px;">{_html.escape(t)}</span>'
+    span = lambda t, col: jh_common.span(_html.escape(t), col, size)
     for c in contents:
         name = _PROMO_PREFIX.sub("", c)
         if "평가전" in name:                                         # 평가전은 앱이 툴팁을 띄우지 않는 이벤트라 보상 요약도 하지 않는다
