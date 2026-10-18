@@ -1312,7 +1312,14 @@ class DbThread(QThread):
         if v2 is None:
             return jh_db.build_event_cache(journey, arcanas)
         try:
-            return jh_db.build_event_cache(journey, arcanas, v2=v2)
+            built = jh_db.build_event_cache(journey, arcanas, v2=v2)
+            try:
+                import jh_v2
+                if jh_v2.REPLACED_TITLES:
+                    log(f"[V2] 선택지 구성이 달라 V2 판으로 바꿈: {', '.join(jh_v2.REPLACED_TITLES[:5])}")
+            except Exception:
+                pass
+            return built
         except Exception as e:
             if v2 is None:
                 raise

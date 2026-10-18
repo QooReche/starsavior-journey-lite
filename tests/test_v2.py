@@ -182,3 +182,64 @@ def test_dbstore_wrappers_never_raise(tmp_path):
     s = jh_db.DbStore(str(tmp_path), session=Sess(lambda u, h: Resp(404)))
     assert s.load_v2() is None
     assert s.update_v2().status == "offline"
+
+
+# ---- 같은 제목인데 선택지 구성이 다르면(게임 업데이트) 새 쪽(V2)으로 바꾼다 (2026-10-18 '훈련의 방향성') ----
+def _stale_entry(title="훈련의 방향성"):
+    return {"rawTitle": title, "cleanTitle": jh_db.clean_title(title), "isArcana": False, "timing": "3월 초순",
+            "sources": ["3월 초순"],
+            "options": [{"choice": "공격에 도움이 되는 훈련 교본", "reward": "기초 훈련 교본 - 공격편", "variants": [], "info": []},
+                        {"choice": "생존에 도움이 되는 훈련 교본", "reward": "기초 훈련 교본 - 생존편", "variants": [], "info": []},
+                        {"choice": "다양한 상황에 도움이 되는 훈련 교본", "reward": "기초 훈련 교본 - 응용전술편", "variants": [], "info": []}]}
+
+
+def test_conflicting_choices_are_replaced_by_v2_keeping_guide_timing():
+    v2 = {"journeys": {"훈련의 방향성": [{"name": {"ko-KR": "훈련의 방향성"}, "choices": [
+        {"name": {"ko-KR": n}, "success_rewards": [[{"type": "RT_COIN", "min": 20, "max": 20}]]}
+        for n in ("공격에 도움이 되는 응원", "생존에 도움이 되는 응원", "변수 대처에 도움이 되는 응원", "전술 운용에 도움이 되는 응원")]}]},
+          "journey_items": [], "journey_buffs": [], "potentials": []}
+    cache = [_stale_entry()]
+    added = jh_v2.supplement_cache(cache, v2)
+    assert added == 0 and len(cache) == 1
+    e = cache[0]
+    assert [o["choice"] for o in e["options"]] == ["공격에 도움이 되는 응원", "생존에 도움이 되는 응원",
+                                                    "변수 대처에 도움이 되는 응원", "전술 운용에 도움이 되는 응원"]
+    assert e["timing"] == "3월 초순" and e["sources"] == ["3월 초순"]          # 시기 표기는 가이드 것 유지
+    assert jh_v2.REPLACED_TITLES == ["훈련의 방향성"]
+
+
+def test_same_choices_keep_guide_entry():
+    v2 = {"journeys": {"훈련의 방향성": [{"name": {"ko-KR": "훈련의 방향성"}, "choices": [
+        {"name": {"ko-KR": n}, "success_rewards": [[{"type": "RT_COIN", "min": 20, "max": 20}]]}
+        for n in ("공격에 도움이 되는 훈련 교본", "생존에 도움이 되는 훈련 교본", "다양한 상황에 도움이 되는 훈련 교본")]}]},
+          "journey_items": [], "journey_buffs": [], "potentials": []}
+    cache = [_stale_entry()]
+    before = json.dumps(cache, ensure_ascii=False)
+    jh_v2.supplement_cache(cache, v2)
+    assert json.dumps(cache, ensure_ascii=False) == before and jh_v2.REPLACED_TITLES == []   # 같으면 가이드 그대로
+
+
+def test_arcana_and_v2_entries_are_never_replaced():
+    v2 = {"journeys": {"훈련의 방향성": [{"name": {"ko-KR": "훈련의 방향성"}, "choices": [
+        {"name": {"ko-KR": "다른 선택지"}, "success_rewards": [[{"type": "RT_COIN", "min": 1, "max": 1}]]}]}]},
+          "journey_items": [], "journey_buffs": [], "potentials": []}
+    arc = _stale_entry(); arc["isArcana"] = True
+    cache = [arc]
+    jh_v2.supplement_cache(cache, v2)
+    assert cache[0]["options"][0]["choice"].endswith("훈련 교본") and jh_v2.REPLACED_TITLES == []
+
+
+def test_invisible_items_are_not_shown_in_rewards():
+    names = {"ko-KR": "훈련의 방향성_01"}
+    v2 = {"journeys": {"테스트 이벤트": [{"name": {"ko-KR": "테스트 이벤트"}, "choices": [
+        {"name": {"ko-KR": "선택 A"}, "success_rewards": [[{"type": "RT_COIN", "min": 20, "max": 20}],
+                                                          [{"type": "RT_JOURNEY_ITEM", "reward_id": 1, "min": 1, "max": 1}]]},
+        {"name": {"ko-KR": "선택 B"}, "success_rewards": [[{"type": "RT_JOURNEY_ITEM", "reward_id": 2, "min": 1, "max": 1}]]}]}]},
+          "journey_items": [{"id": 1, "name": names, "description": {"ko-KR": "이벤트에서 획득 가능한 인비저블 아이템."}},
+                            {"id": 2, "name": {"ko-KR": "진짜 아이템"}, "description": {"ko-KR": "보이는 아이템"}}],
+          "journey_buffs": [], "potentials": []}
+    cache = []
+    jh_v2.supplement_cache(cache, v2)
+    a, b = cache[0]["options"]
+    assert "훈련의 방향성_01" not in a["reward"] and "20" in a["reward"]       # 인비저블 아이템은 숨김
+    assert "진짜 아이템" in b["reward"]                                           # 보이는 아이템은 그대로

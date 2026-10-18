@@ -243,6 +243,11 @@ class V2Index:
     def item_name(self, iid):
         return _l((self.items.get(iid) or {}).get("name"), self.lang)
 
+    def is_invisible(self, iid):
+        """게임 안에서 사용자에게 보이지 않는 내부용 아이템(다음 이벤트로 이어 주는 표시값). 설명에 '인비저블' 이 들어 있다."""
+        it = self.items.get(iid) or {}
+        return "인비저블" in (_l(it.get("description"), "ko") or "")
+
     def buff(self, bid):
         b = self.buffs.get(bid) or {}
         return _l(b.get("name"), self.lang), jh_db.strip_tags(_l(b.get("desc"), self.lang))
@@ -325,6 +330,7 @@ def _entry(r, ix, out):
         return s["rm_pos"]
     if t in ("RT_JOURNEY_ITEM", "NT_CHARM"):
         ids = r.get("options") if isinstance(r.get("options"), list) and r.get("options") else [r.get("reward_id")]
+        ids = [i for i in ids if not ix.is_invisible(i)]            # 내부용(인비저블) 아이템은 보상 줄에 보이지 않는다
         names = [n for n in (ix.item_name(i) for i in ids) if n]
         for n in names:
             it = {"name": n, "role": "grant"}
@@ -420,25 +426,47 @@ def convert_title(title, events, ix):
     }
 
 
+REPLACED_TITLES = []        # 마지막 supplement_cache 에서 '선택지 구성이 달라' V2 로 바꾼 제목(로그용)
+
+
+def _choice_names(entry):
+    """선택지 이름 목록(공백 제거). 가이드와 V2 가 같은 이벤트의 같은 판인지 비교하는 데 쓴다."""
+    return [re.sub(r"\s+", "", (o.get("choice") or "")) for o in entry.get("options") or []]
+
+
 def supplement_cache(cache, v2, lang="ko"):
-    """cache(list, 제자리 수정)에 V2 에만 있는 제목을 추가한다. 가이드에 이미 있는 제목(cleanTitle)은 건드리지 않는다.
-    제목 단위로 예외를 격리한다. -> 추가한 제목 수"""
+    """cache(list, 제자리 수정)에 V2 에만 있는 제목을 추가한다.
+    가이드에 이미 있는 제목(cleanTitle)은 건드리지 않는다. 단 **같은 제목인데 선택지 구성(개수·이름)이 서로 다르면**
+    게임이 업데이트로 이벤트를 바꾼 것이므로 게임 문구와 맞는 새 쪽(V2)으로 바꾼다(2026-10-18: '훈련의 방향성' 가이드 3개 vs 게임·V2 4개).
+    제목 단위로 예외를 격리한다. -> 새로 추가한 제목 수(바꾼 것은 REPLACED_TITLES)"""
+    REPLACED_TITLES.clear()
     journeys = (v2 or {}).get("journeys")
     if not isinstance(journeys, dict):
         return 0
     ix = V2Index(v2, lang)
-    have = {e.get("cleanTitle") for e in cache}
+    have = {e.get("cleanTitle"): i for i, e in enumerate(cache)}
     added = []
     for raw, evs in journeys.items():
         try:
             title = _l(evs[0].get("name"), lang) or raw if lang != "ko" else raw
             ct = jh_db.clean_title(title)
-            if not ct or ct in have or jh_db.IGNORED_TITLE_WORD in ct:   # 평가전은 고정 일정이라 다루지 않는다
+            if not ct or jh_db.IGNORED_TITLE_WORD in ct:   # 평가전은 고정 일정이라 다루지 않는다
+                continue
+            if ct in have:
+                old = cache[have[ct]]
+                if old.get("isArcana") or old.get("v2"):
+                    continue
+                ent = convert_title(title, evs, ix)
+                if ent and ent.get("options") and _choice_names(ent) != _choice_names(old):
+                    ent["timing"] = old.get("timing") or ent.get("timing", "")        # 시기/출처 표기는 가이드 것을 유지
+                    ent["sources"] = old.get("sources") or ent.get("sources", [])
+                    cache[have[ct]] = ent
+                    REPLACED_TITLES.append(title)
                 continue
             ent = convert_title(title, evs, ix)
             if ent:
                 added.append(ent)
-                have.add(ct)
+                have[ct] = len(cache) + len(added) - 1
         except Exception:
             continue
     cache.extend(added)
