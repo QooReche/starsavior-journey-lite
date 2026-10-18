@@ -123,3 +123,19 @@ def test_strong_margin_accepts_lower_score(monkeypatch):
     assert jc.identify(img, [1, 2])[0] is None
     monkeypatch.setattr(jc, "score_candidates", lambda r, ids, store=None, wide=False: {1: 0.25, 2: 0.01})   # 점수 너무 낮음 -> 거부
     assert jc.identify(img, [1, 2])[0] is None
+
+
+def test_filter_by_arcana_keeps_only_that_variants_info_and_items():
+    """실기 2026-10-18 '누구를 위해 수프는 끓는가': 카드를 식별했는데 다른 아르카나 버전의 버프 설명(자신감)이 남던 문제"""
+    import jh_db
+    buff = {"name": "자신감", "desc": "훈련 실패율 감소", "kind": "여정 버프"}
+    opt = {"choice": "그럼 한 그릇 줄래?", "reward": "여정 버프 자신감 2턴", "info": [buff], "items": [{"name": "A"}, {"name": "B"}],
+           "item_use": [{"item": "A", "uses": [1]}, {"item": "B", "uses": [2]}],
+           "variants": [{"sources": ["밤"], "choice": "x", "reward": "여정 버프 자신감 2턴", "info": [buff], "items": [{"name": "A"}]},
+                        {"sources": ["오후"], "choice": "x", "reward": "스태미나 -5", "info": [], "items": [{"name": "B"}]}]}
+    ev = {"arcanaIds": {"밤": 1, "오후": 2}, "sources": ["밤", "오후"], "options": [opt]}
+    o = jh_db.filter_event_by_arcana(ev, 2)["options"][0]
+    assert o["reward"] == "스태미나 -5" and o["info"] == [] and o["items"] == [{"name": "B"}]
+    assert [g["item"] for g in o["item_use"]] == ["B"]
+    o1 = jh_db.filter_event_by_arcana(ev, 1)["options"][0]
+    assert o1["info"] == [buff] and [g["item"] for g in o1["item_use"]] == ["A"]

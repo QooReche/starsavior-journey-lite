@@ -719,7 +719,8 @@ def _merge_candidates(cands):
             o = opts[i]
             first = first or o
             key = (o["choice"], o["reward"])
-            v = variants.setdefault(key, {"sources": [], "choice": o["choice"], "reward": o["reward"], "info": o["info"]})
+            v = variants.setdefault(key, {"sources": [], "choice": o["choice"], "reward": o["reward"], "info": o["info"],
+                                          "items": o.get("items") or []})
             if src and src not in v["sources"]:
                 v["sources"].append(src)
             for inf in o["info"]:
@@ -1317,7 +1318,21 @@ def filter_event_by_arcana(event, arcana_id):
         if not vs:
             options.append(o)
             continue
-        options.append(dict(o, variants=vs, reward=vs[0]["reward"]))
+        # info/items/사용처는 변형을 합친 값이라, 남긴 변형 것만 다시 모은다(다른 아르카나 버전의 버프 설명이 남는 문제: 수프 이벤트 '자신감')
+        info, items = [], []
+        for v in vs:
+            for inf in v.get("info") or []:
+                if all(x["name"] != inf["name"] for x in info):
+                    info.append(inf)
+            for it in v.get("items") or []:
+                if it not in items:
+                    items.append(it)
+        item_names = {it.get("name") for it in items}
+        extra = {}
+        for key in ("item_use", "item_from"):
+            if key in o:
+                extra[key] = [g for g in o[key] if g.get("item") in item_names]
+        options.append(dict(o, variants=vs, reward=vs[0]["reward"], info=info, items=items, **extra))
     return dict(event, options=options, sources=[x for x in event.get("sources", []) if x in names])
 
 
