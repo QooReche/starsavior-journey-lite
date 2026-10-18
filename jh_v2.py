@@ -206,6 +206,8 @@ class V2Store:
         if r.status_code != 200:
             raise RuntimeError(f"HTTP {r.status_code}")
         content = r.content
+        if len(content) > jh_db.MAX_JSON_BYTES:
+            raise ValueError(f"response too large: {len(content)} bytes")
         data = json.loads(content.decode("utf-8"))        # HTML 대체 응답이면 여기서 예외
         validate(name, data)
         # 기준: 유효한 캐시, 없으면 번들 시드(시드 상태에서 빈약한 응답이 캐시가 되는 것을 막음)

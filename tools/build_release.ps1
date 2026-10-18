@@ -28,7 +28,8 @@ function RoboCopy-Tree($from, $to, [string[]]$extra) {
 }
 
 Step "소스 동기화"
-RoboCopy-Tree $src $bsrc @("/XD", ".git", ".venv", "__pycache__", ".pytest_cache", "build", "dist")
+# /PURGE: src 에서 지운 파일이 빌드 사본에 남아 번들되지 않게 한다(제외 폴더는 지우지 않음)
+RoboCopy-Tree $src $bsrc @("/PURGE", "/XD", ".git", ".venv", "__pycache__", ".pytest_cache", "build", "dist")
 
 Step "버전 날짜 스탬프"
 Push-Location $bsrc
@@ -53,6 +54,10 @@ try {
     $code = $LASTEXITCODE
     $ErrorActionPreference = "Stop"
     if ($code -ne 0 -or -not (Test-Path "$dist\JourneyHelperLite\JourneyHelperLite.exe")) { throw "PyInstaller 실패 (종료 코드 $code)." }
+
+    Step "라이선스 고지문(LICENSE, README, THIRD_PARTY_NOTICES, licenses)"
+    & $py -X utf8 tools\collect_licenses.py "$dist\JourneyHelperLite" --site "$build\.venv\Lib\site-packages" --src $bsrc
+    if ($LASTEXITCODE -ne 0) { throw "라이선스 고지문 생성 실패." }
 
     Step "zip / sha256"
     powershell -NoProfile -File tools\make_release_zip.ps1 2>&1 | Select-Object -Last 1

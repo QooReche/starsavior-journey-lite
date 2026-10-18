@@ -62,6 +62,7 @@ STRONG_MARGIN = 0.25
 MIN_SCORE_STRONG = 0.33
 LAST_SCORES = {}      # 마지막 identify 의 후보별 점수 (로그/진단용)
 
+MAX_IMAGE_BYTES = 5 * 1024 * 1024   # 카드 이미지 다운로드 크기 상한(실제는 수백 KB)
 FAIL_RETRY_SEC = 20.0  # 참조 이미지 다운로드가 실패한 id 는 이 시간 동안 다시 시도하지 않음
 _REF_W = 176          # 캐시에 저장하는 참조 이미지 폭
 MISSING_RETRY_SEC = 6 * 3600   # 404/410(이미지 없음)·디코딩/저장 실패 카드는 이 시간 동안 다시 받지 않음(서킷과 무관한 카드별 음성 캐시)
@@ -201,13 +202,16 @@ class CardStore:
         req = urllib.request.Request(CARD_URL.format(id=int(aid)),
                                      headers={"User-Agent": USER_AGENT})
         t0 = time.monotonic()
-        chunks = []
+        chunks, got = [], 0
         with urllib.request.urlopen(req, timeout=self.timeout) as r:
             while True:
                 b = r.read(65536)
                 if not b:
                     break
                 chunks.append(b)
+                got += len(b)
+                if got > MAX_IMAGE_BYTES:
+                    raise ValueError("image too large")
                 if time.monotonic() - t0 > self.total_timeout:
                     raise TimeoutError("image download too slow")
         data = b"".join(chunks)

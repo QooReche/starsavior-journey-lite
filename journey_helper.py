@@ -1879,6 +1879,11 @@ class MouseHoverManager(QWidget):
 
     # --- DB ---
     def start_db(self, manual):
+        # 갱신 스레드는 동시에 하나만: 둘이 같은 캐시 파일/메타를 고치면 오래된 결과가 새 결과를 덮거나 Windows 에서 쓰기 충돌이 난다
+        self._db_threads = [x for x in self._db_threads if x.isRunning()]
+        if self._db_threads:
+            log("[DB] 이미 갱신 중이라 새 요청은 건너뜀" + (" (수동 새로고침)" if manual else ""))
+            return
         t = DbThread(self.store, manual=manual)
         t.finished_ok.connect(lambda c, s, m, man=manual: self.on_db_loaded(c, s, m, man))
         self._db_threads.append(t)

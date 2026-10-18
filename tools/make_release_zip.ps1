@@ -1,4 +1,4 @@
-# 배포용 zip 생성: 한 번도 실행하지 않은 PyInstaller 빌드 결과(dist\JourneyHelperLite)만 압축한다.
+﻿# 배포용 zip 생성: 한 번도 실행하지 않은 PyInstaller 빌드 결과(dist\JourneyHelperLite)만 압축한다.
 # 사용: powershell -File tools\make_release_zip.ps1 [-Dist C:\build\jh\dist\JourneyHelperLite] [-OutDir C:\build\jh\out]
 # - 개발 중 실행해서 data\ log\ 가 생긴 폴더(release\)를 압축하지 않도록, 이 폴더들이 있으면 중단한다.
 # - 출력은 OneDrive 밖(C:\build\jh\out)에 둔다. 파일명은 버전을 따른다.
@@ -44,6 +44,10 @@ try {
     if ($leak -gt 0) { throw "data/log 항목이 $leak 개 들어 있습니다." }
     $exe = ($names | Where-Object { $_ -eq "$leaf/JourneyHelperLite.exe" }).Count
     if ($exe -ne 1) { throw "exe 항목을 찾지 못했습니다." }
+    # 라이선스 고지문(GPL-3.0/Apache-2.0/MIT 등이 배포물과 함께 사본 동봉을 요구): tools\collect_licenses.py 가 만든다
+    foreach ($need in @("LICENSE", "README.md", "THIRD_PARTY_NOTICES.txt", "licenses/Apache-2.0.txt")) {
+        if (-not ($names -contains "$leaf/$need")) { throw "$need 이(가) zip 에 없습니다. tools\collect_licenses.py 를 먼저 실행하세요." }
+    }
     $count = $names.Count
 } finally { $z.Dispose() }
 

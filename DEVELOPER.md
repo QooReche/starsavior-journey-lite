@@ -24,7 +24,7 @@ python -m venv .venv
 .venv\Scripts\python -m pip install -r requirements.txt
 .venv\Scripts\python journey_helper.py
 ```
-- 한글이 들어간 경로에서 Qt5 `QApplication`이 멈추는 환경이 있어, 프로그램이 시작 시 Qt 플러그인을 `%LOCALAPPDATA%\JourneyHelperLite\qt_plugins`(ASCII)로 복사해 우회합니다. 개발/빌드는 ASCII 경로를 권장합니다.
+- 한글이 들어간 경로에서 Qt5 `QApplication`이 멈추는 환경이 있어, 시작 시 Qt 플러그인을 ASCII 경로로 복사해 우회합니다(앱 폴더의 `data` 경로가 ASCII면 `data\qt_plugins`, 아니면 `%LOCALAPPDATA%\JourneyHelperLite\qt_plugins`). 사용자가 지울 때 이 폴더도 함께 지워야 하므로 README에 안내합니다. 개발/빌드는 ASCII 경로를 권장합니다.
 - 모든 이미지 입출력은 한글 경로에서도 되도록 `cv2.imencode`/`tofile` 방식입니다(`tests/test_korean_path.py`가 한글 폴더로 검증).
 
 ## 테스트
@@ -45,7 +45,7 @@ python -m venv .venv
 powershell -File tools\setup_build_env.ps1                       # 최초 1회: 소스 사본 + venv + .pth + 테스트
 powershell -File tools\build_release.ps1 -Deploy -UpdateHandoff  # 이후: 동기화 -> 날짜 스탬프 -> pytest -> PyInstaller -> zip/sha256 -> (배포·재실행)
 ```
-- `build_release.ps1`은 pytest가 실패하면 중단하고, 커밋/푸시는 하지 않습니다. 실행해 본 적 없는 `dist`만 zip으로 만듭니다(`make_release_zip.ps1`; `data\`·`log\`가 있으면 거부).
+- `build_release.ps1`은 PyInstaller 직후 `tools\collect_licenses.py`로 `LICENSE`, `README.md`, `THIRD_PARTY_NOTICES.txt`, `licenses\`(번들 라이브러리 라이선스 원문)를 dist에 채우고(GPL/Apache/MIT가 배포물과 함께 사본 동봉을 요구), `make_release_zip.ps1`이 이 파일들이 zip에 있는지 검사합니다. 소스 동기화는 `/PURGE`라 src에서 지운 파일이 빌드에 남지 않습니다. pytest가 실패하면 중단하고, 커밋/푸시는 하지 않습니다. 실행해 본 적 없는 `dist`만 zip으로 만듭니다(`make_release_zip.ps1`; `data\`·`log\`가 있으면 거부).
 - 빌드 venv의 site-packages에 `import onnxruntime` 한 줄짜리 `zz_ort_first.pth`가 **반드시** 있어야 합니다. 없으면 PyInstaller 분석이 PyQt5를 먼저 불러 onnxruntime에서 access violation으로 죽습니다(앱 코드도 같은 이유로 onnxruntime을 먼저 import).
 - spec이 PyQt5가 동봉한 오래된 VC++ 런타임(14.26)을 번들에서 제외합니다(포함되면 onnxruntime이 시작 시 죽음).
 - 버전 표기는 `BASE.YYMMDD`(`jh_version.py`). 빌드 직전 `tools\stamp_version.py`가 날짜를 갱신합니다.

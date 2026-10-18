@@ -60,7 +60,8 @@ CHECK_INTERVAL_SEC = 12 * 60 * 60     # 자동 확인 최소 간격
 MANUAL_COOLDOWN_SEC = 10 * 60         # 수동 새로고침 쿨다운
 FAIL_BACKOFF_SEC = 10 * 60            # 실패 직후 자동 재시도 금지 시간
 HTTP_TIMEOUT = (5, 20)                # (connect, read)
-DEFAULT_USER_AGENT = f"JourneyHelperLite/{APP_VERSION} (+https://github.com/QooReche/journeyhelper; personal game helper)"
+MAX_JSON_BYTES = 20 * 1024 * 1024     # DB/V2 JSON 응답 크기 상한(실제는 수 MB 이하)
+DEFAULT_USER_AGENT = f"JourneyHelperLite/{APP_VERSION} (+https://github.com/QooReche/starsavior-journey-lite; personal game helper)"
 
 UpdateResult = namedtuple("UpdateResult", "status changed message")
 
@@ -345,6 +346,8 @@ class DbStore:
         if code != 200:
             raise RuntimeError(f"HTTP {code}")
         content = r.content
+        if len(content) > MAX_JSON_BYTES:                 # 비정상적으로 큰 응답은 받지 않는다(메모리/디스크 보호)
+            raise ValueError(f"response too large: {len(content)} bytes")
         data = json.loads(content.decode("utf-8"))      # 깨진 응답이 캐시를 덮어쓰지 않도록 먼저 검증
         if not isinstance(data, dict) or not data:
             raise ValueError("unexpected JSON")
