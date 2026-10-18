@@ -340,7 +340,7 @@ def test_tooltip_text_slots_alternatives_and_note(saviors):
     for i in "12345":
         assert i in t
     assert "허수의 개척자" in t and "또는" in t and "불굴의 역작" in t            # 'A or B' 슬롯
-    assert "음독의 각오 없으면" in t and "부족한 자리 없으면" not in t and "그 밖의 대체" in t and "본 투 비 와일드" in t and "→" in t   # 대체 안내 문구
+    assert "↳ 대체 카드 →" in t and "없으면 →" not in t and "부족한 자리 대체 →" in t and "그 밖의 대체" in t and "본 투 비 와일드" in t   # 대체 안내 문구
     assert "<img" not in sv.format_reco_html(s, 1.0, None)                       # 썸네일 경로 함수가 없으면 텍스트만
 
 
@@ -725,7 +725,7 @@ def test_inline_alternatives_and_footer_gap(saviors):
     s = next(x for x in saviors if x["key"] == "asherah-voyager")
     html = sv.format_reco_html(s, 1.0, None, 0)
     t = text_of(html)
-    assert "↳ 단점 보완 맞춤 훈련 없으면 →" in t and "또는" in t and "대체 ·" not in t     # 대체는 한 줄 `↳ X 없으면 → Y`
+    assert "↳ 대체 카드 →" in t and "없으면" not in t and "또는" in t     # 대체는 한 줄 `↳ 대체 카드 → Y`, 대상 이름은 반복하지 않는다
     assert html.index('<div style="font-size:8px;">') < html.index("출처:")                        # 푸터 위 간격
 
 
@@ -751,8 +751,8 @@ def test_single_and_two_set_share_one_grid_renderer(saviors):
         assert h1.count(num_td) == 5 and h2.count(num_td) == 5
         assert "▌" not in h1 and h2.count("▌") == 2                                      # 열 머리는 열이 2개 이상일 때만
     h1, h2 = sv.format_reco_html(one, 1.0, None, 0), sv.format_reco_html(two, 1.0, None, 0, 764)
-    assert "↳ 단점 보완 맞춤 훈련 없으면 →" in text_of(h1) and "없으면 →" not in text_of(h2).split("그 밖의 대체")[0]   # 1열: 긴 형식, 2열: 짧은 형식 `↳ 이름`
-    assert "↳" in text_of(h2)
+    assert "↳ 대체 카드 →" in text_of(h1) and "↳ 대체 카드 →" in text_of(h2) and "없으면" not in text_of(h1) + text_of(h2)   # 1세트·2세트 같은 문구
+    assert "퓨어탱커 · ↳ 특정 아르카나 부족 시 대체 →" in text_of(h2)                 # 그 밖의 대체: note 문구 + 세트 접두 유지
     import re as _re
     consts = [n for n in dir(sv) if n.startswith("COL_")]
     src = open(sv.__file__, encoding="utf-8").read()

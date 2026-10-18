@@ -350,20 +350,22 @@ def _opts_table(items, P, avail, px, th, first="", blank="", lead="", lead_w=0):
     return head_tbl + _tbl("".join(rows), pad)
 
 
-def _alt_lead(a, small, prefix="", short=False):
-    tgt = a.get("target") if "pos" in a else replaced_target(a.get("note"))
-    text = "↳" if short else (f"↳ {tgt} 없으면 →" if tgt else (f"↳ {a['note']} →" if a.get("note") else "↳ 대체 →"))
+def _alt_lead(a, small, prefix="", attached=False):
+    """대체 머리말. 슬롯 바로 아래에 붙은 대체는 위치로 대상을 알 수 있으므로 `↳ 대체 카드 →`(1세트·2세트 공통).
+    슬롯에 안 붙은 '그 밖의 대체'는 note 문구(예: 부족한 자리 대체)를 그대로, note 가 없으면 `↳ 대체 카드 →`."""
+    note = (a.get("note") or "").strip()
+    text = "↳ 대체 카드 →" if (attached or not note) else f"↳ {note} →"
     text = prefix + text
     return text, f'<span style="color:{COL_ALT}; font-size:{small}px; white-space:nowrap;"><b>{_html.escape(text)}</b></span>&nbsp;'
 
 
-def _alt_block(a, P, thumb_path, avail, prefix="", short=False, first=BLANK_TD, blank=BLANK_TD):
-    """대체 한 줄: `↳ X 없으면 → [썸]Y · [썸]Z` (안 들어갈 때만 머리 줄 + 항목 줄). 카드가 없으면 안내 문구만."""
+def _alt_block(a, P, thumb_path, avail, prefix="", attached=False, first=BLANK_TD, blank=BLANK_TD):
+    """대체 한 줄: `↳ 대체 카드 → [썸]Y · [썸]Z` (안 들어갈 때만 머리 줄 + 항목 줄). 카드가 없으면 안내 문구만."""
     small = P["small"]
     if not a.get("options"):
         return _tbl(f'<tr>{first}<td valign="middle"><span style="color:{COL_ALT}; font-size:{small}px;">'
                     f'※ {_html.escape(prefix + (a.get("note") or ""))}</span></td></tr>', P["pad"])
-    text, lead = _alt_lead(a, small, prefix, short)
+    text, lead = _alt_lead(a, small, prefix, attached)
     items = _items(a["options"], thumb_path, P["th2"], P["alt"])
     return _opts_table(items, P, avail, P["alt"], P["th2"], first, blank, lead, _tw(text, small) + 8)
 
@@ -392,9 +394,9 @@ def _divider_row(ncols):
     return f'<tr><td colspan="{1 + ncols}" style="background-color:{COL_DIVIDER}; font-size:{DIVIDER_PX}px;">&nbsp;</td></tr>'
 
 
-def _slot_cell(sl, alt_list, thumb_path, P, Pc, col_avail, short_alt):
+def _slot_cell(sl, alt_list, thumb_path, P, Pc, col_avail):
     """한 슬롯의 한 열 칸: 옵션(`[썸][이름]`, 'A · B' 는 폭이 허용하는 만큼 한 줄, 아니면 줄바꿈 + `또는`), 메모, 그 슬롯의 대체.
-    대체 표기만 열 수에 따라 다르다: 열 1개(폭 넓음) = `↳ X 없으면 → [썸]Y`, 열 2개 이상 = `↳ [썸]Y`."""
+    대체는 1세트·2세트 모두 `↳ 대체 카드 → [썸]Y`."""
     px, small, th = P["px"], P["small"], P["th"]
     opts = (sl or {}).get("options")
     its, tcell = _items(opts, thumb_path, th, px), th
@@ -409,7 +411,7 @@ def _slot_cell(sl, alt_list, thumb_path, P, Pc, col_avail, short_alt):
         parts = [f'<span style="color:{COL_EMPTY}; font-size:{small}px;">(비움)</span>']
     if sl and sl.get("note"):
         parts.append(f'<span style="color:{COL_MUTED}; font-size:{small}px;">{_html.escape(sl["note"])}</span>')
-    parts += [_alt_block(a, Pc, thumb_path, col_avail, short=short_alt, first=INDENT_TD, blank=INDENT_TD) for a in alt_list]
+    parts += [_alt_block(a, Pc, thumb_path, col_avail, attached=True, first=INDENT_TD, blank=INDENT_TD) for a in alt_list]
     return "".join(parts)
 
 
@@ -438,7 +440,7 @@ def _grid_table(columns, thumb_path, P):
         for c, (by_slot, _) in zip(columns, splits):
             slots = c.get("slots") or []
             sl = slots[i] if i < len(slots) else None
-            cells += f'<td width="{cw}" valign="top">{_slot_cell(sl, by_slot.get(i, []), thumb_path, P, Pc, col_avail, ncols > 1)}</td>'
+            cells += f'<td width="{cw}" valign="top">{_slot_cell(sl, by_slot.get(i, []), thumb_path, P, Pc, col_avail)}</td>'
         rows.append(f'<tr>{_num_td(_num_span(i, px), "top")}{cells}</tr>')
         if i < n - 1:
             rows.append(_divider_row(ncols))
