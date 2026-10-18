@@ -218,6 +218,11 @@ def _group_summary(prefix, events, time_label):
     return out
 
 
+def _choice_dependent(event):
+    """보상이 있는 선택지가 둘 이상이면 어떤 선택을 하느냐에 따라 보상이 갈린다."""
+    return sum(1 for o in event.get("options") or [] if (o.get("reward") or "").strip() not in ("", "없음")) >= 2
+
+
 def _reward_line(contents, events, size, time_label="", named=False):
     """고정 이벤트 항목 아래에 붙일 '주요 보상' 줄 HTML 목록"""
     idx = _event_index(events)
@@ -235,7 +240,9 @@ def _reward_line(contents, events, size, time_label="", named=False):
         if ev:
             kr = key_rewards(ev)
             if kr:
-                out.append(span(f"  └ {who or '주요 보상: '}", "#a5d6a7") + span(" · ".join(kr), "#e8f5e9"))
+                dep = "(선택에 따라)" if _choice_dependent(ev) else ""
+                label = f"{name}{dep}: " if who else f"주요 보상{dep}: "
+                out.append(span(f"  └ {label}", "#a5d6a7") + span(" · ".join(kr), "#e8f5e9"))
         elif name in GROUP_PREFIX:
             sm = _group_summary(GROUP_PREFIX[name], events, time_label)
             if sm:
@@ -284,6 +291,9 @@ def format_schedule_html(row, scale=1.0, events=None):
             for e in fixed:
                 rows.extend(_reward_line(e[3], events, small, r[1], named=True))
         parts.append(f'<span style="color:#9fe8ff; font-size:{small}px;"><b>다음 고정 일정</b></span><br>' + "<br>".join(rows))
-    parts.append(f'<span style="color:#78909c; font-size:{small}px;">일정 출처: 옛 DB(턴 기준). 훈련 횟수와는 다를 수 있음</span>')
+    note = "일정 출처: 옛 DB(턴 기준). 훈련 횟수와는 다를 수 있음"
+    if any("주요 보상" in r or "└" in r for r in "".join(parts).split("<br>")):
+        note += "<br>※ 주요 보상은 이벤트 DB를 자동 요약한 참고용입니다. 스탯·비용 등은 생략했고 실제와 다를 수 있으니 정확한 내용은 게임에서 확인하세요"
+    parts.append(f'<span style="color:#78909c; font-size:{small}px;">{note}</span>')
     sep = '<hr style="border:none;border-top:1px solid #444444;margin:6px 0;">'
     return sep.join(parts)

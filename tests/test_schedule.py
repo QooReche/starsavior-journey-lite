@@ -135,10 +135,25 @@ def test_weather_group_shows_only_kinds_for_this_time_and_short_rewards():
 def test_next_fixed_schedule_shows_named_key_rewards():
     events = [_ev("습격", ["속도의 감각 20 % 할인\n잠재력 포인트 +20"])]
     html = js.format_schedule_html(js.find_turn("7월 중순"), 1.0, events)
-    assert "└ 습격: " in html and "속도의 감각 20 % 할인" in html
+    assert "└ 습격: " in html and "속도의 감각 20 % 할인" in html           # 선택지가 하나뿐이면 '선택에 따라' 없음
 
 
 def test_evaluation_events_get_no_reward_line():
     events = [_ev("토벌 평가전 승리", ["아이템X"]), _ev("원정 평가전 승리", ["아이템Y"])]
     html = js.format_schedule_html(js.find_turn("6월 하순"), 1.0, events)
     assert "아이템X" not in html and "아이템Y" not in js.format_schedule_html(js.find_turn("7월 중순"), 1.0, events)
+
+
+def test_disclaimer_only_when_reward_lines_are_shown():
+    events = [_ev("미궁 탐사", ["정체불명의 유물"])]
+    row = js.find_turn("7월 중순")
+    assert "자동 요약한 참고용" in js.format_schedule_html(row, 1.0, events)
+    assert "자동 요약한 참고용" not in js.format_schedule_html(row)
+
+
+def test_choice_dependent_label():
+    one = [_ev("습격", ["아이템A"]), ]
+    many = [_ev("미궁 탐사", ["정체불명의 유물", "잠재력 포인트 +15", "없음"])]
+    row = js.find_turn("7월 중순")
+    assert "(선택에 따라)" in js.format_schedule_html(row, 1.0, many)           # 보상이 있는 선택지 2개 이상
+    assert "(선택에 따라)" not in js.format_schedule_html(row, 1.0, one)
