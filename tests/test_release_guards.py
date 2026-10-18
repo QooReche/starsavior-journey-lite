@@ -144,3 +144,15 @@ def test_version_info_resource_has_product_and_version(tmp_path):
     for need in ("여정 내비게이터", "JourneyNavigator.exe", APP_VERSION, "GPL-3.0", "'041204b0'"):
         assert need in txt, need
     assert "filevers=(1, 0, 2, 0)" in txt                           # 숫자 버전은 16비트라 빌드 날짜를 못 담는다
+
+
+# 툴팁 글자색·크기는 jh_common.span() 으로 만든다. 인라인 <span style="color:..."> 줄 수는 늘리지 않고 줄여 나간다(래칫).
+# 줄이면 이 숫자도 같이 내린다. 늘려야 한다면 span() 으로 쓸 수 없는 이유가 있어야 한다.
+INLINE_SPAN_CEILING = {"jh_db.py": 23, "jh_schedule.py": 9, "jh_savior.py": 7, "jh_relic.py": 2}
+
+
+@pytest.mark.parametrize("name,ceiling", sorted(INLINE_SPAN_CEILING.items()))
+def test_inline_span_styles_do_not_grow(name, ceiling):
+    with open(os.path.join(SRC, name), encoding="utf-8") as f:
+        n = sum(1 for line in f if 'style="color:' in line)
+    assert n <= ceiling, f"{name}: 인라인 span 스타일 줄 {n}개 (상한 {ceiling}). jh_common.span() 을 쓰세요"

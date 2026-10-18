@@ -980,7 +980,7 @@ def _render_block(block, esc, scale, tint, s, inline=False):
         bg, border = _OUTCOME_STYLE[block["type"]]
         label = s["ok"] if block["type"] == "SUCCESS" else s["fail"]
         inner = (f'<div style="background-color:{bg}; border-left:3px solid {border}; padding:4px 8px;">'
-                 f'<span style="color:{border}; font-size:{small}px;">{label}</span><br>{inner}</div>')
+                 f'{jh_common.span(label, border, small)}<br>{inner}</div>')
     return inner
 
 
@@ -1029,7 +1029,7 @@ def format_option_html(option, scale=1.0, show_info=True, lang="ko", difficulty=
         head = f"📝 <b>{esc(name or s['custom'])}</b>"
         body_txt = esc(option["note"]).replace(chr(10), "<br>")
         return (head + '<hr style="border:none;border-top:1px solid #444444;margin:4px 0;">'
-                + f'<span style="color:#ffffff; font-size:{max(10, round(14 * scale))}px;">{body_txt}</span>')
+                + jh_common.span(body_txt, "#ffffff", max(10, round(14 * scale))))
     variants = option.get("variants") or [{"sources": [], "reward": option.get("reward", ""), "info": option.get("info", [])}]
     body = []
     divider = '<hr style="border:none;border-top:1px solid #333333;margin:6px 0;">'
@@ -1131,7 +1131,7 @@ def _use_lines(r, small):
     """사용처 1건 -> 식별하기 좋게 줄을 나눈 HTML 줄 목록: '• 이벤트 · 시기' / '  ↳ 선택지' / '  → 보상' (보상은 한 줄씩)"""
     esc = _html.escape
     sp = '&nbsp;&nbsp;&nbsp;'
-    span = lambda t: f'<span style="color:#cfd8dc; font-size:{small}px;">{t}</span>'
+    span = lambda t: jh_common.span(t, "#cfd8dc", small)
     head = " · ".join(p for p in (r.get("event", ""), r.get("timing", "")) if p)
     out = [span("• " + esc(head))]
     if r.get("choice"):

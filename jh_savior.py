@@ -15,6 +15,8 @@ import os
 import re
 import struct
 
+import jh_common
+
 DATA_FILE = os.path.join("assets", "savior_reco.json")
 
 # 클라이언트 영역 비율 (스크린샷 4장에서 검증: tests/test_savior.py)
@@ -306,7 +308,7 @@ def _name_html(o, px, prefix=""):
 
 
 def _or_prefix(small):
-    return f'<span style="color:{COL_MUTED}; font-size:{small}px;">또는 </span>'
+    return jh_common.span("또는 ", COL_MUTED, small)
 
 
 def _tbl(rows, pad):
@@ -334,7 +336,7 @@ def _opts_table(items, P, avail, px, th, first="", blank="", lead="", lead_w=0):
             cells.append(f'<td valign="middle">{lead}</td>')
         for k, (o, img, _) in enumerate(items):
             if k:
-                cells.append(f'<td valign="middle" align="center"><span style="color:{COL_MUTED}; font-size:{px}px;">&nbsp;·&nbsp;</span></td>')
+                cells.append(f'<td valign="middle" align="center">{jh_common.span("&nbsp;·&nbsp;", COL_MUTED, px)}</td>')
             cells.append(_img_td(img, th))
             cells.append(f'<td valign="middle">{_name_html(o, px)}</td>')
         return _tbl("<tr>" + "".join(cells) + "</tr>", pad)
@@ -386,7 +388,7 @@ def _gap(P):
 
 
 def _num_span(i, px):
-    return f'<span style="color:{COL_NUM}; font-size:{px}px;"><b>{i + 1}</b></span>'
+    return jh_common.span(i + 1, COL_NUM, px, bold=True)
 
 
 def _divider_row(ncols):
@@ -408,7 +410,7 @@ def _slot_cell(sl, alt_list, thumb_path, P, Pc, col_avail):
     if its:
         parts = [_opts_table(its, Pc, col_avail, px, tcell)]
     else:
-        parts = [f'<span style="color:{COL_EMPTY}; font-size:{small}px;">(비움)</span>']
+        parts = [jh_common.span("(비움)", COL_EMPTY, small)]
     if sl and sl.get("note"):
         parts.append(f'<span style="color:{COL_MUTED}; font-size:{small}px;">{_html.escape(sl["note"])}</span>')
     parts += [_alt_block(a, Pc, thumb_path, col_avail, attached=True, first=INDENT_TD, blank=INDENT_TD) for a in alt_list]
@@ -452,7 +454,7 @@ def _grid_table(columns, thumb_path, P):
         prefix = f"{c.get('label') or ''} · " if ncols > 1 else ""
         extra += [_alt_block(a, P, thumb_path, P["avail"], prefix=prefix, first=INDENT_TD, blank=INDENT_TD) for a in loose]
     if extra:
-        out += f'<span style="color:{COL_LOOSE_HEAD}; font-size:{small + 1}px;"><b>그 밖의 대체</b></span>' + "".join(extra)
+        out += jh_common.span("그 밖의 대체", COL_LOOSE_HEAD, small + 1, bold=True) + "".join(extra)
     return out
 
 
@@ -472,17 +474,17 @@ def format_reco_html(savior, scale=1.0, thumb_path=None, detail=0, content_w=Non
                 '아직 추천 아르카나 데이터가 없습니다 (신규 구원자이거나 데이터 갱신 전)</span>')
     one_line = detail >= 1 or bool(savior.get("sets"))          # 넓은 모드(2세트)는 머리 줄을 한 줄로
     head = (f'<span style="font-size:{px + 1}px;">🃏 <b>{name}</b> 추천 아르카나</span>' + (" " if one_line else "<br>")
-            + f'<span style="color:{COL_MUTED}; font-size:{small}px;">{esc(meta)}</span>')
+            + jh_common.span(esc(meta), COL_MUTED, small))
     foot = (f'<div style="font-size:8px;">&nbsp;</div>'
-            f'<span style="color:{COL_FOOT}; font-size:{small}px;">출처: 스타세이비어 가이드(참고용, 절대적인 정답 아님)</span>')
+            + jh_common.span("출처: 스타세이비어 가이드(참고용, 절대적인 정답 아님)", COL_FOOT, small))
     sets = savior.get("sets") or []
     if sets:
         return head + _grid_table(sets, thumb_path, P) + foot
     slots = savior.get("slots") or []
     if not any(slots):
-        return head + f'<br><span style="color:{COL_HINT}; font-size:{small}px;">등록된 추천 아르카나가 없습니다 (미정)</span>'
+        return head + f'<br>{jh_common.span("등록된 추천 아르카나가 없습니다 (미정)", COL_HINT, small)}'
     if all((not sl) or all(o.get("common") for o in sl.get("options") or []) for sl in slots):
-        return head + (f'<br><span style="color:{COL_COMMON}; font-size:{px}px;">특정 추천 카드 없음 - 공용 아르카나로 자유롭게 편성</span>{foot}')
+        return head + (f'<br>{jh_common.span("특정 추천 카드 없음 - 공용 아르카나로 자유롭게 편성", COL_COMMON, px)}{foot}')
     return head + _grid_table([{"label": "", "slots": slots, "alternatives": savior.get("alternatives") or []}], thumb_path, P) + foot
 
 

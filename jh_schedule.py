@@ -361,9 +361,9 @@ def format_schedule_html(row, scale=1.0, events=None):
     small = max(9, round(11 * scale))
     turn, time_label, title, befores, currents, afters = row
     goal = _next_turn_to_goal(row)
-    head = f'📅 <b>{esc(time_label)}</b> <span style="color:#ffcc00; font-size:{small}px;">[베타]</span>'
+    head = f'📅 <b>{esc(time_label)}</b> {jh_common.span("[베타]", "#ffcc00", small)}'
     sub = f'{esc(title)} · 턴 {turn}/{TOTAL_TURNS}' + (f' · 평가전까지 {goal}턴' if goal else '')
-    parts = [head + f'<br><span style="color:#90a4ae; font-size:{small}px;">{sub}</span>']
+    parts = [head + f'<br>{jh_common.span(sub, "#90a4ae", small)}']
     for label, evs in (("이번 턴 훈련 전", befores), ("이번 턴", currents), ("이번 턴 훈련 후", afters)):
         if evs:
             rows = []
@@ -374,9 +374,9 @@ def format_schedule_html(row, scale=1.0, events=None):
                 rows.append(_line(e, px))
                 if e[1] == "고정":
                     rows.extend(_reward_line(e[3], events, small, time_label))
-            parts.append(f'<span style="color:#9fe8ff; font-size:{small}px;"><b>{label}</b></span><br>' + "<br>".join(rows))
+            parts.append(f'{jh_common.span(label, "#9fe8ff", small, bold=True)}<br>' + "<br>".join(rows))
     if not (befores or currents or afters):
-        parts.append(f'<span style="color:#888888; font-size:{small}px;">이번 턴에는 알려진 고정 일정이 없습니다</span>')
+        parts.append(jh_common.span("이번 턴에는 알려진 고정 일정이 없습니다", "#888888", small))
     nxt = upcoming(row)
     if nxt:
         rows = []
@@ -384,13 +384,13 @@ def format_schedule_html(row, scale=1.0, events=None):
             fixed = [e for e in r[3] + r[4] + r[5] if e[1] == "고정"]
             names = " · ".join(esc(c) for e in fixed for c in e[3])
             rows.append(f'<span style="color:#ffd27f; font-size:{small}px;">{dist}턴 뒤 ({esc(r[1])})</span> '
-                        f'<span style="color:#ffffff; font-size:{small}px;">{names}</span>')
+                        + jh_common.span(names, "#ffffff", small))
             for e in fixed:
                 rows.extend(_reward_line(e[3], events, small, r[1], named=True))
-        parts.append(f'<span style="color:#9fe8ff; font-size:{small}px;"><b>다음 고정 일정</b></span><br>' + "<br>".join(rows))
+        parts.append(f'{jh_common.span("다음 고정 일정", "#9fe8ff", small, bold=True)}<br>' + "<br>".join(rows))
     note = "일정 출처: 옛 DB(턴 기준). 훈련 횟수와는 다를 수 있음"
     if "└" in "".join(parts) or "color:#a5d6a7" in "".join(parts):                # 보상/증감 요약이 실제로 들어갔을 때만
         note += "<br>※ 주요 보상·증감은 이벤트 DB를 자동 요약한 참고용입니다. 선택지·확률에 따라 달라지고 일부는 생략되니 정확한 내용은 게임에서 확인하세요"
-    parts.append(f'<span style="color:#78909c; font-size:{small}px;">{note}</span>')
+    parts.append(jh_common.span(note, "#78909c", small))
     sep = '<hr style="border:none;border-top:1px solid #444444;margin:6px 0;">'
     return sep.join(parts)
