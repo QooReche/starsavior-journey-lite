@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-jh_db.py - JourneyHelper Lite 데이터 계층 (GUI/OCR 의존성 없음)
+jh_db.py - 여정 내비게이터 데이터 계층 (GUI/OCR 의존성 없음)
 
 * 새 DB(https://starsavior-guide.github.io/data/)를 내려받아 로컬 캐시에 보관
 * 하루 두 번 이하(기본 12시간)만 확인하고, ETag / Last-Modified 조건부 GET(304)을 사용
@@ -61,7 +61,7 @@ MANUAL_COOLDOWN_SEC = 10 * 60         # 수동 새로고침 쿨다운
 FAIL_BACKOFF_SEC = 10 * 60            # 실패 직후 자동 재시도 금지 시간
 HTTP_TIMEOUT = (5, 20)                # (connect, read)
 MAX_JSON_BYTES = 20 * 1024 * 1024     # DB/V2 JSON 응답 크기 상한(실제는 수 MB 이하)
-DEFAULT_USER_AGENT = f"JourneyHelperLite/{APP_VERSION} (+https://github.com/QooReche/starsavior-journey-lite; personal game helper)"
+DEFAULT_USER_AGENT = f"JourneyNavigator/{APP_VERSION} (+https://github.com/QooReche/starsavior-journey-lite; personal game helper)"
 
 UpdateResult = namedtuple("UpdateResult", "status changed message")
 

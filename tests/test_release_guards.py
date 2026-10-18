@@ -76,9 +76,9 @@ def test_collect_licenses_fills_dist(tmp_path):
     pytest.importorskip("requests")
     sys.path.insert(0, os.path.join(SRC, "tools"))
     import collect_licenses
-    dist = tmp_path / "JourneyHelperLite"
+    dist = tmp_path / "JourneyNavigator"
     dist.mkdir()
-    (dist / "JourneyHelperLite.exe").write_bytes(b"MZ")
+    (dist / "JourneyNavigator.exe").write_bytes(b"MZ")
     assert collect_licenses.main([str(dist), "--src", SRC]) == 0
     for need in ("LICENSE", "README.md", "THIRD_PARTY_NOTICES.txt", os.path.join("licenses", "Apache-2.0.txt")):
         assert (dist / need).is_file(), need
@@ -91,3 +91,56 @@ def test_license_file_is_gpl3_and_readme_mentions_it():
     lic = open(os.path.join(SRC, "LICENSE"), encoding="utf-8").read()
     readme = open(os.path.join(SRC, "README.md"), encoding="utf-8").read()
     assert "GNU GENERAL PUBLIC LICENSE" in lic and "Version 3" in lic and "GPL-3.0" in readme
+
+
+# ---- 툴팁 깜빡임: OCR 글자만 흔들리는 같은 이벤트는 다시 만들지 않는다 (2026-10-18 '분홍색 연구') ----
+def _event_for(title):
+    import jh_db
+    return {"rawTitle": title, "cleanTitle": jh_db.clean_title(title), "isArcana": False, "timing": "", "sources": [],
+            "options": [{"choice": "a", "reward": "힘 +1", "variants": [], "info": []},
+                        {"choice": "b", "reward": "체력 +1", "variants": [], "info": []}]}
+
+
+def _fake_manager(matched, events):
+    cleared = []
+    return SimpleNamespace(
+        current_title="분홍색연구G", matched=matched, db_event_cache=events, ambig=[],
+        choice_lock=SimpleNamespace(active=False),
+        tooltip=SimpleNamespace(hide_and_clear=lambda: cleared.append(1)), cleared=cleared,
+        _is_same_event_as_current=None)
+
+
+def test_noisy_same_title_does_not_reset_tooltip():
+    pytest.importorskip("PyQt5")
+    import journey_helper as jhm
+    pink = _event_for("분홍색 연구")
+    other = _event_for("미래를 위한 선택")
+    fake = _fake_manager(pink, [pink, other])
+    fake._is_same_event_as_current = lambda c, k: jhm.MouseHoverManager._is_same_event_as_current(fake, c, k)
+    for noisy in (["분홍색영구", "1분홍색연구G"], ["1분홍색연구C", "분홍색연구"], ["분홍색연구시C", "분홍색연구"]):
+        jhm.MouseHoverManager.on_title(fake, noisy, None)
+        assert fake.cleared == [] and fake.current_title == "분홍색연구G"          # 숨기지도, 제목을 바꾸지도 않는다
+
+
+def test_different_event_still_resets():
+    pytest.importorskip("PyQt5")
+    import journey_helper as jhm
+    pink = _event_for("분홍색 연구")
+    other = _event_for("미래를 위한 선택")
+    fake = _fake_manager(pink, [pink, other])
+    assert jhm.MouseHoverManager._is_same_event_as_current(fake, ["미래를위한선택", "미래를위한선택비"], None) is False
+    assert jhm.MouseHoverManager._is_same_event_as_current(fake, ["분홍색연구", "1분홍색연구"], None) is True
+
+
+def test_version_info_resource_has_product_and_version(tmp_path):
+    """백신 휴리스틱 오탐 완화: PyInstaller exe 에 제품명/버전/라이선스를 넣는다(tools/make_version_info.py)."""
+    pytest.importorskip("PyInstaller")
+    sys.path.insert(0, os.path.join(SRC, "tools"))
+    import make_version_info
+    from jh_version import APP_VERSION
+    out = tmp_path / "version_info.txt"
+    assert make_version_info.main(str(out)) == 0
+    txt = out.read_text(encoding="utf-8")
+    for need in ("여정 내비게이터", "JourneyNavigator.exe", APP_VERSION, "GPL-3.0", "StringTable('041204b0'"):
+        assert need in txt, need
+    assert "filevers=(1, 0, 2, 0)" in txt                           # 숫자 버전은 16비트라 빌드 날짜를 못 담는다

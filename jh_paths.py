@@ -4,7 +4,7 @@
     <앱폴더>\\data\\   settings.json, cache\\ (DB/V2/카드 썸네일), custom_events.json, card_debug\\, qt_plugins\\
     <앱폴더>\\log\\    log.txt, log.old.txt, crash_log.txt
 앱 폴더 = frozen 이면 실행 파일(sys.executable) 폴더, 개발 실행이면 이 소스 폴더.
-앱 폴더에 쓸 수 없으면 %APPDATA%\\JourneyHelperLite (구 위치)로 폴백한다.
+앱 폴더에 쓸 수 없으면 %APPDATA%\\JourneyNavigator 로 폴백한다(구 이름 JourneyHelperLite 폴더의 설정은 이전).
 (번들 읽기 전용 데이터는 data\\ 가 아니라 assets\\ -> _internal\\assets 에 있어 이름이 겹치지 않는다.)
 data\\ 나 log\\ 가 실행 중에 지워져도 접근할 때마다 다시 만든다. 테스트는 환경변수 JH_APP_DIR 로 앱 폴더를 바꾼다.
 이 모듈은 Qt/journey_helper 를 import 하지 않는다 (순환 방지).
@@ -15,18 +15,19 @@ import sys
 import threading
 import time
 
-APP_NAME = "JourneyHelperLite"
+APP_NAME = "JourneyNavigator"
+OLD_APP_NAME = "JourneyHelperLite"      # 이름을 바꾸기 전(비공개 시험판)의 %APPDATA% 폴더 이름: 설정 이전용
 LOG_MAX_BYTES = 1024 * 1024
 README_NAME = "README_먼저읽어주세요.txt"
 LANG = "ko"                      # journey_helper.set_language 가 갱신 (README 문구 언어)
 
 README_TEXT = {
     "log": {
-        "ko": ("이 폴더는 JourneyHelperLite 의 진단용 로그(log.txt, 지난 로그 log.old.txt)가 저장되는 곳입니다.\r\n"
+        "ko": ("이 폴더는 여정 내비게이터(JourneyNavigator)의 진단용 로그(log.txt, 지난 로그 log.old.txt)가 저장되는 곳입니다.\r\n"
                "문제가 생겼을 때 개발자에게 전달하는 용도이며, 게임 창 정보와 화면 인식 결과만 기록됩니다.\r\n"
                "용량이 차지한다고 느껴지면 이 폴더의 파일을 지워도 됩니다(프로그램이 다시 만듭니다).\r\n"
                "로그는 일정 크기를 넘으면 자동으로 정리됩니다.\r\n"),
-        "en": ("This folder holds JourneyHelperLite's diagnostic logs (log.txt, and the previous log.old.txt).\r\n"
+        "en": ("This folder holds Journey Navigator's diagnostic logs (log.txt, and the previous log.old.txt).\r\n"
                "They are meant to be sent to the developer when something goes wrong; only game-window info and recognition results are recorded.\r\n"
                "You may delete the files here to free space (the app recreates them).\r\n"
                "Logs are trimmed automatically once they exceed a size limit.\r\n"),
@@ -59,6 +60,11 @@ def legacy_dir():
     return os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), APP_NAME)
 
 
+def old_name_dir():
+    """이름 변경 전 %APPDATA%\\JourneyHelperLite (설정을 이어받기 위한 이전 원본)"""
+    return os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), OLD_APP_NAME)
+
+
 def _writable(d):
     try:
         os.makedirs(d, exist_ok=True)
@@ -83,7 +89,8 @@ def _copy_missing(src, dst):
 
 def migrate_legacy(data, legacy=None):
     """새 data\\ 에 settings.json 이 없고 구 폴더가 있으면 settings.json·custom_events.json·cache\\ 를 복사. 했으면 True."""
-    legacy = legacy or legacy_dir()
+    if legacy is None:                                   # 새 이름 폴더에 없으면 이전 이름 폴더에서 이어받는다
+        return migrate_legacy(data, legacy_dir()) or migrate_legacy(data, old_name_dir())
     try:
         if os.path.exists(os.path.join(data, "settings.json")) or not os.path.isdir(legacy):
             return False

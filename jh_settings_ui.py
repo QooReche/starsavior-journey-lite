@@ -96,7 +96,7 @@ def _tail_lines(path, n):
 def build_diagnostics(host, jhm, now=None):
     """클립보드용 진단 텍스트. 민감정보(사용자 이름/경로)는 scrub_paths 로 가린다."""
     L = []
-    L.append(f"JourneyHelperLite {jhm.APP_VERSION}")
+    L.append(f"{jhm.APP_NAME} {jhm.APP_VERSION}")
     L.append(f"time: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(now))}")
     L.append(f"OS: {platform.platform()} / Python {platform.python_version()} / frozen={bool(getattr(sys, 'frozen', False))}")
     try:
@@ -152,7 +152,7 @@ class SettingsDialog(QDialog):
         self.host, self.jhm = host, jhm
         self.tr_ = jhm.tr
         self._loading = False
-        self.setWindowTitle("JourneyHelper " + self.tr_("설정"))
+        self.setWindowTitle(jhm.APP_DISPLAY + " " + self.tr_("설정"))
         self.setWindowFlags((self.windowFlags() | Qt.WindowStaysOnTopHint) & ~Qt.WindowContextHelpButtonHint)
         self.setStyleSheet(STYLE)
         self.resize(460, 620)
@@ -455,7 +455,7 @@ class SettingsDialog(QDialog):
         self._loading = False
 
     def _confirm(self, text):
-        return QMessageBox.question(self, "JourneyHelper", text, QMessageBox.Yes | QMessageBox.No,
+        return QMessageBox.question(self, self.jhm.APP_DISPLAY, text, QMessageBox.Yes | QMessageBox.No,
                                     QMessageBox.No) == QMessageBox.Yes
 
     def _update_usage(self):

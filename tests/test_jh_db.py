@@ -179,7 +179,7 @@ class UpdateTests(unittest.TestCase):
         r = st.update()
         self.assertEqual((r.status, r.changed), ("updated", True))
         self.assertEqual(len(s.calls), 2)
-        self.assertIn("JourneyHelperLite", s.calls[0][1]["User-Agent"])
+        self.assertIn("JourneyNavigator", s.calls[0][1]["User-Agent"])
         self.assertNotIn("If-None-Match", s.calls[0][1])
         self.assertTrue(st.has_cache())
         self.t[0] += 11 * 3600

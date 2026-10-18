@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-JourneyHelper Lite - 스타세이비어 여정 이벤트 선택지 보상 오버레이 (경량판)
+여정 내비게이터 (JourneyNavigator) - 스타세이비어 PC용 여정 도우미: 선택지 보상 오버레이
 
 원작: https://github.com/p1021/journeyhelper  (이 파일은 그 코드를 PyQt5 + rapidocr-onnxruntime 로 줄여 다시 쓴 것)
 DB  : https://starsavior-guide.github.io/data/
@@ -52,7 +52,9 @@ except ImportError:  # --selftest 는 GUI 없이도 돌 수 있게
     QWidget = object
     pyqtSignal = lambda *a, **k: None
 
-APP_NAME = "JourneyHelperLite"
+APP_NAME = "JourneyNavigator"          # 파일/폴더/뮤텍스/User-Agent 에 쓰는 영문 이름
+APP_DISPLAY = "여정 내비게이터"         # 화면에 보이는 이름(설정창 제목, 안내 문구)
+APP_USER_MODEL_ID = "QooReche.JourneyNavigator"   # 작업표시줄 그룹/아이콘 식별(Windows AppUserModelID)
 from jh_version import APP_VERSION  # noqa: E402  (버전 단일 출처: jh_version.py)
 
 DEFAULT_SETTINGS = {
@@ -258,7 +260,7 @@ _TRANSLATIONS_EN = {
     "{}분 뒤에 다시 확인할 수 있어요": "You can check again in {} min",
     "받으러 가기": "Get it",
     "이 버전은 알리지 않음": "Don't notify for this version",
-    "JourneyHelper가 실행 중입니다 (우클릭: 메뉴)": "JourneyHelper is running (right-click for menu)",
+    "여정 내비게이터가 실행 중입니다 (우클릭: 메뉴)": "Journey Navigator is running (right-click for menu)",
     "⚙️ 설정 열기": "⚙️ Open settings",
     "설정": "Settings", "⚙ 설정": "⚙ Settings", "일반": "General", "게임 표시": "Game display", "고급·진단": "Advanced / Diagnostics",
     "시작": "Startup", "시작할 때 상단바 상태": "Top bar state on startup",
@@ -1381,6 +1383,14 @@ class DbThread(QThread):
 # 오버레이 위젯
 # ----------------------------------------------------------------------------
 def make_tray_icon():
+    """앱/트레이/설정창 아이콘: assets/icon_<크기>.png 여러 장(작은 크기는 직접 그린 그림을 써서 또렷). 없으면 직접 그린 대체 그림."""
+    ico = QIcon()
+    for px in (16, 24, 32, 48, 64, 128, 256):
+        p = resource_path("assets", f"icon_{px}.png")
+        if os.path.isfile(p):
+            ico.addFile(p)
+    if not ico.isNull():
+        return ico
     pix = QPixmap(64, 64)
     pix.fill(Qt.transparent)
     p = QPainter(pix)
@@ -2098,6 +2108,20 @@ class MouseHoverManager(QWidget):
             return False
         return amb[0].get("cleanTitle", "") != key
 
+    def _is_same_event_as_current(self, cands_txt, kind):
+        """새 OCR 후보가 지금 표시 중인 이벤트와 같은 이벤트로 매칭되는가.
+        제목 영역 뒤의 배경(비슷한 색의 움직이는 캐릭터 등)이 흔들리면 같은 제목이 '분홍색연구G / 분홍색영구 / 1분홍색연구' 처럼
+        글자만 달라져 들어오는데, 이를 매번 새 이벤트로 보면 툴팁이 계속 숨었다 다시 나타나 깜빡인다(2026-10-18 '분홍색 연구')."""
+        if not self.matched or not self.db_event_cache or self.choice_lock.active:
+            return False
+        try:
+            cands, amb = jh_db.match_title(cands_txt, self.db_event_cache, kind)
+        except Exception:
+            return False
+        if not cands or cands[0][1] < 0.65:                     # 약한 매칭은 같은 이벤트로 확신하지 않는다
+            return False
+        return cands[0][0].get("cleanTitle", "") == self.matched.get("cleanTitle", None) and bool(self.ambig) == (len(amb) > 1)
+
     def on_title(self, titles, kind=None):
         """titles: OCR 후보 문자열 리스트(또는 문자열 하나), kind: 라벨 종류 'arcana'/'general'/None"""
         cands_txt = [titles] if isinstance(titles, str) else list(titles or [])
@@ -2105,6 +2129,8 @@ class MouseHoverManager(QWidget):
         if title == self.current_title:
             return
         self._last_cands, self._last_kind = cands_txt, kind
+        if self._is_same_event_as_current(cands_txt, kind):
+            return                          # OCR 글자만 흔들린 같은 이벤트: 툴팁을 숨겼다 다시 만들지 않는다(깜빡임 방지)
         if self.choice_lock.active:
             if self.choice_lock.blocks(cands_txt) and not self._is_different_event(cands_txt, kind):
                 log(f"[완료 이벤트 잠금] {cands_txt} 는 방금 선택을 마친 '{self.choice_lock.title}' 와 같아 무시")
@@ -2357,7 +2383,7 @@ class MouseHoverManager(QWidget):
 
     def _build_tray(self):
         self.tray = QSystemTrayIcon(make_tray_icon(), self)
-        self.tray.setToolTip(tr("JourneyHelper가 실행 중입니다 (우클릭: 메뉴)"))
+        self.tray.setToolTip(tr("여정 내비게이터가 실행 중입니다 (우클릭: 메뉴)"))
         self._tray_menu = QMenu()
         self._tray_menu.aboutToShow.connect(self._refresh_tray_menu)
         self.tray.setContextMenu(self._tray_menu)
@@ -2500,14 +2526,19 @@ def main(argv):
     except Exception:
         pass
     if not acquire_single_instance():
-        ctypes.windll.user32.MessageBoxW(0, f"{APP_NAME}가 이미 실행 중입니다.\n트레이 아이콘을 확인하세요.", "이미 실행 중", 0x40)
+        ctypes.windll.user32.MessageBoxW(0, f"{APP_DISPLAY}가 이미 실행 중입니다.\n트레이 아이콘을 확인하세요.", "이미 실행 중", 0x40)
         return 0
+    try:                                    # 작업표시줄이 python/exe 와 구분해 이 앱의 아이콘·그룹으로 보게 한다
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_USER_MODEL_ID)
+    except Exception:
+        pass
     install_crash_logger()
     jh_paths.log_dir()                      # log\ 와 안내 파일 보장(폴백 판정·이전도 여기서)
     set_language(load_settings()["language"])
     prepare_qt_plugins()
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
+    app.setWindowIcon(make_tray_icon())     # 설정창 등 모든 창의 기본 아이콘
     manager = MouseHoverManager()
     rc = app.exec_()
     if getattr(manager, "stuck_threads", None):

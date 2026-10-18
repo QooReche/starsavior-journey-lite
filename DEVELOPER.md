@@ -1,4 +1,4 @@
-# 개발자용 문서 (JourneyHelper Lite)
+# 개발자용 문서 (여정 내비게이터 / JourneyNavigator)
 
 일반 사용자용 안내는 `README.md`. 이 문서는 소스/빌드/데이터/구조를 다룹니다.
 
@@ -15,6 +15,7 @@
 | 설정 | 큰 설정창 | 가벼운 설정창(탭 3개) + 상단바 메뉴 |
 | 추가 | | 구원자 추천 아르카나, 일정 미리보기(베타), '훈련의 방향성' 특수 잠재력 안내, 새 버전 알림 |
 | 크기 | 약 1.3GB | 약 240MB(zip 약 106MB) |
+| 이름 | JourneyHelper | 여정 내비게이터 / JourneyNavigator (2026-10-18 변경, 이전 이름 폴더의 설정은 이어받음) |
 
 ## 소스로 실행
 
@@ -24,7 +25,7 @@ python -m venv .venv
 .venv\Scripts\python -m pip install -r requirements.txt
 .venv\Scripts\python journey_helper.py
 ```
-- 한글이 들어간 경로에서 Qt5 `QApplication`이 멈추는 환경이 있어, 시작 시 Qt 플러그인을 ASCII 경로로 복사해 우회합니다(앱 폴더의 `data` 경로가 ASCII면 `data\qt_plugins`, 아니면 `%LOCALAPPDATA%\JourneyHelperLite\qt_plugins`). 사용자가 지울 때 이 폴더도 함께 지워야 하므로 README에 안내합니다. 개발/빌드는 ASCII 경로를 권장합니다.
+- 한글이 들어간 경로에서 Qt5 `QApplication`이 멈추는 환경이 있어, 시작 시 Qt 플러그인을 ASCII 경로로 복사해 우회합니다(앱 폴더의 `data` 경로가 ASCII면 `data\qt_plugins`, 아니면 `%LOCALAPPDATA%\JourneyNavigator\qt_plugins`). 사용자가 지울 때 이 폴더도 함께 지워야 하므로 README에 안내합니다. 개발/빌드는 ASCII 경로를 권장합니다.
 - 모든 이미지 입출력은 한글 경로에서도 되도록 `cv2.imencode`/`tofile` 방식입니다(`tests/test_korean_path.py`가 한글 폴더로 검증).
 
 ## 테스트

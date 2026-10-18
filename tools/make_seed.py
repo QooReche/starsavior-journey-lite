@@ -3,7 +3,7 @@
 make_seed.py - 사용자/개발자 캐시에서 번들 DB 시드(assets/seed)를 만든다.
 
 사용: python -X utf8 tools/make_seed.py [--from <캐시폴더>] [--out <시드폴더>]
-  * 캐시 기본값: 후보(개발자 실행 data/cache, %APPDATA%/JourneyHelperLite/cache) 중 '유효하고 가장 최근' 것
+  * 캐시 기본값: 후보(개발자 실행 data/cache, %APPDATA%/JourneyNavigator/cache) 중 '유효하고 가장 최근' 것
   * 복사 대상: journey/ko/journey.json, arcanas/arcanas.json, v2/{journeys,journey_items,journey_buffs,potentials}.json (meta 제외)
   * 앱의 구조 검증(jh_db.validate_db_file / jh_v2.validate)과 이벤트 캐시 빌드를 통과해야 한다. 깨진 캐시는 거부(종료코드 2).
   * 캐시 폴더는 읽기만 한다. 생성 정보는 SEED_INFO.txt 에 기록.
@@ -61,7 +61,8 @@ def candidate_caches():
     c = [os.path.join(ROOT, "data", "cache")]
     ap = os.environ.get("APPDATA")
     if ap:
-        c.append(os.path.join(ap, "JourneyHelperLite", "cache"))
+        c.append(os.path.join(ap, "JourneyNavigator", "cache"))
+        c.append(os.path.join(ap, "JourneyHelperLite", "cache"))        # 이름 변경 전 위치
     return c
 
 

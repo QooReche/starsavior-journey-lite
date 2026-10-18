@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""배포 폴더(dist\\JourneyHelperLite)에 라이선스 고지문을 채운다 (GPL-3.0 / Apache-2.0 / MIT 등이 사본 동봉을 요구).
+"""배포 폴더(dist\\JourneyNavigator)에 라이선스 고지문을 채운다 (GPL-3.0 / Apache-2.0 / MIT 등이 사본 동봉을 요구).
 
 사용: python -X utf8 tools\\collect_licenses.py <dist 폴더> [--site <venv site-packages>] [--src <소스 폴더>]
 만드는 것:
@@ -94,7 +94,7 @@ def main(argv):
     a = ap.parse_args(argv)
     site = a.site or next(p for p in sys.path if p.endswith("site-packages"))
     dist = os.path.abspath(a.dist)
-    if not os.path.isfile(os.path.join(dist, "JourneyHelperLite.exe")):
+    if not os.path.isfile(os.path.join(dist, "JourneyNavigator.exe")):
         print("빌드 결과를 찾지 못했습니다:", dist)
         return 1
     # 이 프로그램의 LICENSE / README

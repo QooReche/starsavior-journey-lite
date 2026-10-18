@@ -1,4 +1,4 @@
-# JourneyHelper Lite runtime requirements (no torch / easyocr / pandas / scipy / matplotlib)
+# 여정 내비게이터(JourneyNavigator) runtime requirements (no torch / easyocr / pandas / scipy / matplotlib)
 # Python 3.10-3.12 recommended (developed and tested on 3.11, Windows 10/11)
 # Keep this file ASCII-only: pip decodes it with the system code page.
 PyQt5>=5.15,<5.16

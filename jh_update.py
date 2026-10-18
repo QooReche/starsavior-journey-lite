@@ -88,7 +88,7 @@ def _num(v, default=0):
 
 
 class UpdateChecker:
-    def __init__(self, user_agent="JourneyHelperLite", fetch=None, clock=time.time, state_path=None):
+    def __init__(self, user_agent="JourneyNavigator", fetch=None, clock=time.time, state_path=None):
         self.user_agent, self.clock = user_agent, clock
         self._fetch = fetch or default_fetch
         self._state_path = state_path

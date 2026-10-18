@@ -1,12 +1,22 @@
 # -*- mode: python ; coding: utf-8 -*-
 # PyInstaller onedir 빌드:  python -m PyInstaller journey_helper.spec --noconfirm
-# 결과: dist/JourneyHelperLite/JourneyHelperLite.exe  (폴더째로 배포)
+# 결과: dist/JourneyNavigator/JourneyNavigator.exe  (폴더째로 배포)
 from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
 
 datas = [("models", "models")]                       # 한국어 인식 모델 + 사전
 datas += [("assets", "assets")]                           # 구원자 추천 아르카나 슬림 JSON (tools/extract_savior_reco.py 로 생성)
 datas += collect_data_files("rapidocr_onnxruntime")  # config.yaml, 기본 det/cls/rec 모델
 binaries = collect_dynamic_libs("onnxruntime")
+
+# Qt5Core / Qt5Widgets / onnxruntime 이 필요로 하는 VC++ 런타임. PyInstaller 가 자동으로 못 찾아 번들하지 않으면
+# 'Microsoft Visual C++ 재배포 패키지'가 없는 PC 에서 앱이 시작하지 못한다(개발 PC 에는 설치돼 있어 눈치채기 어렵다).
+# 같은 폴더의 msvcp140.dll / vcruntime140.dll (같은 14.x 버전)과 함께 쓰이도록 System32 에서 가져와 앱 폴더에 넣는다.
+import os
+_SYS32 = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32")
+for _n in ("msvcp140_1.dll", "msvcp140_2.dll"):
+    _p = os.path.join(_SYS32, _n)
+    if os.path.isfile(_p):
+        binaries.append((_p, "."))
 
 EXCLUDES = [
     # 원작이 쓰던 무거운 패키지 (설치돼 있어도 포함하지 않음)
@@ -53,10 +63,12 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="JourneyHelperLite",
+    name="JourneyNavigator",
+    icon="assets/icon.ico",
+    version="version_info.txt" if os.path.isfile("version_info.txt") else None,   # tools/make_version_info.py (파일 속성의 제품명·버전; 백신 휴리스틱 오탐 완화)
     debug=False,
     strip=False,
     upx=False,
     console=False,
 )
-coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="JourneyHelperLite")
+coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="JourneyNavigator")

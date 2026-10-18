@@ -47,7 +47,7 @@ def test_fallback_when_unwritable(app_root, monkeypatch, tmp_path):
     monkeypatch.setattr(P, "_writable", lambda d: False)
     P.reset_for_tests()
     assert not P.is_portable()
-    legacy = str(tmp_path / "roaming" / "JourneyHelperLite")
+    legacy = str(tmp_path / "roaming" / "JourneyNavigator")
     assert P.data_dir() == legacy and P.log_dir() == legacy
     assert P.display_path("log").startswith("%APPDATA%")
     P.write_log("x")
@@ -146,7 +146,7 @@ def test_readme_created_recreated_bom_and_not_counted(app_root):
         f = app_root / kind / P.README_NAME
         raw = f.read_bytes()
         assert raw.startswith(b"\xef\xbb\xbf")
-        assert "JourneyHelperLite" in raw.decode("utf-8-sig") or "settings.json" in raw.decode("utf-8-sig")
+        assert "JourneyNavigator" in raw.decode("utf-8-sig") or "settings.json" in raw.decode("utf-8-sig")
         f.unlink()
     shutil.rmtree(app_root / "log")
     jhm.log("y")
@@ -204,3 +204,26 @@ def test_stamp_version_on_copy(tmp_path):
     assert re.fullmatch(re.escape(jh_version.BASE_VERSION) + r"\.\d{6}", today)
     with pytest.raises(ValueError):
         stamp_version.stamp(str(cp), "2610")
+
+
+def test_settings_are_inherited_from_old_name_folder_and_new_name_wins(tmp_path):
+    """이름 변경(JourneyHelperLite -> JourneyNavigator): 새 이름 폴더가 없으면 옛 이름 폴더에서 설정을 이어받고, 둘 다 있으면 새 이름이 우선."""
+    roaming = tmp_path / "roaming"
+    old = roaming / "JourneyHelperLite"
+    old.mkdir(parents=True)
+    (old / "settings.json").write_text(json.dumps({"language": "en"}), encoding="utf-8")
+    data = tmp_path / "app" / "data"
+    data.mkdir(parents=True)
+    os.environ["APPDATA"] = str(roaming)
+    try:
+        assert P.migrate_legacy(str(data)) is True
+        assert json.loads((data / "settings.json").read_text(encoding="utf-8"))["language"] == "en"
+        data2 = tmp_path / "app2" / "data"
+        data2.mkdir(parents=True)
+        new = roaming / "JourneyNavigator"
+        new.mkdir()
+        (new / "settings.json").write_text(json.dumps({"language": "ko"}), encoding="utf-8")
+        assert P.migrate_legacy(str(data2)) is True
+        assert json.loads((data2 / "settings.json").read_text(encoding="utf-8"))["language"] == "ko"
+    finally:
+        os.environ.pop("APPDATA", None)
