@@ -86,3 +86,9 @@ def test_bare_xx_without_number_matches_xx_routes():
     sv = {"name": "x", "potential": "XX - 아무거나"}
     assert jh_relic.recommend_lines(jh_relic.ROUTES["전술 운용에 도움이 되는 응원"], sv)
     assert not jh_relic.recommend_lines(jh_relic.ROUTES["공격에 도움이 되는 응원"], sv)
+
+
+def test_variable_route_includes_ix():
+    codes = [c for c, _ in jh_relic.ROUTES["변수 대처에 도움이 되는 응원"]]
+    assert codes == ["GX", "HX", "IX"]                                          # 데이터북 기준 3종 (V2 DB 유물 이벤트에도 IX 가 있음)
+    assert "GX · HX · IX" in jh_relic.section(OPT("변수 대처에 도움이 되는 응원"))
