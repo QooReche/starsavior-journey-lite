@@ -250,6 +250,75 @@ def _reward_line(contents, events, size, time_label="", named=False):
     return out
 
 
+_DELTA_RE = re.compile(r"(힘|체력|인내|집중|보호|스태미나|컨디션|잠재력 포인트)\s*([+-]\d+)(?:~([+-]?\d+))?")
+_DELTA_ORDER = ("힘", "체력", "인내", "집중", "보호", "스태미나", "컨디션", "잠재력 포인트")
+MAX_EFFECT_TOKENS = 5
+
+
+def effect_summary(event):
+    """이벤트 보상 전체(모든 선택지·or 갈래)에서 스탯/스태미나/컨디션/잠재력 증감 범위를 모은다: ['힘 +10~+20', '체력 -20~+20', ...]
+    한 줄이 'A +10 or B +10' 처럼 택1이면 '힘/체력 +10 중 1' 로 묶는다. 아이템·버프 같은 주요 보상은 앞에 붙인다(최대 2개)."""
+    lo, hi, groups = {}, {}, []
+    for o in event.get("options") or []:
+        for v in (o.get("variants") or [o])[:1]:
+            for line in (v.get("reward") or "").split("\n"):
+                if _COST_RE.search(line.strip()):
+                    continue
+                found = [(m.group(1), [int(m.group(2))] + ([int(m.group(3))] if m.group(3) else [])) for m in _DELTA_RE.finditer(line)]
+                if not found:
+                    continue
+                names = list(dict.fromkeys(k for k, _ in found))
+                if " or " in line and len(names) > 1:                      # 택1 묶음
+                    per = {}
+                    for k, vs in found:
+                        a0, b0 = per.get(k, (10 ** 6, -10 ** 6))
+                        per[k] = (min(a0, min(vs)), max(b0, max(vs)))
+                    g = tuple((k, a0, b0) for k, (a0, b0) in per.items())
+                    if g not in groups:
+                        groups.append(g)
+                    continue
+                for k, vs in found:
+                    lo[k] = min(lo.get(k, 10 ** 6), min(vs))
+                    hi[k] = max(hi.get(k, -10 ** 6), max(vs))
+    tokens = []
+    for k in _DELTA_ORDER:
+        if k in lo:
+            name = "잠재력" if k == "잠재력 포인트" else k
+            tokens.append(f"{name} {lo[k]:+d}" if lo[k] == hi[k] else f"{name} {lo[k]:+d}~{hi[k]:+d}")
+    short = lambda n: "잠재력" if n == "잠재력 포인트" else n
+    rng = lambda a, b: f"{a:+d}" + (f"~{b:+d}" if a != b else "")
+    for g in groups:
+        if len({(a, b) for _, a, b in g}) == 1:                              # 값이 모두 같으면 '힘/체력/인내 +10 중 1'
+            tokens.append("/".join(short(k) for k, _, _ in g) + f" {rng(g[0][1], g[0][2])} 중 1")
+        else:                                                                # 다르면 항목별로 '컨디션 +1 / 잠재력 +15 중 1'
+            tokens.append(" / ".join(f"{short(k)} {rng(a, b)}" for k, a, b in g) + " 중 1")
+    items = []
+    for x in key_rewards(event, 3):
+        if x.startswith("잠재력 포인트"):
+            continue
+        items.append(x.split(" or ")[0] + " 등" if " or " in x else x)         # 긴 택1 문구는 앞부분만
+    return items[:2] + tokens[:MAX_EFFECT_TOKENS]
+
+
+def _random_block(ev, events, px, small):
+    """[랜덤] 이벤트: 머리줄 + 이벤트마다 한 줄(이름 / 예상 증감 요약)을 표로 정렬"""
+    region, occur, typ, contents = ev
+    color, label = OCCUR_STYLE.get(occur, ("#b0bec5", occur))
+    where = "" if region in ("", "NOA") else f"[{_html.escape(region)}] "
+    head = (f'<span style="color:{color}; font-size:{px}px;">[{label}]</span> '
+            f'<span style="color:#ffffff; font-size:{px}px;">{where}<b>아래 중 하나</b></span> '
+            f'<span style="color:#90a4ae; font-size:{px}px;">({_html.escape(typ)})</span>')
+    idx = _event_index(events)
+    trs = []
+    for c in contents:
+        import jh_db
+        e = idx.get(jh_db.clean_title(_PROMO_PREFIX.sub("", c))) if idx else None
+        eff = " · ".join(effect_summary(e)) if e else ""
+        trs.append(f'<tr><td valign="top"><span style="color:#ffffff; font-size:{small}px;">• {_html.escape(c)}</span></td>'
+                   f'<td valign="top">' + (f'<span style="color:#a5d6a7; font-size:{small}px;">&nbsp;&nbsp;{_html.escape(eff)}</span>' if eff else "") + '</td></tr>')
+    return head + '<table cellspacing="0" cellpadding="1">' + "".join(trs) + "</table>"
+
+
 def _line(ev, size):
     region, occur, typ, contents = ev
     color, label = OCCUR_STYLE.get(occur, ("#b0bec5", occur))
@@ -274,6 +343,9 @@ def format_schedule_html(row, scale=1.0, events=None):
         if evs:
             rows = []
             for e in evs:
+                if e[1] == "랜덤" and len(e[3]) > 1:
+                    rows.append(_random_block(e, events, px, small))
+                    continue
                 rows.append(_line(e, px))
                 if e[1] == "고정":
                     rows.extend(_reward_line(e[3], events, small, time_label))
@@ -292,8 +364,8 @@ def format_schedule_html(row, scale=1.0, events=None):
                 rows.extend(_reward_line(e[3], events, small, r[1], named=True))
         parts.append(f'<span style="color:#9fe8ff; font-size:{small}px;"><b>다음 고정 일정</b></span><br>' + "<br>".join(rows))
     note = "일정 출처: 옛 DB(턴 기준). 훈련 횟수와는 다를 수 있음"
-    if any("주요 보상" in r or "└" in r for r in "".join(parts).split("<br>")):
-        note += "<br>※ 주요 보상은 이벤트 DB를 자동 요약한 참고용입니다. 스탯·비용 등은 생략했고 실제와 다를 수 있으니 정확한 내용은 게임에서 확인하세요"
+    if "└" in "".join(parts) or "color:#a5d6a7" in "".join(parts):                # 보상/증감 요약이 실제로 들어갔을 때만
+        note += "<br>※ 주요 보상·증감은 이벤트 DB를 자동 요약한 참고용입니다. 선택지·확률에 따라 달라지고 일부는 생략되니 정확한 내용은 게임에서 확인하세요"
     parts.append(f'<span style="color:#78909c; font-size:{small}px;">{note}</span>')
     sep = '<hr style="border:none;border-top:1px solid #444444;margin:6px 0;">'
     return sep.join(parts)

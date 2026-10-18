@@ -108,11 +108,12 @@ def test_schedule_tooltip_is_beta_and_shows_key_rewards_for_fixed_events():
     assert "주요 보상" not in js.format_schedule_html(row)                      # 이벤트 캐시가 없으면 기존 표시 그대로
 
 
-def test_multiple_contents_get_event_name_prefix_and_random_events_have_no_rewards():
+def test_multiple_contents_get_event_name_prefix_and_random_events_are_summarized_per_row():
     events = [_ev("토벌의 전리품", ["아이템A"]), _ev("리세트의 유혹", ["아이템B"]), _ev("여가 시간", ["아이템C"])]
     html = js.format_schedule_html(js.find_turn("6월 하순"), 1.0, events)
     assert "토벌의 전리품: " in html and "리세트의 유혹: " in html
-    assert "아이템C" not in js.format_schedule_html(js.find_turn("3월 중순"), 1.0, events)   # 랜덤 이벤트는 보상 줄 없음
+    html3 = js.format_schedule_html(js.find_turn("3월 중순"), 1.0, events)
+    assert "└ 여가 시간" not in html3 and "• 여가 시간" in html3 and "아이템C" in html3     # 랜덤은 '└' 줄이 아니라 이벤트별 표 행으로
 
 
 def test_key_rewards_skips_difficulty_header_and_hidden_stat_items():
@@ -157,3 +158,28 @@ def test_choice_dependent_label():
     row = js.find_turn("7월 중순")
     assert "(선택에 따라)" in js.format_schedule_html(row, 1.0, many)           # 보상이 있는 선택지 2개 이상
     assert "(선택에 따라)" not in js.format_schedule_html(row, 1.0, one)
+
+
+# ---- 랜덤 이벤트: 이벤트마다 한 줄 + 증감 요약 (2026-10-18) ----
+def test_effect_summary_ranges_and_pick_one_groups():
+    ev = _ev("산책", ["스태미나 -5\n힘 +10 or 체력 +10 or 인내 +10"])
+    assert js.effect_summary(ev) == ["스태미나 -5", "힘/체력/인내 +10 중 1"]
+    ev2 = _ev("관람", ["컨디션 +1 or 잠재력 포인트 +15"])
+    assert js.effect_summary(ev2) == ["컨디션 +1 / 잠재력 +15 중 1"]                     # 값이 다르면 항목별로
+    ev3 = _ev("식사", ["[SUCCESS] 잠재력 포인트 +20\n[FAIL] 잠재력 포인트 +10\nor\n스태미나 +15\n잠재력 포인트 +5"])
+    assert js.effect_summary(ev3) == ["스태미나 +15", "잠재력 +5~+20"]
+    ev4 = _ev("석상", ["힘 +20\n체력 -20\n석상의 칼", "체력 +20\n힘 -20\n석상의 꽃"])
+    assert js.effect_summary(ev4) == ["석상의 칼", "석상의 꽃", "힘 -20~+20", "체력 -20~+20"]
+
+
+def test_random_events_are_listed_one_per_row_with_summary():
+    events = [_ev("단원과의 식사", ["스태미나 +15"]), _ev("단원과의 산책", ["스태미나 -5"])]
+    html = js.format_schedule_html(js.find_turn("8월 하순"), 1.0, events)
+    assert html.count("<tr><td") >= 4 and "• 단원과의 식사" in html and "• 단원과의 대화" in html   # 매칭 안 되는 이벤트도 이름은 한 줄로
+    assert "스태미나 +15" in html and "스태미나 -5" in html and "아래 중 하나" in html
+    assert "자동 요약한 참고용" in html
+
+
+def test_random_event_without_cache_still_lists_names():
+    html = js.format_schedule_html(js.find_turn("8월 하순"), 1.0)
+    assert "• 단원과의 식사" in html and "자동 요약한 참고용" not in html
