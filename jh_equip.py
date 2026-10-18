@@ -25,14 +25,14 @@ HEADER_PHRASE = "구원자"
 BUTTON_PHRASE = {"clear": "전체해제", "auto": ("자동착장", "자동장착")}     # OCR 이 '착장'을 '장착'으로 읽기도 한다
 TITLE_SCALES = (1.5, 2.0, 2.5, 3.0)   # 이름 OCR 배율: 이 화면의 글꼴은 '웬' 같은 글자가 배율에 따라 오인식돼 넓게 모은다
 CONFIRM = 2                      # 연속 판독 횟수(화면/구원자 확정)
-LOST = 3                         # 연속으로 못 읽으면 해제
+LOST = 2                         # 연속으로 못 읽으면 해제(스캔 간격과 합쳐 약 1.2초)
 NOREAD_LOST = 4
-SCAN_SEC = 1.0
+SCAN_SEC = 0.6
 TOOLTIP_TOP_FRAC = 0.20
 WIDE_TOP_FRAC = 0.34            # 디펜더(퓨어탱커/공격탱커 좌우): 레벨·전투력 숫자(~0.32) 아래
 WIDE_X_FRAC = 0.02
 WIDE_W_FRAC = 0.50
-ICON_H = 15                    # 세트 아이콘 높이(px, 배율 전)
+ICON_H = 26                    # 세트 아이콘 높이(px, 배율 전): 그림 둘레에 여백이 있어 글자(14px)보다 커야 보인다
 TOOLTIP_X_FRAC = 0.30            # 좌우 화살표(0.26 / 0.59) 사이, 우측 장비 패널(0.74~) 왼쪽
 TOOLTIP_MAX_W_FRAC = 0.28
 BASE_W = 430
@@ -165,29 +165,45 @@ def usable(matches):
     return bool(s.get("equipment")) and not s.get("unknown")
 
 
-def _tank_of(note):
-    """항목 메모로 운영 방식을 가른다: 'attack' 공격탱커 / 'pure' 퓨어탱커 / 'ex' EX 전용 / None 알 수 없음."""
+COLUMNS = (("pure", "퓨어탱커"), ("attack", "공격력 탱커"), ("ex", "EX"))
+
+
+def _tags(note):
+    """항목 메모가 가리키는 운영 방식 집합: {'pure','attack','ex'}. '※ 퓨어탱커, EX' 는 둘 다, '※ EX 전용' 은 EX 만."""
     n = note or ""
-    if "공격탱커" in n:
-        return "attack"
+    tags = set()
     if "퓨어탱커" in n:
-        return "pure"
-    return "ex" if "EX" in n else None
+        tags.add("pure")
+    if "공격탱커" in n:
+        tags.add("attack")
+    if re.search(r"EX", n):
+        tags.add("ex")
+    return tags
+
+
+def clean_note(note):
+    """메모에서 열 머리글과 겹치는 태그를 빼고 잠재력 코드만 남긴다: '※ 공격탱커(AX)' -> 'AX', '※ 퓨어탱커, EX' -> ''."""
+    n = re.sub(r"[※,]", " ", note or "")
+    n = re.sub(r"퓨어탱커|공격탱커|EX 전용|EX", " ", n)
+    n = re.sub(r"\(\s*([A-Z]{1,2}\d?)\s*\)", r" \1", n)
+    return re.sub(r"\s+", " ", n).strip()
 
 
 def split_by_tank(equipment):
-    """디펜더 장비 -> {'necklace'|'ring'|'sets': (퓨어 항목들, 공격 항목들, EX 전용 항목들)}. 가를 수 없는 항목이 있으면 None(한 줄 목록으로 표시)."""
+    """디펜더 장비 -> {'necklace'|'ring'|'sets': {'pure': [...], 'attack': [...], 'ex': [...]}} (같은 아이템이 여러 열에 들어갈 수 있다).
+    운영 방식을 알 수 없는 항목이 있거나 퓨어/공격 어느 쪽도 없으면 None(한 줄 목록으로 표시)."""
     out = {}
     for key in ("necklace", "ring", "sets"):
-        groups = {"pure": [], "attack": [], "ex": []}
+        cols = {"pure": [], "attack": [], "ex": []}
         for o in (equipment or {}).get(key) or []:
-            kind = _tank_of(o.get("note"))
-            if kind is None:
+            tags = _tags(o.get("note"))
+            if not tags:
                 return None
-            groups[kind].append(o)
-        if not (groups["pure"] or groups["attack"]):
+            for t in tags:
+                cols[t].append(o)
+        if not (cols["pure"] or cols["attack"]):
             return None
-        out[key] = (groups["pure"], groups["attack"], groups["ex"])
+        out[key] = cols
     return out
 
 
@@ -226,9 +242,9 @@ def _set_html(value, px, icon_path, th):
     return "".join(out)
 
 
-def _item_html(item, px, small, is_set, icon_path, th):
+def _item_html(item, px, small, is_set, icon_path, th, columns=False):
     value = _set_html(item["value"], px, icon_path, th) if is_set else jh_common.span(_html.escape(item["value"]), COL_VALUE, px, bold=True)
-    note = item.get("note")
+    note = clean_note(item.get("note")) if columns else item.get("note")
     return value + (("<br>" + jh_common.span("&nbsp;&nbsp;" + _html.escape(note), COL_NOTE, small)) if note else "")
 
 
@@ -255,14 +271,12 @@ def format_html(savior, scale=1.0, detail=0, icon_path=None):
     cat = (("목걸이", "necklace", False), ("반지", "ring", False), ("추천 세트", "sets", True))
     heads, rows = None, []
     groups = split_by_tank(eq) if savior.get("sets") else None
-    if groups:                                                       # 디펜더: 퓨어탱커 | 공격력 탱커 좌우, EX 전용은 아래 줄
-        heads = [jh_common.span("▌퓨어탱커", jh_common.COL_GOLD, px, bold=True), jh_common.span("▌공격력 탱커", jh_common.COL_GOLD, px, bold=True)]
+    if groups:                                                       # 디펜더: 퓨어탱커 | 공격력 탱커 | EX 나란히 (공용 아이템은 해당 열 모두)
+        heads = [jh_common.span("▌" + name, COL_HEAD, px, bold=True) for _, name in COLUMNS]
+        dash = jh_common.span("-", COL_NOTE, px)
         for title, key, is_set in cat:
-            pure, attack, ex = groups[key]
-            cell = lambda items: "<br>".join(_item_html(o, px, small, is_set, icon_path, th) for o in items) or jh_common.span("-", COL_NOTE, px)
-            rows.append((label(title), [cell(pure), cell(attack)]))
-            if ex:
-                rows.append(("", [jh_common.span("EX&nbsp;&nbsp;", COL_LABEL, small, bold=True) + cell(ex)]))
+            cells = ["<br>".join(_item_html(o, px, small, is_set, icon_path, th, True) for o in groups[key][col]) or dash for col, _ in COLUMNS]
+            rows.append((label(title), cells))
         if eq.get("setNotes"):
             rows.append(("", ["<br>".join(jh_common.span(esc(n), COL_NOTE, small) for n in eq["setNotes"])]))
     else:

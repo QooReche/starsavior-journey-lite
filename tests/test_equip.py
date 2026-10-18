@@ -57,7 +57,8 @@ def test_html_shows_all_rows(saviors):
 def test_defender_shows_pure_and_attack_tank_info(saviors):
     d = next(s for s in saviors if s.get("sets") and s["name"] == "카르멘")
     txt = _plain(eq.format_html(d))
-    assert "※ 퓨어탱커, EX" in txt and "※ 공격탱커(AX)" in txt          # 두 운영 방식을 모두 보여 준다
+    assert "▌퓨어탱커" in txt and "▌공격력 탱커" in txt and "▌EX" in txt          # 운영 방식을 모두 보여 준다
+    assert "BX" in txt and "AX" in txt                                      # 메모는 잠재력 코드만 남는다
     assert "생명(4) + 장벽(2)" in txt and "공격(4) + 투지(2)" in txt
     assert "AX1은 공격력% 효율이 높거나" in txt
 
@@ -192,15 +193,15 @@ def _tracker(saviors):
 HDR_OK, HDR_NO = ("구원자", 0.99), ("여정시작", 0.99)
 
 
-def test_tracker_needs_two_reads_and_clears_after_three_misses(saviors):
+def test_tracker_needs_two_reads_and_clears_after_two_misses(saviors):
+    assert eq.LOST == 2
     tr, io = _tracker(saviors)
     assert tr.step(HDR_OK) is None                                  # 한 번만 읽혀서는 확정하지 않는다
     ev = tr.step(HDR_OK)
-    assert ev is None or ev[0] == "savior"
     ev = ev or tr.step(HDR_OK)
     assert ev and [m["key"] for m in ev[1]] == ["petra"]
-    assert tr.step(HDR_NO) is None and tr.step(HDR_NO) is None      # 두 번 못 읽는 것은 깜빡임으로 본다
-    assert tr.step(HDR_NO) == ("savior", None)                      # 세 번째에 해제
+    assert tr.step(HDR_NO) is None                                  # 한 번 못 읽는 것은 깜빡임으로 본다
+    assert tr.step(HDR_NO) == ("savior", None)                      # 두 번째에 해제 (약 1.2초)
     assert tr.step(HDR_NO) is None                                  # 이미 해제됨: 다시 알리지 않는다
 
 
@@ -335,10 +336,29 @@ def _defender(saviors):
 
 def test_defender_equipment_splits_into_pure_attack_ex(saviors):
     g = eq.split_by_tank(_defender(saviors)["equipment"])
-    pure, attack, ex = g["sets"]
-    assert [o["value"] for o in pure] == ["생명(4) + 장벽(2)"] and [o["value"] for o in attack] == ["공격(4) + 투지(2)"]
-    assert [o["value"] for o in ex] == ["통찰(4) + 장벽(2)"]
-    assert [o["value"] for o in g["necklace"][0]] == ["속도"] and [o["value"] for o in g["necklace"][1]] == ["공격력%"]
+    vals = lambda key, col: [o["value"] for o in g[key][col]]
+    assert vals("sets", "pure") == ["생명(4) + 장벽(2)"] and vals("sets", "attack") == ["공격(4) + 투지(2)"] and vals("sets", "ex") == ["통찰(4) + 장벽(2)"]
+    # '※ 퓨어탱커, EX' 는 퓨어탱커와 EX 둘 다에 해당한다 (EX 열에도 보여야 한다)
+    assert vals("necklace", "pure") == ["속도"] and vals("necklace", "ex") == ["속도"] and vals("necklace", "attack") == ["공격력%"]
+    assert vals("ring", "pure") == ["생명력%"] and vals("ring", "ex") == ["생명력%"] and vals("ring", "attack") == ["공격력%"]
+
+
+def test_ede_ex_only_ring_goes_to_ex_column(saviors):
+    ede = next(s for s in saviors if s["name"] == "에데" and s.get("sets"))
+    g = eq.split_by_tank(ede["equipment"])
+    assert [o["value"] for o in g["ring"]["pure"]] == ["효과적중%"]                         # '※ 퓨어탱커'
+    assert [o["value"] for o in g["ring"]["ex"]] == ["효과적중% / 방어력%"]                   # '※ EX' (EX 전용)
+    assert [o["value"] for o in g["necklace"]["ex"]] == ["속도"]
+
+
+@pytest.mark.parametrize("note,expected", [("※ 퓨어탱커, EX", ""), ("※ 공격탱커(AX)", "AX"), ("※ 퓨어탱커(BX)", "BX"), ("※ EX 전용", ""),
+                                           ("※ EX", ""), ("※ 퓨어탱커(CX)", "CX"), ("", ""), (None, "")])
+def test_clean_note_keeps_only_potential_codes(note, expected):
+    assert eq.clean_note(note) == expected
+
+
+def test_clean_note_keeps_unknown_extra_text():
+    assert eq.clean_note("※ 퓨어탱커, 체력 우선") == "체력 우선"                                # 모르는 설명은 지우지 않는다
 
 
 def test_all_seven_defenders_can_be_split(saviors):
@@ -351,10 +371,13 @@ def test_defender_html_is_two_columns_with_headings(saviors):
     html = eq.format_html(_defender(saviors), 1.0, 0)
     assert "▌퓨어탱커" in _plain(html) and "▌공격력 탱커" in _plain(html)
     assert html.index("▌퓨어탱커") < html.index("▌공격력 탱커")
-    assert 'colspan="2"' in html                                      # EX 전용·잠재력 줄은 가로 전체
+    assert 'colspan="3"' in html                                      # 잠재력 줄은 가로 전체(세 열)
     txt = _plain(html)
-    assert txt.index("생명(4) + 장벽(2)") < txt.index("공격(4) + 투지(2)")      # 세트: 왼쪽 퓨어, 오른쪽 공격
-    assert "EX" in txt and "통찰(4) + 장벽(2)" in txt and "BX / AX1 / EX" in txt
+    assert txt.index("▌퓨어탱커") < txt.index("▌공격력 탱커") < txt.index("▌EX")      # 머리글 순서: 퓨어탱커 | 공격력 탱커 | EX
+    assert txt.index("생명(4) + 장벽(2)") < txt.index("공격(4) + 투지(2)") < txt.index("통찰(4) + 장벽(2)")      # 세트: 왼쪽 퓨어, 가운데 공격, 오른쪽 EX
+    assert "BX / AX1 / EX" in txt and "※ 퓨어탱커" not in txt                  # 열 머리글과 겹치는 메모 태그는 뺀다
+    head_row = html[html.index("<tr><td></td>"):html.index("</tr>")]
+    assert head_row.count('<td valign="middle"') == 3
 
 
 def test_unsplittable_defender_falls_back_to_single_list(saviors):

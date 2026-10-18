@@ -57,7 +57,7 @@ INJA_REGIONS = {
 INJA_KINDS = {"inja_info": "info", "inja_auto": "auto", "inja_ok": "ok"}
 INJA_PHRASE = {"info": ("여정시작정보",), "auto": ("자동장착", "자동착장"), "ok": ("확인",)}
 STAT_TOOLTIP_TOP_FRAC = 0.20      # 스탯 우선순위 툴팁 위치: 이름 블록 오른쪽, 좌측 스탯 패널(~0.2) 오른쪽, 인자 슬롯(y 0.5~) 위
-STAT_TOOLTIP_X_FRAC = 0.245
+STAT_TOOLTIP_X_FRAC = 0.26       # 스탯 올린 뒤 힘 줄 옆에 붙는 '+10 +15' 표시(~0.27)를 가리지 않게
 STAT_WIDE_W_FRAC = 0.42           # 좌우 2열(디펜더)일 때 폭: x 0.245 부터 0.665 까지(열마다 '힘 > 체력 > 인내 > 집중 = 보호' 한 줄이 들어가야 함), 인자 슬롯(y 0.5~) 위
 
 HEADER_PHRASE = "여정시작"

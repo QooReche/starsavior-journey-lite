@@ -102,11 +102,11 @@ REGION_FRACTIONS.update(jh_savior.PICKER_REGIONS)          # 아르카나 고르
 REGION_FRACTIONS.update(jh_equip.EQUIP_REGIONS)            # 구원자 '장비' 화면: 제목/버튼/부제/이름
 REGION_FRACTIONS.update(jh_savior.INJA_REGIONS)            # 인자 고르기 화면: '여정 시작 정보' / '자동 장착' / '확인'
 SAVIOR_CLICK_HIDE_SEC = 0.5     # 왼쪽 클릭 직후 추천 툴팁을 잠깐 숨기고 다음 스캔에서 화면을 다시 판정
-SAVIOR_SCAN_SEC = 1.0
+SAVIOR_SCAN_SEC = 0.7
 SAVIOR_CONFIRM = 2        # 같은 구원자가 이만큼 연속으로 읽혀야 확정
 SAVIOR_LOST = 3           # '여정 시작' 머리글이 이만큼 연속으로 안 보이면 화면을 떠난 것으로 본다
 INJA_CONFIRM = 2          # 인자 고르기 화면 글자가 이만큼 연속으로 읽혀야 확정
-INJA_LOST = 3             # 이만큼 연속으로 못 읽으면 해제
+INJA_LOST = 2             # 이만큼 연속으로 못 읽으면 해제 (클릭하면 바로 숨기고 즉시 다시 판별하므로 짧게)
 ARCANA_CONFIRM = 2        # 편성 화면 글자가 이만큼 연속으로 읽혀야 '편성 화면'으로 확정(툴팁 허용)
 ARCANA_LOST = 2           # 이만큼(약 2초) 연속으로 못 읽어야 해제 (간헐적 OCR 실패로 툴팁이 깜빡이지 않게)
 SAVIOR_NOREAD_LOST = 6    # 머리글은 보이는데 이름을 이만큼 연속으로 못 읽으면 인식 해제
@@ -1005,6 +1005,7 @@ class ScreenWatcher(QThread):
         self._sv_miss = self._sv_noread = 0
         self._ar_on, self._ar_streak, self._ar_miss = False, 0, 0
         self._ij_on, self._ij_streak, self._ij_miss = False, 0, 0
+        self._ar_block = False               # 이번 스캔에서 아르카나 편성/카드 고르기 글자가 읽혔다 (인자 고르기 화면 아님)
 
     def _sv_clear(self, why=""):
         """구원자 인식 상태를 비우고, 켜져 있었으면 해제를 알린다."""
@@ -1035,6 +1036,7 @@ class ScreenWatcher(QThread):
 
         if any(c >= 0.5 and jh_savior.match_picker(t, "count") for t, c in read("picker_count")) or                 any(c >= 0.5 and jh_savior.match_picker(t, "guide") for t, c in read("picker_guide")):
             self._ar_streak, self._ar_miss = 0, ARCANA_LOST
+            self._ar_block = True
             if self._ar_on:
                 self._ar_on = False
                 log("[구원자] 아르카나 고르기 화면 글자 감지 -> 추천 툴팁 즉시 숨김")
@@ -1048,6 +1050,7 @@ class ScreenWatcher(QThread):
             for name in ("arcana_btn_clear", "arcana_btn_auto"):
                 if any(c >= 0.4 and jh_savior.match_arcana_screen(t, jh_savior.ARCANA_KINDS[name]) for t, c in read(name, (2.0, 3.0))):
                     found.add(jh_savior.ARCANA_KINDS[name])
+        self._ar_block = jh_savior.arcana_screen_hit(found)
         if jh_savior.arcana_screen_hit(found):
             self._ar_miss = 0
             self._ar_streak += 1
@@ -1066,11 +1069,17 @@ class ScreenWatcher(QThread):
     def _scan_inja_screen(self, sct, rect):
         """'인자 고르기' 화면인지 판별한다(여정 스탯 우선순위 툴팁은 이 화면에서만). 아르카나 편성 화면이 확정된 동안은 이 화면이 아니다.
         '여정 시작 정보' 와 우측 아래 버튼('자동 장착'/'확인') 하나가 연속 INJA_CONFIRM 회 읽혀야 확정, 연속 INJA_LOST 회 못 읽으면 해제."""
+        if self._ar_on or self._ar_block:               # 아르카나 편성/카드 고르기 화면 글자가 읽히는 중: 인자 고르기 화면이 아니다 (기다리지 않고 즉시 해제)
+            self._ij_streak = 0
+            if self._ij_on:
+                self._ij_on = False
+                log("[구원자] 편성/카드 고르기 화면 글자 감지 -> 스탯 우선순위 툴팁 즉시 숨김")
+                self.inja_screen_changed.emit(False)
+            return
         found = set()
-        if not self._ar_on:
-            for name, kind in jh_savior.INJA_KINDS.items():
-                if any(c >= 0.4 and jh_savior.match_inja_screen(t, kind) for t, c in self._read_region(sct, rect, name, (2.0, 3.0))):
-                    found.add(kind)
+        for name, kind in jh_savior.INJA_KINDS.items():
+            if any(c >= 0.4 and jh_savior.match_inja_screen(t, kind) for t, c in self._read_region(sct, rect, name, (2.0, 3.0))):
+                found.add(kind)
         if jh_savior.inja_screen_hit(found):
             self._ij_miss = 0
             self._ij_streak += 1
@@ -1085,6 +1094,13 @@ class ScreenWatcher(QThread):
                 self._ij_on = False
                 log("[구원자] 인자 고르기 화면 글자가 안 보임 -> 스탯 우선순위 툴팁 숨김")
                 self.inja_screen_changed.emit(False)
+
+    def request_inja_recheck(self):
+        """마우스 클릭 직후: 인자 고르기 화면 확정을 풀고(툴팁은 호출 측이 이미 숨김) 다음 루프에서 바로 다시 판정한다. 글자가 한 번만 읽혀도 다시 확정."""
+        self._ij_on = False
+        self._ij_streak = max(0, INJA_CONFIRM - 1)
+        self._ij_miss = 0
+        self._sv_next = 0.0
 
     def request_arcana_recheck(self):
         """마우스 클릭 직후: 편성 화면 확정을 풀고(툴팁은 호출 측이 이미 숨김) 다음 루프에서 바로 다시 판정한다(1초 대기 건너뜀).
@@ -2164,16 +2180,33 @@ class MouseHoverManager(QWidget):
         if not jh_equip.usable(self.equip_matches):
             self._eq_click_prev = False
             return False
-        try:
-            down = bool(ctypes.windll.user32.GetAsyncKeyState(VK_LBUTTON) & 0x8000) and bool(
-                filter_game_inputs({VK_LBUTTON}, is_game_foreground(), is_cursor_over_game()))
-        except Exception:
-            down = False
-        edge = down and not getattr(self, "_eq_click_prev", False)
-        self._eq_click_prev = down
+        edge = self._left_click_edge("_eq_click_prev")
         if edge:
             self.equip_matches = None
             self.watcher.request_equip_recheck()
+        return edge
+
+    def _stat_click(self):
+        """인자 고르기 화면 스탯 우선순위 툴팁이 떠 있는 동안 게임 위 왼쪽 클릭: 화면이 바뀔 수 있으니 바로 숨기고 워처에 다시 판별을 요청. 눌린 순간 한 번만 True."""
+        if not (self.inja_screen and jh_savior.stat_usable(self.savior_matches)):
+            self._ij_click_prev = False
+            return False
+        edge = self._left_click_edge("_ij_click_prev")
+        if edge:
+            self.inja_screen = False
+            self.watcher.request_inja_recheck()
+        return edge
+
+    def _left_click_edge(self, attr):
+        """게임 위 왼쪽 클릭이 눌린 순간 한 번만 True (툴팁마다 attr 에 이전 눌림 상태를 따로 저장). 폴링 사이의 짧은 클릭도 놓치지 않게 '마지막 호출 이후 눌림' 비트도 본다."""
+        try:
+            st = ctypes.windll.user32.GetAsyncKeyState(VK_LBUTTON)
+            cur, pressed = bool(st & 0x8000), bool(st & 0x0001)
+            ok = bool(filter_game_inputs({VK_LBUTTON}, is_game_foreground(), is_cursor_over_game()))
+        except Exception:
+            cur, pressed, ok = False, False, False
+        edge = ok and ((cur and not getattr(self, attr, False)) or (pressed and not cur))
+        setattr(self, attr, cur)
         return edge
 
     def _equip_hover_html(self, rect):
@@ -2452,7 +2485,7 @@ class MouseHoverManager(QWidget):
             if self._savior_click_hold():                 # 클릭 직후 0.5초: 카드 고르기 화면으로 넘어가는 중일 수 있어 숨김
                 self.tooltip.hide_and_clear()
                 return
-            if self._equip_click():
+            if self._equip_click() or self._stat_click():       # 클릭하면 화면이 바뀔 수 있으니 장비/스탯 툴팁은 바로 숨기고 다시 판별한다
                 self.tooltip.hide_and_clear()
                 return
             rect = get_game_window_rect()

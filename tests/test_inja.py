@@ -189,3 +189,54 @@ def test_two_column_stat_tooltip_is_wide_enough_for_each_column(saviors):
     longest = "힘 > 체력 > 인내 > 집중 = 보호"
     need = sv._tw(longest, round(15 * eff)) * 0.8                      # 굵은 글씨 폭 추정(보수적으로 80%)
     assert (w - 36) / 2 >= need, (w, need)
+
+
+# ------------------------------------------------------------------ 화면을 바꿀 때 바로 사라지는지
+def _stub_for_click(**kw):
+    import journey_helper as jh
+    calls = []
+    stub = SimpleNamespace(inja_screen=True, savior_matches=None, _ij_click_prev=False, calls=calls,
+                           watcher=SimpleNamespace(request_inja_recheck=lambda: calls.append("recheck")), **kw)
+    stub._left_click_edge = lambda attr: True
+    return jh, stub
+
+
+def test_click_hides_stat_tooltip_and_requests_recheck(saviors):
+    jh, stub = _stub_for_click()
+    stub.savior_matches = [by_key(saviors, "gwen")]
+    assert jh.MouseHoverManager._stat_click(stub) is True
+    assert stub.inja_screen is False and stub.calls == ["recheck"]
+
+
+def test_click_ignored_when_tooltip_not_showing(saviors):
+    jh, stub = _stub_for_click()
+    stub.inja_screen = False
+    stub.savior_matches = [by_key(saviors, "gwen")]
+    assert jh.MouseHoverManager._stat_click(stub) is False and stub.calls == []
+    jh, stub = _stub_for_click()
+    stub.savior_matches = None
+    assert jh.MouseHoverManager._stat_click(stub) is False
+
+
+def _watcher_stub(jh, ar_on=False, ar_block=False, ij_on=True):
+    emitted = []
+    w = SimpleNamespace(_ar_on=ar_on, _ar_block=ar_block, _ij_on=ij_on, _ij_streak=1, _ij_miss=0, emitted=emitted,
+                        inja_screen_changed=SimpleNamespace(emit=lambda v: emitted.append(v)),
+                        _read_region=lambda *a, **k: [("", 0.0)])
+    return w
+
+
+def test_arcana_screen_text_turns_off_inja_tooltip_immediately():
+    import journey_helper as jh
+    for kw in ({"ar_on": True}, {"ar_block": True}):
+        w = _watcher_stub(jh, **kw)
+        jh.ScreenWatcher._scan_inja_screen(w, None, {})
+        assert w.emitted == [False] and w._ij_on is False             # 기다리지 않고 한 번에 해제
+
+
+def test_inja_lost_is_short_and_recheck_needs_one_read():
+    import journey_helper as jh
+    assert jh.INJA_LOST <= 2 and jh.SAVIOR_SCAN_SEC <= 0.8
+    w = SimpleNamespace(_ij_on=True, _ij_streak=0, _ij_miss=5, _sv_next=99.0)
+    jh.ScreenWatcher.request_inja_recheck(w)
+    assert w._ij_on is False and w._ij_streak == jh.INJA_CONFIRM - 1 and w._sv_next == 0.0   # 다음 루프에서 글자가 한 번만 읽혀도 다시 확정
