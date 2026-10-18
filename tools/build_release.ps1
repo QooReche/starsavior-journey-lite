@@ -48,8 +48,11 @@ try {
 
     Step "PyInstaller"
     if (Test-Path $dist) { Remove-Item $dist -Recurse -Force }
+    $ErrorActionPreference = "Continue"      # PyInstaller 는 진행 로그를 stderr 로 내보내므로 오류로 취급하지 않고 종료 코드로 판정한다
     & "$build\.venv\Scripts\pyinstaller.exe" journey_helper.spec --noconfirm --distpath $dist --workpath "$build\build" 2>&1 | Select-Object -Last 1
-    if (-not (Test-Path "$dist\JourneyHelperLite\JourneyHelperLite.exe")) { throw "빌드 결과가 없습니다." }
+    $code = $LASTEXITCODE
+    $ErrorActionPreference = "Stop"
+    if ($code -ne 0 -or -not (Test-Path "$dist\JourneyHelperLite\JourneyHelperLite.exe")) { throw "PyInstaller 실패 (종료 코드 $code)." }
 
     Step "zip / sha256"
     powershell -NoProfile -File tools\make_release_zip.ps1 2>&1 | Select-Object -Last 1
