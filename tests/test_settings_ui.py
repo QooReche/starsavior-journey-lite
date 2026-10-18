@@ -235,3 +235,21 @@ def test_manual_check_shows_dismissed_version(app):
     assert d.banner.isHidden()
     d._on_check_done(jh_update.UpdateResult("updated", "9.9.99.999999", "", 0))
     assert not d.btn_get.isHidden() and "새 버전" in d.lbl_check.text()
+
+
+def test_reference_links_are_listed_and_clickable(app):
+    dlg = ui.SettingsDialog(FakeHost(), jhm)
+    from PyQt5.QtWidgets import QLabel
+    labels = [lab for lab in dlg.findChildren(QLabel) if lab.openExternalLinks()]
+    shown = " ".join(lab.text() for lab in labels)
+    for _name, url in ui.REFERENCE_LINKS:
+        assert url in shown                                         # 참고한 페이지가 모두 클릭 가능한 링크로 있다
+    assert len(labels) == len(ui.REFERENCE_LINKS)
+
+
+def test_reference_links_match_readme():
+    readme = open(os.path.join(os.path.dirname(__file__), "..", "README.md"), encoding="utf-8").read()
+    for _name, url in ui.REFERENCE_LINKS:
+        if "QooReche" in url:                                       # 이 프로그램 자신의 주소는 README 의 참고 목록에 없어도 된다
+            continue
+        assert url.replace("https://", "") in readme, url           # 설정창 목록과 README '참고한 곳'을 같이 유지

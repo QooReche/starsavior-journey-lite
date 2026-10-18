@@ -17,6 +17,16 @@ from PyQt5.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QFrame
                              QScrollArea, QTabWidget, QVBoxLayout, QWidget)
 
 ACCENT = "#00e5ff"
+# 설정창 '참고한 페이지'(고급·진단 탭 아래)에 보이는 링크: (설명, 주소). README 의 '참고한 곳'과 같은 목록으로 유지한다.
+REFERENCE_LINKS = (
+    ("이벤트·아르카나·추천 정보", "https://starsavior-guide.github.io"),
+    ("이벤트 선택지 정보", "https://starsavior-journey-choice.pages.dev"),
+    ("일정·유물 정보 확인 (데이터북)", "https://starsavior-databook.pages.dev"),
+    ("일정·버프 설명 일부 (옛 DB)", "https://star-savior-arcana-db.pages.dev"),
+    ("원작 (일부 코드와 방식 참고)", "https://github.com/p1021/journeyhelper"),
+    ("글자 읽기 (RapidOCR)", "https://github.com/RapidAI/RapidOCR"),
+    ("이 프로그램", "https://github.com/QooReche/starsavior-journey-lite"),
+)
 STYLE = """
 QDialog { background-color: #11151f; color: #e6e9ef; font-family: "Malgun Gothic", "Segoe UI"; font-size: 13px; }
 QLabel { color: #e6e9ef; background: transparent; }
@@ -389,6 +399,20 @@ class SettingsDialog(QDialog):
         self._reset_copy_text()
         self._desc(lay, t("버전·설정·게임 창·최근 로그를 클립보드에 복사해요. 사용자 이름과 경로는 가려져요."), plain=True)
         self._update_usage()
+        self._section(lay, "📚", t("참고한 페이지"), "#fdcb6e")
+        for label, url in REFERENCE_LINKS:
+            self._link(lay, t(label), url)
+        self._desc(lay, t("데이터의 권리는 각 제공자와 게임사에 있어요. 정보가 다르면 원 사이트와 게임 화면을 확인하세요."), plain=True)
+
+    def _link(self, lay, label, url):
+        """클릭하면 기본 브라우저로 열리는 링크 한 줄(제목 + 주소). 어두운 배경에서 읽히도록 링크 색을 직접 지정한다."""
+        lab = QLabel(f'<span style="color:#cfd8dc;">{label}</span><br>'
+                     f'<a href="{url}"><span style="color:#74b9ff;">{url}</span></a>')
+        lab.setObjectName("descPlain")
+        lab.setTextFormat(Qt.RichText)
+        lab.setOpenExternalLinks(True)
+        lab.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        lay.addWidget(lab)
 
     # ---- 동작 ----
     def refresh(self):
