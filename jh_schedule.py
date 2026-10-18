@@ -158,6 +158,8 @@ _OR_RE = re.compile(r"\s+or(?:\s+|$)")                                         #
 _STAT_RE = re.compile(r"^(힘|체력|인내|집중|보호|스태미나|컨디션|오래된 (동전|주화))\s*[+-]")
 _PROMO_PREFIX = re.compile(r"^\([^)]*\)\s*")
 MAX_KEY_REWARDS = 3
+STAR_TRAIL_PREFIX = "별빛의 궤적-"                     # 특수 잠재력(AX1호~XX…) 지급 줄: 호수마다 한 줄씩 수백 줄이라 요약한다
+STAR_TRAIL_SUMMARY = "별빛의 궤적 특수 잠재력 지급(AX~XX, 호수 랜덤)"
 
 
 _IDX = (None, -1, {})        # (리스트 자체, 길이, 색인) 마지막 한 번만 기억 (id 만 기억하면 해제된 옛 캐시 주소를 재사용할 수 있다)
@@ -188,18 +190,22 @@ def _clean_reward_line(line):
 
 def key_rewards(event, limit=MAX_KEY_REWARDS):
     """이벤트의 선택지 보상 중 '주요 보상'만 요약: 비용/요구/난이도/스탯 줄은 빼고 아이템·버프·유물을 앞에, 잠재력 포인트를 뒤에."""
-    keys, poten = [], []
+    keys, poten, star = [], [], False
     for o in event.get("options") or []:
         for v in (o.get("variants") or [o])[:1]:
             for raw in (v.get("reward") or "").split("\n"):
                 line = _clean_reward_line(raw)
                 if not line:
                     continue
-                if line.startswith("잠재력 포인트"):
+                if line.startswith(STAR_TRAIL_PREFIX):              # '대마녀의 부름': 호수별 200줄을 한 문구로
+                    star = True
+                elif line.startswith("잠재력 포인트"):
                     if line not in poten:
                         poten.append(line)
                 elif line not in keys:
                     keys.append(line)
+    if star:
+        keys.insert(0, STAR_TRAIL_SUMMARY)
     return (keys + poten[:1])[:limit]
 
 
