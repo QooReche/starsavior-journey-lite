@@ -303,8 +303,8 @@ def _tbl(rows, pad):
     return f'<table cellspacing="0" cellpadding="{pad}">{rows}</table>'
 
 
-def _num_td(num_html):
-    return f'<td valign="middle" align="center" width="{NUM_W}">{num_html}</td>'
+def _num_td(num_html, valign="middle"):
+    return f'<td valign="{valign}" align="center" width="{NUM_W}">{num_html}</td>'
 
 
 BLANK_TD = f'<td width="{NUM_W}"></td>'
@@ -418,10 +418,12 @@ def _two_col_table(sets, thumb_path, P):
                     its, tcell = its2, small_th
             parts = [_opts_table(its, Pc, col_avail, px, tcell)]
             parts += [_alt_block(a, Pc, thumb_path, col_avail, short=True, first="", blank="") for a in by_slot.get(i, [])]
-            cells += f'<td width="{cw}" valign="middle">{"".join(parts)}</td>'
+            cells += f'<td width="{cw}" valign="top">{"".join(parts)}</td>'
         num_span = '<span style="color:#00e5ff; font-size:%dpx;"><b>%d</b></span>' % (px, i + 1)
-        rows.append(f'<tr>{_num_td(num_span)}{cells}</tr>')
-        if P["gap"]:
+        rows.append(f'<tr>{_num_td(num_span, "top")}{cells}</tr>')
+        if i < n - 1:       # 슬롯 사이 가는 구분선(번호가 첫 줄에 붙어 어느 카드가 몇 번인지 헷갈리지 않게)
+            rows.append(f'<tr><td colspan="{1 + len(sets)}" style="background-color:#26323a; font-size:1px;">&nbsp;</td></tr>')
+        elif P["gap"]:
             rows.append(f'<tr><td colspan="{1 + len(sets)}" style="font-size:{P["gap"]}px;">&nbsp;</td></tr>')
     out = f'<table cellspacing="0" cellpadding="{min(P["pad"], 1)}" width="100%">' + "".join(rows) + "</table>"
     extra = []
