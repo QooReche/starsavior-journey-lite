@@ -245,6 +245,8 @@ def test_reference_links_are_listed_and_clickable(app):
     for _name, url in ui.REFERENCE_LINKS:
         assert url in shown                                         # 참고한 페이지가 모두 클릭 가능한 링크로 있다
     assert len(labels) == len(ui.REFERENCE_LINKS)
+    tab_names = [dlg.tabs.tabText(i) for i in range(dlg.tabs.count())]
+    assert tab_names[-1] == "참고 페이지" and tab_names[-2] == "고급·진단"          # 고급·진단 바로 옆의 별도 탭
 
 
 def test_reference_links_match_readme():

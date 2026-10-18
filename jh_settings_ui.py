@@ -17,7 +17,7 @@ from PyQt5.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QFrame
                              QScrollArea, QTabWidget, QVBoxLayout, QWidget)
 
 ACCENT = "#00e5ff"
-# 설정창 '참고한 페이지'(고급·진단 탭 아래)에 보이는 링크: (설명, 주소). README 의 '참고한 곳'과 같은 목록으로 유지한다.
+# 설정창 '참고 페이지' 탭(고급·진단 옆)에 보이는 링크: (설명, 주소). README 의 '참고한 곳'과 같은 목록으로 유지한다.
 REFERENCE_LINKS = (
     ("이벤트·아르카나·추천 정보", "https://starsavior-guide.github.io"),
     ("이벤트 선택지 정보", "https://starsavior-journey-choice.pages.dev"),
@@ -173,6 +173,7 @@ class SettingsDialog(QDialog):
         self.tabs.addTab(self._scroll(self._build_general), self.tr_("일반"))
         self.tabs.addTab(self._scroll(self._build_display), self.tr_("게임 표시"))
         self.tabs.addTab(self._scroll(self._build_advanced), self.tr_("고급·진단"))
+        self.tabs.addTab(self._scroll(self._build_refs), self.tr_("참고 페이지"))
 
         ver = QLabel(self.tr_("현재 버전: {}").format(jhm.APP_VERSION))
         ver.setObjectName("version")
@@ -399,10 +400,14 @@ class SettingsDialog(QDialog):
         self._reset_copy_text()
         self._desc(lay, t("버전·설정·게임 창·최근 로그를 클립보드에 복사해요. 사용자 이름과 경로는 가려져요."), plain=True)
         self._update_usage()
-        self._section(lay, "📚", t("참고한 페이지"), "#fdcb6e")
+
+    def _build_refs(self, lay):
+        """'참고 페이지' 탭: 이 도구가 참고한 데이터·코드 출처 링크(클릭하면 기본 브라우저로 열림)."""
+        t = self.tr_
+        self._section(lay, "📚", t("참고한 페이지"), "#fdcb6e", first=True)
+        self._desc(lay, t("데이터의 권리는 각 제공자와 게임사에 있어요. 정보가 다르면 원 사이트와 게임 화면을 확인하세요."), plain=True)
         for label, url in REFERENCE_LINKS:
             self._link(lay, t(label), url)
-        self._desc(lay, t("데이터의 권리는 각 제공자와 게임사에 있어요. 정보가 다르면 원 사이트와 게임 화면을 확인하세요."), plain=True)
 
     def _link(self, lay, label, url):
         """클릭하면 기본 브라우저로 열리는 링크 한 줄(제목 + 주소). 어두운 배경에서 읽히도록 링크 색을 직접 지정한다."""
