@@ -240,3 +240,60 @@ def test_inja_lost_is_short_and_recheck_needs_one_read():
     w = SimpleNamespace(_ij_on=True, _ij_streak=0, _ij_miss=5, _sv_next=99.0)
     jh.ScreenWatcher.request_inja_recheck(w)
     assert w._ij_on is False and w._ij_streak == jh.INJA_CONFIRM - 1 and w._sv_next == 0.0   # 다음 루프에서 글자가 한 번만 읽혀도 다시 확정
+
+
+# ------------------------------------------------------------------ 속도: 확실히 읽히면 한 번에, 불필요한 영역은 읽지 않는다
+def _scan_stub(confs, ij_streak=0):
+    """_region_conf 가 영역 이름별로 정해진 신뢰도를 돌려주는 가짜 워처. calls 에 읽은 영역을 기록한다."""
+    calls, emitted = [], []
+
+    def region_conf(sct, rect, name, match, min_conf=0.4, scales=(2.0, 3.0)):
+        calls.append(name)
+        return confs.get(name, 0.0)
+
+    w = SimpleNamespace(_ar_on=False, _ar_block=False, _ij_on=False, _ij_streak=ij_streak, _ij_miss=0, _region_conf=region_conf,
+                        inja_screen_changed=SimpleNamespace(emit=lambda v: emitted.append(v)))
+    return w, calls, emitted
+
+
+def test_strong_read_confirms_inja_screen_in_one_scan():
+    import journey_helper as jh
+    w, calls, emitted = _scan_stub({"inja_info": 0.95, "inja_ok": 0.92, "inja_auto": 0.0})
+    jh.ScreenWatcher._scan_inja_screen(w, None, {})
+    assert emitted == [True] and w._ij_on is True
+
+
+def test_weak_read_needs_two_scans_for_inja_screen():
+    import journey_helper as jh
+    w, calls, emitted = _scan_stub({"inja_info": 0.6, "inja_ok": 0.6})
+    jh.ScreenWatcher._scan_inja_screen(w, None, {})
+    assert emitted == [] and w._ij_on is False
+    jh.ScreenWatcher._scan_inja_screen(w, None, {})
+    assert emitted == [True]
+
+
+def test_no_info_button_means_no_other_regions_are_read():
+    import journey_helper as jh
+    w, calls, emitted = _scan_stub({})
+    jh.ScreenWatcher._scan_inja_screen(w, None, {})
+    assert calls == ["inja_info"] and emitted == []                    # 첫 글자가 없으면 나머지는 읽지 않는다 (대부분의 화면)
+
+
+def test_identify_fast_reads_fast_scales_first_and_falls_back(saviors):
+    seen = []
+
+    def read(gray, scales):
+        seen.append(scales)
+        return {"sub": ["페트라조합"], "name": ["페트라"]}[gray]
+
+    res, subs, names = sv.identify_fast(saviors, read, "sub", "name", (2.0,), (2.0, 1.6, 1.0))
+    assert res[1] in ("name", "subtitle") and [m["key"] for m in res[0]] == ["petra"]
+    assert seen == [(2.0,), (2.0,)]                                    # 하나로 정해지면 전체 배율은 읽지 않는다
+    seen.clear()
+    sv.identify_fast(saviors, lambda g, sc: (seen.append(sc), [])[1], "sub", "name", (2.0,), (2.0, 1.6, 1.0))
+    assert (2.0, 1.6, 1.0) in seen                                     # 못 정하면 전체 배율로 다시 읽는다
+
+
+def test_scan_interval_is_short():
+    import journey_helper as jh
+    assert jh.SAVIOR_SCAN_SEC <= 0.5 and jh.INJA_STRONG >= 0.8

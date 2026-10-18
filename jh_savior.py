@@ -149,6 +149,17 @@ def identify(saviors, sub_cands, name_cands):
         return [], "none"
 
 
+def identify_fast(saviors, read, sub_g, name_g, fast, full):
+    """부제·이름을 빠른 배율(fast)로 먼저 읽고, 구원자가 하나로 정해지지 않을 때만 전체 배율(full)로 다시 읽는다.
+    read(gray, scales) -> 후보 문자열 리스트. -> ((matches, how), 부제 후보, 이름 후보)"""
+    for scales in (fast, full):
+        subs, names = read(sub_g, scales), read(name_g, scales)
+        res = identify(saviors, subs, names)
+        if res[1] in ("name", "subtitle"):
+            break
+    return res, subs, names
+
+
 def unknown_savior(name_cands, name=None):
     """데이터에 없는 구원자용 표시 자리(slots 없음 -> '아직 데이터 없음')."""
     n = name or next((t.strip() for t in (name_cands or []) if t and t.strip()), "")

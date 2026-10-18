@@ -23,6 +23,8 @@ EQUIP_REGIONS = {
 }
 HEADER_PHRASE = "구원자"
 BUTTON_PHRASE = {"clear": "전체해제", "auto": ("자동착장", "자동장착")}     # OCR 이 '착장'을 '장착'으로 읽기도 한다
+TITLE_SCALES_FAST = (2.0, 2.5)           # 먼저 이 배율로 읽고, 구원자가 하나로 안 정해질 때만 전체 배율로 다시 읽는다
+STRONG = 0.9                      # 머리글·제목·버튼이 모두 이 신뢰도 이상이고 구원자도 하나로 정해지면 한 번에 확정
 TITLE_SCALES = (1.5, 2.0, 2.5, 3.0)   # 이름 OCR 배율: 이 화면의 글꼴은 '웬' 같은 글자가 배율에 따라 오인식돼 넓게 모은다
 CONFIRM = 2                      # 연속 판독 횟수(화면/구원자 확정)
 LOST = 2                         # 연속으로 못 읽으면 해제(스캔 간격과 합쳐 약 1.2초)
@@ -111,32 +113,44 @@ class EquipTracker:
         self.reset()
         return ("savior", None) if was else None
 
+    def _best(self, gray, pred, min_conf):
+        """영역을 배율 순서로 읽어 pred 에 맞는 첫 결과의 신뢰도(없으면 0). 맞으면 더 읽지 않는다."""
+        for sc in (2.0, 3.0):
+            text, conf = self.io.lines(gray, (sc,))[0]
+            if conf >= min_conf and pred(text):
+                return conf
+        return 0.0
+
     def step(self, header):
         text, conf = header
         if not (conf >= 0.4 and match_header(text)):
             self.miss_n += 1
             return self._off() if self.miss_n >= LOST else None
         gi = self.io.gray
-        title = any(c >= 0.5 and match_title(t) for t, c in self.io.lines(gi("equip_title"), (2.0, 3.0)))
-        buttons = {k for k, n in (("clear", "equip_btn_clear"), ("auto", "equip_btn_auto"))
-                   if any(c >= 0.4 and match_button(t, k) for t, c in self.io.lines(gi(n), (2.0, 3.0)))}
-        if not screen_hit(title, buttons):
+        title_c = self._best(gi("equip_title"), match_title, 0.5)
+        btn_c = 0.0
+        if title_c:                                                  # 제목이 안 읽히면 버튼은 볼 필요가 없다
+            for kind, name in (("clear", "equip_btn_clear"), ("auto", "equip_btn_auto")):
+                btn_c = max(btn_c, self._best(gi(name), lambda t, k=kind: match_button(t, k), 0.4))
+                if btn_c >= STRONG:
+                    break
+        if not screen_hit(title_c > 0, {"button"} if btn_c else set()):
             self.hit_n = 0
             self.miss_n += 1
             return self._off() if self.miss_n >= LOST else None
         self.miss_n = 0
         self.hit_n += 1
-        if self.hit_n < CONFIRM and not self.on:
-            return None
-        self.on = True
-        sub_g, name_g = gi("equip_subtitle"), gi("equip_name")
+        strong_screen = conf >= STRONG and title_c >= STRONG and btn_c >= STRONG
+        if self.hit_n >= (1 if strong_screen else CONFIRM):
+            self.on = True                                           # 확실히 읽히면 1회, 흐리면 연속 2회
+        sub_g, name_g = gi("equip_subtitle"), gi("equip_name")      # 화면 확정과 구원자 식별을 같은 판독에서 함께 진행한다
         last = self.gray
         same = (last is not None and last[0].shape == sub_g.shape and last[1].shape == name_g.shape
                 and abs(_mean_diff(sub_g, last[0])) < 1.0 and abs(_mean_diff(name_g, last[1])) < 1.0)
         if not same or self.last is None:
             self.gray = (sub_g, name_g)
-            self.last = jh_savior.identify(self.saviors, self.io.titles(sub_g), self.io.titles(name_g))
-        matches, _how = self.last
+            self.last = jh_savior.identify_fast(self.saviors, self.io.titles, sub_g, name_g, TITLE_SCALES_FAST, TITLE_SCALES)[0]
+        matches, how = self.last
         if not matches:
             self.noread_n += 1
             self.cand, self.cand_n = None, 0
@@ -145,7 +159,8 @@ class EquipTracker:
         key = jh_savior.savior_key(matches)
         self.cand_n = self.cand_n + 1 if key == self.cand else 1
         self.cand = key
-        if self.cand_n >= (1 if self.quick else CONFIRM) and key != self.cur:
+        need = 1 if (self.quick or (strong_screen and how in ("name", "subtitle"))) else CONFIRM
+        if self.on and self.cand_n >= need and key != self.cur:
             self.cur, self.quick = key, False
             return ("savior", list(matches))
         return None

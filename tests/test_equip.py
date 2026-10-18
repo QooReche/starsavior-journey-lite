@@ -132,8 +132,8 @@ class _IO:
     def lines(self, gray, scales):
         return [self.ocr.read_line(cv2.resize(gray, None, fx=sc, fy=sc, interpolation=cv2.INTER_CUBIC)) for sc in scales]
 
-    def titles(self, gray):
-        return self.jh.read_title_candidates(self.ocr, gray, scales=eq.TITLE_SCALES, min_conf=0.3)
+    def titles(self, gray, scales=eq.TITLE_SCALES):
+        return self.jh.read_title_candidates(self.ocr, gray, scales=scales, min_conf=0.3)
 
 
 def _header(io):
@@ -171,7 +171,8 @@ class FakeIO:
     VALUE = {"equip_title": 1, "equip_btn_clear": 2, "equip_btn_auto": 3, "equip_subtitle": 10, "equip_name": 20}
 
     def __init__(self):
-        self.screen, self.ident = True, (["페트라조합"], ["페트라"])
+        self.screen, self.ident, self.conf = True, (["페트라조합"], ["페트라"]), 0.99
+        self.title_calls = []
 
     def gray(self, name):
         return np.full((4, 4), self.VALUE[name], np.uint8)
@@ -179,9 +180,10 @@ class FakeIO:
     def lines(self, gray, scales):
         v = int(gray[0, 0])
         text = self.TEXT.get(v, "") if self.screen else ""
-        return [(text, 0.99 if text else 0.0)] * len(scales)
+        return [(text, self.conf if text else 0.0)] * len(scales)
 
-    def titles(self, gray):
+    def titles(self, gray, scales=None):
+        self.title_calls.append(scales)
         return self.ident[0] if int(gray[0, 0]) == 10 else self.ident[1]
 
 
@@ -193,12 +195,37 @@ def _tracker(saviors):
 HDR_OK, HDR_NO = ("구원자", 0.99), ("여정시작", 0.99)
 
 
-def test_tracker_needs_two_reads_and_clears_after_two_misses(saviors):
+def test_tracker_strong_read_confirms_in_one_scan(saviors):
+    tr, io = _tracker(saviors)
+    ev = tr.step(HDR_OK)                                            # 머리글·제목·버튼이 모두 또렷하고 구원자도 하나로 정해지면 한 번에
+    assert ev and ev[0] == "savior" and [m["key"] for m in ev[1]] == ["petra"]
+
+
+def test_tracker_weak_read_needs_two_scans_and_both_confirm_together(saviors):
+    tr, io = _tracker(saviors)
+    io.conf = 0.7                                                   # 흐린 판독
+    assert tr.step(("구원자", 0.7)) is None                          # 한 번만 읽혀서는 확정하지 않는다
+    ev = tr.step(("구원자", 0.7))                                    # 화면 확정과 구원자 식별을 같은 판독에서 함께 세므로 두 번째에 확정
+    assert ev and [m["key"] for m in ev[1]] == ["petra"]
+
+
+def test_tracker_reads_fast_scales_first(saviors):
+    tr, io = _tracker(saviors)
+    tr.step(HDR_OK)
+    assert io.title_calls and all(c == eq.TITLE_SCALES_FAST for c in io.title_calls)      # 하나로 정해지면 전체 배율은 읽지 않는다
+
+
+def test_tracker_falls_back_to_full_scales_when_unclear(saviors):
+    tr, io = _tracker(saviors)
+    io.ident = ([], ["알수없음"])
+    tr.step(HDR_OK)
+    assert eq.TITLE_SCALES in io.title_calls                          # 못 정하면 전체 배율로 다시 읽는다
+
+
+def test_tracker_clears_after_two_misses(saviors):
     assert eq.LOST == 2
     tr, io = _tracker(saviors)
-    assert tr.step(HDR_OK) is None                                  # 한 번만 읽혀서는 확정하지 않는다
     ev = tr.step(HDR_OK)
-    ev = ev or tr.step(HDR_OK)
     assert ev and [m["key"] for m in ev[1]] == ["petra"]
     assert tr.step(HDR_NO) is None                                  # 한 번 못 읽는 것은 깜빡임으로 본다
     assert tr.step(HDR_NO) == ("savior", None)                      # 두 번째에 해제 (약 1.2초)

@@ -102,10 +102,11 @@ REGION_FRACTIONS.update(jh_savior.PICKER_REGIONS)          # 아르카나 고르
 REGION_FRACTIONS.update(jh_equip.EQUIP_REGIONS)            # 구원자 '장비' 화면: 제목/버튼/부제/이름
 REGION_FRACTIONS.update(jh_savior.INJA_REGIONS)            # 인자 고르기 화면: '여정 시작 정보' / '자동 장착' / '확인'
 SAVIOR_CLICK_HIDE_SEC = 0.5     # 왼쪽 클릭 직후 추천 툴팁을 잠깐 숨기고 다음 스캔에서 화면을 다시 판정
-SAVIOR_SCAN_SEC = 0.7
+SAVIOR_SCAN_SEC = 0.5
 SAVIOR_CONFIRM = 2        # 같은 구원자가 이만큼 연속으로 읽혀야 확정
 SAVIOR_LOST = 3           # '여정 시작' 머리글이 이만큼 연속으로 안 보이면 화면을 떠난 것으로 본다
 INJA_CONFIRM = 2          # 인자 고르기 화면 글자가 이만큼 연속으로 읽혀야 확정
+INJA_STRONG = 0.85         # '여정 시작 정보'와 버튼이 모두 이 신뢰도 이상이면 한 번에 확정
 INJA_LOST = 2             # 이만큼 연속으로 못 읽으면 해제 (클릭하면 바로 숨기고 즉시 다시 판별하므로 짧게)
 ARCANA_CONFIRM = 2        # 편성 화면 글자가 이만큼 연속으로 읽혀야 '편성 화면'으로 확정(툴팁 허용)
 ARCANA_LOST = 2           # 이만큼(약 2초) 연속으로 못 읽어야 해제 (간헐적 OCR 실패로 툴팁이 깜빡이지 않게)
@@ -852,8 +853,8 @@ class _EquipIO:
     def lines(self, gray, scales):
         return [self.w.ocr.read_line(cv2.resize(gray, None, fx=sc, fy=sc, interpolation=cv2.INTER_CUBIC)) for sc in scales]
 
-    def titles(self, gray):
-        return read_title_candidates(self.w.ocr, gray, scales=jh_equip.TITLE_SCALES, min_conf=0.3)
+    def titles(self, gray, scales=jh_equip.TITLE_SCALES):
+        return read_title_candidates(self.w.ocr, gray, scales=scales, min_conf=0.3)
 
 
 class ScreenWatcher(QThread):
@@ -1066,6 +1067,15 @@ class ScreenWatcher(QThread):
                 log("[구원자] 편성 화면 글자가 안 보임 -> 추천 툴팁 숨김")
                 self.arcana_screen_changed.emit(False)
 
+    def _region_conf(self, sct, rect, name, match, min_conf=0.4, scales=(2.0, 3.0)):
+        """영역을 배율 순서로 읽어 match 에 맞는 첫 결과의 신뢰도(없으면 0). 맞으면 더 읽지 않는다."""
+        gray = self._grab_gray(sct, rect, name)
+        for sc in scales:
+            text, conf = self.ocr.read_line(cv2.resize(gray, None, fx=sc, fy=sc, interpolation=cv2.INTER_CUBIC))
+            if conf >= min_conf and match(text):
+                return conf
+        return 0.0
+
     def _scan_inja_screen(self, sct, rect):
         """'인자 고르기' 화면인지 판별한다(여정 스탯 우선순위 툴팁은 이 화면에서만). 아르카나 편성 화면이 확정된 동안은 이 화면이 아니다.
         '여정 시작 정보' 와 우측 아래 버튼('자동 장착'/'확인') 하나가 연속 INJA_CONFIRM 회 읽혀야 확정, 연속 INJA_LOST 회 못 읽으면 해제."""
@@ -1076,14 +1086,22 @@ class ScreenWatcher(QThread):
                 log("[구원자] 편성/카드 고르기 화면 글자 감지 -> 스탯 우선순위 툴팁 즉시 숨김")
                 self.inja_screen_changed.emit(False)
             return
-        found = set()
-        for name, kind in jh_savior.INJA_KINDS.items():
-            if any(c >= 0.4 and jh_savior.match_inja_screen(t, kind) for t, c in self._read_region(sct, rect, name, (2.0, 3.0))):
-                found.add(kind)
+        found, button = set(), 0.0
+        info = self._region_conf(sct, rect, "inja_info", lambda t: jh_savior.match_inja_screen(t, "info"))
+        if info:                                                    # '여정 시작 정보' 가 안 읽히면 나머지 영역은 읽지 않는다
+            found.add("info")
+            for name, kind in (("inja_auto", "auto"), ("inja_ok", "ok")):
+                c = self._region_conf(sct, rect, name, lambda t, k=kind: jh_savior.match_inja_screen(t, k))
+                if c:
+                    found.add(kind)
+                    button = max(button, c)
+                    if button >= INJA_STRONG:
+                        break
+        strong = info >= INJA_STRONG and button >= INJA_STRONG
         if jh_savior.inja_screen_hit(found):
             self._ij_miss = 0
             self._ij_streak += 1
-            if self._ij_streak >= INJA_CONFIRM and not self._ij_on:
+            if self._ij_streak >= (1 if strong else INJA_CONFIRM) and not self._ij_on:
                 self._ij_on = True
                 log(f"[구원자] 인자 고르기 화면 확인 {sorted(found)} -> 스탯 우선순위 툴팁 허용")
                 self.inja_screen_changed.emit(True)
@@ -1138,9 +1156,9 @@ class ScreenWatcher(QThread):
                 and cv2.absdiff(sub_g, last[0]).mean() < 1.0 and cv2.absdiff(name_g, last[1]).mean() < 1.0)
         if not same or self._sv_last is None:
             self._sv_gray = (sub_g, name_g)
-            subs = read_title_candidates(self.ocr, sub_g, min_conf=0.3)
-            names = read_title_candidates(self.ocr, name_g, min_conf=0.3)
-            self._sv_last = (jh_savior.identify(self._saviors, subs, names), subs, names)
+            read = lambda g, sc: read_title_candidates(self.ocr, g, scales=sc, min_conf=0.3)
+            res, subs, names = jh_savior.identify_fast(self._saviors, read, sub_g, name_g, (2.0,), TITLE_SCALES)     # 한 배율로 하나로 정해지면 끝
+            self._sv_last = (res, subs, names)
         (matches, how), subs, names = self._sv_last
         if not matches:
             self._sv_noread += 1
