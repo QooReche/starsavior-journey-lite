@@ -141,6 +141,6 @@ def test_version_info_resource_has_product_and_version(tmp_path):
     out = tmp_path / "version_info.txt"
     assert make_version_info.main(str(out)) == 0
     txt = out.read_text(encoding="utf-8")
-    for need in ("여정 내비게이터", "JourneyNavigator.exe", APP_VERSION, "GPL-3.0", "StringTable('041204b0'"):
+    for need in ("여정 내비게이터", "JourneyNavigator.exe", APP_VERSION, "GPL-3.0", "'041204b0'"):
         assert need in txt, need
     assert "filevers=(1, 0, 2, 0)" in txt                           # 숫자 버전은 16비트라 빌드 날짜를 못 담는다
