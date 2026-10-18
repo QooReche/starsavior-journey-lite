@@ -1,0 +1,15 @@
+# 편집기가 인코딩과 줄바꿈을 같게 쓰도록 하는 설정 (https://editorconfig.org)
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = false     # 마크다운의 줄 끝 공백 두 칸(강제 줄바꿈)을 지우지 않는다
+
+# 윈도우 PowerShell 5.1 은 BOM 이 없으면 한글을 기본 인코딩으로 읽는다
+[*.ps1]
+charset = utf-8-bom
+
+[*.{bat,cmd}]
+end_of_line = crlf

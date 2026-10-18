@@ -1,2 +1,13 @@
+# 줄바꿈: 저장소에는 항상 LF 로 저장하고, 작업 폴더도 LF 로 둔다 (Windows 에서 core.autocrlf 가 켜져 있어도 같은 결과).
+# 파일마다 CRLF/LF 가 섞이면 정확 일치 치환이 조용히 안 맞고 git 경고가 난다.
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 바이너리 / 모델은 변환하지 않는다
 models/** -text
 *.onnx binary
+*.png binary
+*.jpg binary
+*.ico binary
+*.webp binary
