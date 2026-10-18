@@ -232,7 +232,8 @@ def test_tracker_throttles_scans(saviors):
 # ------------------------------------------------------------------ 호버 / 설정
 def _hover(matches, enabled=True, in_journey=False):
     import journey_helper as jh
-    stub = SimpleNamespace(equip_matches=matches, in_journey=in_journey, settings={"show_savior_equip": enabled, "tooltip_font_scale": 1.0})
+    stub = SimpleNamespace(equip_matches=matches, in_journey=in_journey, settings={"show_savior_equip": enabled, "tooltip_font_scale": 1.0},
+                           retry_icons=lambda: None)
     rect = {"left": 100, "top": 50, "width": 1600, "height": 900}
     return jh.MouseHoverManager._equip_hover_html(stub, rect)
 
@@ -268,3 +269,122 @@ def test_equip_screen_does_not_touch_relic_savior():
     stub = SimpleNamespace(equip_matches=None)
     jh.MouseHoverManager.on_equip_changed(stub, [{"name": "페트라", "subtitle": "페트라 조합", "key": "petra"}])
     assert stub.equip_matches and jh_relic._savior is None
+
+
+# ------------------------------------------------------------------ 세트 아이콘
+import jh_common  # noqa: E402
+import jh_seticons as si  # noqa: E402
+
+
+def test_split_set_parses_combinations_and_rejects_odd_text():
+    assert si.split_set("공격(4) + 투지(2)") == [("공격", "4", ""), ("투지", "2", "")]
+    assert si.split_set("방어(6)") == [("방어", "6", "")]
+    assert si.split_set("모두 가능") is None and si.split_set("") is None and si.split_set("공격(4) + 아무거나") is None
+
+
+def test_names_in_only_known_sets(saviors):
+    e = by_key(saviors, "petra")["equipment"]
+    assert si.names_in(e) == ["파괴", "적중", "통찰"]
+    assert si.names_in({"sets": [{"value": "없는세트(4)", "note": ""}]}) == []
+
+
+def _icons(tmp_path):
+    """4x4 PNG 를 세트 이름별로 만들어 경로 함수를 돌려준다"""
+    paths = {}
+    for n in si.SET_NAMES:
+        p = tmp_path / f"{n}.png"
+        ok, buf = cv2.imencode(".png", np.zeros((8, 8, 3), np.uint8))
+        buf.tofile(str(p))
+        paths[n] = str(p)
+    return lambda name: paths.get(name)
+
+
+def test_html_has_set_icons_when_cached(saviors, tmp_path):
+    s = by_key(saviors, "petra")
+    with_icons = eq.format_html(s, 1.0, 0, _icons(tmp_path))
+    assert with_icons.count("<img") == 4                              # 파괴·적중·통찰·적중 (세트 조합마다)
+    assert "<img" not in eq.format_html(s, 1.0, 0, None)             # 아이콘이 없으면 글자만
+    assert "<img" not in eq.format_html(s, 1.0, 0, lambda name: None)
+    assert "파괴(4)" in _plain(with_icons) and "적중(2)" in _plain(with_icons)
+
+
+def test_only_set_row_gets_icons(saviors, tmp_path):
+    html = eq.format_html(by_key(saviors, "lydia-moon-caster"), 1.0, 0, _icons(tmp_path))
+    assert html.count("<img") == 2                                    # 파괴(4) + 투지(2) 두 개만. 목걸이/반지에는 없음
+
+
+def test_icon_store_rejects_unknown_names_and_has_no_network_in_tests(tmp_path):
+    st = si.IconStore(cache_dir=str(tmp_path), download=False)
+    assert st.get_image("공격") is None and st.get_image("../x") is None
+    assert si.cached_path("../x") is None and si.cached_path("없음") is None
+    with pytest.raises(ValueError):
+        st._url("../x")
+    assert "%EA%B3%B5%EA%B2%A9" in st._url("공격")                       # 주소의 한글은 퍼센트 인코딩
+
+
+def test_missing_lists_only_uncached_known_icons(saviors, tmp_path):
+    st = si.IconStore(cache_dir=str(tmp_path), download=False)
+    e = by_key(saviors, "lydia-moon-caster")["equipment"]
+    assert si.missing(e, st) == ["파괴", "투지"]
+
+
+# ------------------------------------------------------------------ 디펜더: 퓨어탱커 / 공격탱커 좌우
+def _defender(saviors):
+    return next(s for s in saviors if s.get("sets") and s["name"] == "카르멘")
+
+
+def test_defender_equipment_splits_into_pure_attack_ex(saviors):
+    g = eq.split_by_tank(_defender(saviors)["equipment"])
+    pure, attack, ex = g["sets"]
+    assert [o["value"] for o in pure] == ["생명(4) + 장벽(2)"] and [o["value"] for o in attack] == ["공격(4) + 투지(2)"]
+    assert [o["value"] for o in ex] == ["통찰(4) + 장벽(2)"]
+    assert [o["value"] for o in g["necklace"][0]] == ["속도"] and [o["value"] for o in g["necklace"][1]] == ["공격력%"]
+
+
+def test_all_seven_defenders_can_be_split(saviors):
+    ds = [s for s in saviors if s.get("sets")]
+    assert len(ds) == 7 and all(eq.two_columns(s) for s in ds)
+    assert not any(eq.two_columns(s) for s in saviors if not s.get("sets"))
+
+
+def test_defender_html_is_two_columns_with_headings(saviors):
+    html = eq.format_html(_defender(saviors), 1.0, 0)
+    assert "▌퓨어탱커" in _plain(html) and "▌공격력 탱커" in _plain(html)
+    assert html.index("▌퓨어탱커") < html.index("▌공격력 탱커")
+    assert 'colspan="2"' in html                                      # EX 전용·잠재력 줄은 가로 전체
+    txt = _plain(html)
+    assert txt.index("생명(4) + 장벽(2)") < txt.index("공격(4) + 투지(2)")      # 세트: 왼쪽 퓨어, 오른쪽 공격
+    assert "EX" in txt and "통찰(4) + 장벽(2)" in txt and "BX / AX1 / EX" in txt
+
+
+def test_unsplittable_defender_falls_back_to_single_list(saviors):
+    d = dict(_defender(saviors))
+    e = dict(d["equipment"])
+    e["necklace"] = [{"value": "속도", "note": "※ 알 수 없는 메모"}]
+    d["equipment"] = e
+    assert not eq.two_columns(d)
+    html = eq.format_html(d, 1.0, 0)
+    assert "▌퓨어탱커" not in html and "속도" in _plain(html) and "공격(4) + 투지(2)" in _plain(html)     # 정보는 그대로, 좌우만 포기
+
+
+def test_wide_geometry_only_for_two_columns(saviors):
+    rect = {"width": 1600, "height": 900}
+    assert eq.wide([_defender(saviors)]) and not eq.wide([by_key(saviors, "petra")])
+    _, w_narrow, _ = eq.geometry(rect, 1.0, False)
+    _, w_wide, _ = eq.geometry(rect, 1.0, True)
+    assert w_wide == 800 and w_wide > w_narrow
+    assert eq.WIDE_X_FRAC + eq.WIDE_W_FRAC < 0.74                      # 우측 장비 패널(0.74~)을 가리지 않는다
+
+
+def test_hover_places_wide_for_defender_and_narrow_otherwise(saviors):
+    fn_d, fn_n = _hover([_defender(saviors)]), _hover([by_key(saviors, "petra")])
+    assert fn_d.place["x_frac"] == eq.WIDE_X_FRAC and fn_d.place["y_frac"] == eq.WIDE_TOP_FRAC
+    assert fn_n.place["x_frac"] == eq.TOOLTIP_X_FRAC and fn_n.place["y_frac"] == eq.TOOLTIP_TOP_FRAC
+
+
+# ------------------------------------------------------------------ 공용 표
+def test_grid_table_colspan_and_heads():
+    t = jh_common.grid_table([("AA", ["c1", "c2"]), ("", ["wide"])], 40, ["h1", "h2"])
+    assert 'colspan="2"' in t and "h1" in t and "h2" in t
+    assert t.index("h1") < t.index("h2") < t.index("c1") < t.index("c2") < t.index("wide")
+    assert "<table" in jh_common.grid_table([], 10) and "</table>" in jh_common.grid_table([], 10)

@@ -10,10 +10,6 @@ import re
 
 import jh_common
 
-try:
-    from jh_savior import COL_DIVIDER as _COL_DIVIDER      # 구분선 색은 구원자 툴팁과 한 곳(공용 스타일)
-except Exception:
-    _COL_DIVIDER = "#26323a"
 CODE_W = 34                                                 # 코드 칸 폭(px): XX1 이 한 줄에 들어가는 정도
 
 # 선택지 이름 -> [(코드, 효과 요약)]. 번호가 붙는 AX1~8 등은 '의뢰토벌 증거품 n호'로 정해지므로 여기서는 알파벳만 쓴다.
@@ -78,17 +74,10 @@ def recommend_lines(route, savior):
 
 
 def _table(rows, small, col_head, col_body):
-    """[(코드, 설명)] -> 코드 칸 + 설명 칸 표. 설명이 길어 줄바꿈돼도 코드 칸 아래로 말려 들어가지 않고, 행 사이에 구분선(구원자 툴팁과 같은 색)."""
+    """[(코드, 설명)] -> 코드 칸 + 설명 칸 표. 설명이 길어 줄바꿈돼도 코드 칸 아래로 말려 들어가지 않고, 행 사이에 구분선(공용 표)."""
     esc = _html.escape
-    div = (f'<tr><td colspan="2" style="background-color:{_COL_DIVIDER}; font-size:1px;">&nbsp;</td></tr>')
-    trs = []
-    for i, (c, d) in enumerate(rows):
-        head = jh_common.span(esc(c), col_head, small, bold=True) if c else ""
-        trs.append(f'<tr><td valign="top" width="{CODE_W if c else 1}">{head}</td>'
-                   f'<td valign="top">{jh_common.span(esc(d), col_body, small)}</td></tr>')
-        if i < len(rows) - 1:
-            trs.append(div)
-    return '<table cellspacing="0" cellpadding="2" width="100%">' + "".join(trs) + "</table>"
+    return jh_common.grid_table([(jh_common.span(esc(c), col_head, small, bold=True) if c else "", [jh_common.span(esc(d), col_body, small)])
+                                 for c, d in rows], CODE_W)
 
 
 def section(option, scale=1.0, detail=0, savior=None):

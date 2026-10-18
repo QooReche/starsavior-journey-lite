@@ -39,6 +39,7 @@ import jh_paths
 import jh_savior
 import jh_relic
 import jh_schedule
+import jh_seticons
 import jh_update
 
 try:
@@ -70,7 +71,7 @@ DEFAULT_SETTINGS = {
     "hidden_difficulties": [],      # 툴팁에서 숨길 난이도 ["easy","normal","hard"] 부분집합 (원작 1.1.3 과 같은 키)
     "show_schedule": True,          # 좌측 상단 날짜 위젯에 마우스를 올리면 턴별 고정 일정 표시
     "show_savior_reco": True,       # '여정 시작' 화면에서 구원자 식별 동안 계속 추천 아르카나(썸네일 포함) 표시
-    "show_savior_stat": True,       # 구원자 추천 툴팁 아래에 '여정 스탯 우선순위' 표시(데이터가 있는 구원자만)
+    "show_savior_stat": True,       # 인자 고르기 화면에서 구원자의 '여정 스탯 우선순위' 표시(데이터가 있는 구원자만)
     "show_savior_equip": True,      # 구원자 '장비' 화면에서 PVE 추천 장비 세팅 표시(데이터가 있는 구원자만)
     "check_updates": True,          # 시작할 때 GitHub 에서 최신 버전 번호만 확인(새 버전 알림). 개인 정보는 보내지 않음
     "dismissed_update_version": "",  # '이 버전은 알리지 않음'으로 숨긴 버전 (그 이하는 알리지 않음)
@@ -99,10 +100,13 @@ REGION_FRACTIONS.update(jh_savior.SAVIOR_REGIONS)      # savior_header / savior_
 REGION_FRACTIONS.update(jh_savior.ARCANA_SCREEN_REGIONS)   # 편성 화면 고정 글자(전체 해제/자동 편성/특수재화 우선 사용/여정 시작)
 REGION_FRACTIONS.update(jh_savior.PICKER_REGIONS)          # 아르카나 고르기 화면 부정 신호(하단 안내줄/보유 수)
 REGION_FRACTIONS.update(jh_equip.EQUIP_REGIONS)            # 구원자 '장비' 화면: 제목/버튼/부제/이름
+REGION_FRACTIONS.update(jh_savior.INJA_REGIONS)            # 인자 고르기 화면: '여정 시작 정보' / '자동 장착' / '확인'
 SAVIOR_CLICK_HIDE_SEC = 0.5     # 왼쪽 클릭 직후 추천 툴팁을 잠깐 숨기고 다음 스캔에서 화면을 다시 판정
 SAVIOR_SCAN_SEC = 1.0
 SAVIOR_CONFIRM = 2        # 같은 구원자가 이만큼 연속으로 읽혀야 확정
 SAVIOR_LOST = 3           # '여정 시작' 머리글이 이만큼 연속으로 안 보이면 화면을 떠난 것으로 본다
+INJA_CONFIRM = 2          # 인자 고르기 화면 글자가 이만큼 연속으로 읽혀야 확정
+INJA_LOST = 3             # 이만큼 연속으로 못 읽으면 해제
 ARCANA_CONFIRM = 2        # 편성 화면 글자가 이만큼 연속으로 읽혀야 '편성 화면'으로 확정(툴팁 허용)
 ARCANA_LOST = 2           # 이만큼(약 2초) 연속으로 못 읽어야 해제 (간헐적 OCR 실패로 툴팁이 깜빡이지 않게)
 SAVIOR_NOREAD_LOST = 6    # 머리글은 보이는데 이름을 이만큼 연속으로 못 읽으면 인식 해제
@@ -286,9 +290,9 @@ _TRANSLATIONS_EN = {
     "🛡️ 구원자 PVE 추천 장비 (구원자 장비 화면에서 표시)": "🛡️ Recommended PVE gear (shown on the savior equipment screen)",
     "구원자 장비 화면에서 목걸이·반지·세트·잠재력 추천을 보여줘요.\n데이터가 없는 구원자는 표시하지 않아요.":
         "Shows recommended necklace, ring, set and potential on the savior equipment screen.\nNothing is shown for saviors without data.",
-    "📊 여정 스탯 우선순위 (구원자 추천 아래에 표시)": "📊 Journey stat priority (shown under the savior recommendation)",
-    "구원자 추천 아르카나 아래에 힘·체력 같은 스탯 우선순위를 보여줘요.\n데이터가 없는 구원자는 표시하지 않아요.":
-        "Shows the stat priority (Strength, HP...) under the recommended arcana.\nNothing is shown for saviors without data.",
+    "📊 여정 스탯 우선순위 (인자 고르기 화면에서 표시)": "📊 Journey stat priority (shown on the factor selection screen)",
+    "인자 고르기 화면에서 구원자의 힘·체력 같은 스탯 우선순위를 보여줘요.\n데이터가 없는 구원자는 표시하지 않아요.":
+        "Shows the savior's stat priority (Strength, HP...) on the factor selection screen.\nNothing is shown for saviors without data.",
     "아르카나 편성 화면에서 추천·대체 카드를 보여줘요.\n카드 고르기 화면에서는 자동으로 숨겨요.":
         "Shows recommended/alternative cards on the arcana setup screen.\nAutomatically hidden on the card picker screen.",
     "방송·녹화": "Streaming / recording", "방송·녹화·스크린샷에 오버레이 보이기": "Show overlay in streams, recordings and screenshots",
@@ -861,6 +865,7 @@ class ScreenWatcher(QThread):
     arcana_screen_changed = pyqtSignal(bool)   # '아르카나 편성 화면'인가 (구원자 추천 툴팁은 이 화면에서만)
     savior_changed = pyqtSignal(object)  # '여정 시작' 화면에서 식별한 구원자 리스트(동명이인이면 여러 명) 또는 None
     equip_changed = pyqtSignal(object)   # 구원자 '장비' 화면에서 식별한 구원자 리스트 또는 None (훈련의 방향성 추천과는 따로 쓴다)
+    inja_screen_changed = pyqtSignal(bool)   # '인자 고르기 화면'인가 (여정 스탯 우선순위 툴팁은 이 화면에서만)
     model_failed = pyqtSignal(str)       # OCR 모델 로딩 실패 (연속 실패 중 한 번만 보냄)
 
     LEAVE_AFTER_OTHER = 3     # 라벨 자리에 다른 글자가 읽힘 -> 이벤트 화면이 아니라고 확신 (연속 횟수)
@@ -999,13 +1004,16 @@ class ScreenWatcher(QThread):
         self._sv_last = None                 # 직전 식별 결과 (matches, how)
         self._sv_miss = self._sv_noread = 0
         self._ar_on, self._ar_streak, self._ar_miss = False, 0, 0
+        self._ij_on, self._ij_streak, self._ij_miss = False, 0, 0
 
     def _sv_clear(self, why=""):
         """구원자 인식 상태를 비우고, 켜져 있었으면 해제를 알린다."""
-        was, was_ar = self._sv_cur is not None, self._ar_on
+        was, was_ar, was_ij = self._sv_cur is not None, self._ar_on, self._ij_on
         self._sv_reset()
         if was_ar:
             self.arcana_screen_changed.emit(False)
+        if was_ij:
+            self.inja_screen_changed.emit(False)
         if was:
             log(f"[구원자] 인식 해제 {why}")
             self.savior_changed.emit(None)
@@ -1055,6 +1063,29 @@ class ScreenWatcher(QThread):
                 log("[구원자] 편성 화면 글자가 안 보임 -> 추천 툴팁 숨김")
                 self.arcana_screen_changed.emit(False)
 
+    def _scan_inja_screen(self, sct, rect):
+        """'인자 고르기' 화면인지 판별한다(여정 스탯 우선순위 툴팁은 이 화면에서만). 아르카나 편성 화면이 확정된 동안은 이 화면이 아니다.
+        '여정 시작 정보' 와 우측 아래 버튼('자동 장착'/'확인') 하나가 연속 INJA_CONFIRM 회 읽혀야 확정, 연속 INJA_LOST 회 못 읽으면 해제."""
+        found = set()
+        if not self._ar_on:
+            for name, kind in jh_savior.INJA_KINDS.items():
+                if any(c >= 0.4 and jh_savior.match_inja_screen(t, kind) for t, c in self._read_region(sct, rect, name, (2.0, 3.0))):
+                    found.add(kind)
+        if jh_savior.inja_screen_hit(found):
+            self._ij_miss = 0
+            self._ij_streak += 1
+            if self._ij_streak >= INJA_CONFIRM and not self._ij_on:
+                self._ij_on = True
+                log(f"[구원자] 인자 고르기 화면 확인 {sorted(found)} -> 스탯 우선순위 툴팁 허용")
+                self.inja_screen_changed.emit(True)
+        else:
+            self._ij_streak = 0
+            self._ij_miss += 1
+            if self._ij_on and self._ij_miss >= INJA_LOST:
+                self._ij_on = False
+                log("[구원자] 인자 고르기 화면 글자가 안 보임 -> 스탯 우선순위 툴팁 숨김")
+                self.inja_screen_changed.emit(False)
+
     def request_arcana_recheck(self):
         """마우스 클릭 직후: 편성 화면 확정을 풀고(툴팁은 호출 측이 이미 숨김) 다음 루프에서 바로 다시 판정한다(1초 대기 건너뜀).
         다음 스캔에서 긍정 신호가 한 번만 읽혀도 확정(재표시), 부정/불확실이면 숨김 유지."""
@@ -1084,6 +1115,7 @@ class ScreenWatcher(QThread):
             return
         self._sv_miss = 0
         self._scan_arcana_screen(sct, rect)
+        self._scan_inja_screen(sct, rect)
         sub_g, name_g = self._grab_gray(sct, rect, "savior_subtitle"), self._grab_gray(sct, rect, "savior_name")
         last = self._sv_gray
         same = (last is not None and last[0].shape == sub_g.shape and last[1].shape == name_g.shape
@@ -1316,6 +1348,29 @@ class CardThread(QThread):
         except Exception as e:
             info = f"예외 {e}"
         self.resolved.emit(self.title, aid, info)
+
+
+class IconThread(QThread):
+    """장비 추천 툴팁의 세트 아이콘을 지연 다운로드해 캐시(jh_seticons)에 저장한다. 실패해도 글자만 표시된다."""
+    done = pyqtSignal()
+
+    def __init__(self, names):
+        super().__init__()
+        self.names = list(dict.fromkeys(names))
+
+    def run(self):
+        try:
+            store = jh_seticons.default_store()
+            store.on_event = log
+            for name in self.names:
+                if jh_seticons.cached_path(name):
+                    continue
+                if store.get_image(name) is None and not store.breaker.allow(store.clock()):
+                    log("[장비] 세트 아이콘 다운로드 연속 실패, 일괄 다운로드 중단 (서킷이 풀리면 자동 재시도)")
+                    break
+        except Exception as e:
+            log(f"[장비] 세트 아이콘 다운로드 예외 {e}")
+        self.done.emit()
 
 
 class ThumbThread(QThread):
@@ -1794,7 +1849,10 @@ class MouseHoverManager(QWidget):
         self.arcana_screen = False          # '아르카나 편성 화면'일 때만 추천 툴팁을 띄운다 (구원자 고르기/인자작 화면 제외)
         self.savior_matches = None          # '여정 시작' 화면에서 식별한 구원자(들) (jh_savior)
         self.equip_matches = None           # '장비' 화면에서 식별한 구원자(들) (jh_equip)
+        self.inja_screen = False            # '인자 고르기' 화면인가 (여정 스탯 우선순위 툴팁)
         self._thumb_threads = []
+        self._icon_threads = []
+        self._icon_last = -1e9              # 세트 아이콘 마지막 다운로드 시도 시각(monotonic)
         self._thumb_done = set()            # 모든 썸네일이 캐시된 구원자 키
         self._thumb_last = {}               # 구원자 키 -> 마지막 다운로드 시도 시각(monotonic)
         self._thumb_clock = time.monotonic
@@ -1816,6 +1874,7 @@ class MouseHoverManager(QWidget):
                                      equip_getter=lambda: bool(self.settings.get("show_savior_equip", True)))
         self.watcher.savior_changed.connect(self.on_savior_changed)
         self.watcher.equip_changed.connect(self.on_equip_changed)
+        self.watcher.inja_screen_changed.connect(self.on_inja_screen_changed)
         self.watcher.arcana_screen_changed.connect(self.on_arcana_screen_changed)
         self.watcher.title_detected.connect(self.on_title)
         self.watcher.journey_status_changed.connect(self.on_journey_status)
@@ -2081,6 +2140,22 @@ class MouseHoverManager(QWidget):
         self.status.set_status(tr("🃏 [구원자 인식] {}").format(label), "#00aaff", flash=True)
         self.retry_thumbs()
 
+    def on_inja_screen_changed(self, on):
+        self.inja_screen = bool(on)
+
+    def _stat_hover_html(self, rect):
+        """'인자 고르기' 화면에서 구원자를 식별한 동안(호버 없이) 계속 보이는 여정 스탯 우선순위 툴팁 HTML 함수(detail -> html), 아니면 None."""
+        if not (rect and self.settings.get("show_savior_stat", True)) or self.in_journey or self.arcana_screen or not self.inja_screen \
+                or not jh_savior.stat_usable(self.savior_matches):
+            return None
+        s = self.savior_matches[0]
+        scale, width_px = jh_savior.stat_geometry(rect, self.settings["tooltip_font_scale"], jh_savior.stat_two_columns(s))
+        fn = lambda d=0: jh_savior.format_stat_html(s, scale)
+        fn.width_px = width_px
+        fn.max_detail = 0
+        fn.place = dict(y_frac=jh_savior.STAT_TOOLTIP_TOP_FRAC, x_frac=jh_savior.STAT_TOOLTIP_X_FRAC, width_px=width_px)
+        return fn
+
     def on_equip_changed(self, matches):
         self.equip_matches = list(matches) if matches else None
 
@@ -2105,12 +2180,37 @@ class MouseHoverManager(QWidget):
         """구원자 '장비' 화면에서 식별한 동안(호버 없이) 계속 보이는 PVE 추천 장비 툴팁 HTML 함수(detail -> html), 아니면 None."""
         if not (rect and self.settings.get("show_savior_equip", True)) or self.in_journey or not jh_equip.usable(self.equip_matches):
             return None
-        scale, width_px, _ = jh_equip.geometry(rect, self.settings["tooltip_font_scale"])
+        self.retry_icons()                                            # 미캐시 세트 아이콘 재시도(30초 간격, 서킷 규칙 준수)
+        is_wide = jh_equip.wide(self.equip_matches)                   # 퓨어탱커/공격탱커 좌우 2열
+        scale, width_px, _ = jh_equip.geometry(rect, self.settings["tooltip_font_scale"], is_wide)
         s = self.equip_matches[0]
-        fn = lambda d=0: jh_equip.format_html(s, scale, d)
+        fn = lambda d=0: jh_equip.format_html(s, scale, d, jh_seticons.cached_path)
         fn.width_px = width_px
         fn.max_detail = 1
+        fn.place = (dict(y_frac=jh_equip.WIDE_TOP_FRAC, x_frac=jh_equip.WIDE_X_FRAC, width_px=width_px, min_top_frac=jh_equip.WIDE_TOP_FRAC)
+                    if is_wide else dict(y_frac=jh_equip.TOOLTIP_TOP_FRAC, x_frac=jh_equip.TOOLTIP_X_FRAC, width_px=width_px))
         return fn
+
+    def retry_icons(self):
+        """식별된 구원자 장비의 미캐시 세트 아이콘이 있으면 IconThread 를 (재)시작한다. 최소 30초 간격, 서킷이 열려 있으면 쉰다."""
+        try:
+            if not jh_equip.usable(self.equip_matches):
+                return
+            todo = jh_seticons.missing(self.equip_matches[0].get("equipment"))
+            if not todo or any(x.isRunning() for x in self._icon_threads):
+                return
+            now = self._thumb_clock()
+            if now - self._icon_last < self.THUMB_RETRY_SEC:
+                return
+            store = jh_seticons.default_store()
+            if not store.breaker.allow(store.clock()):
+                return
+            self._icon_last = now
+            t = IconThread(todo)
+            self._icon_threads = [x for x in self._icon_threads if x.isRunning()] + [t]
+            t.start()
+        except Exception as e:
+            log(f"[장비] 세트 아이콘 재시도 예외 {type(e).__name__}: {e}")
 
     THUMB_RETRY_SEC = 30.0
 
@@ -2182,10 +2282,12 @@ class MouseHoverManager(QWidget):
             rt()                                                   # 미캐시 썸네일 재시도(30초 간격, 서킷 규칙 준수)
         wide = jh_savior.wide_mode(m)
         scale, width_px, cw = jh_savior.tooltip_geometry(rect, self.settings["tooltip_font_scale"], wide)   # 창 크기 비례 배율 k 반영
-        show_stat = bool(self.settings.get("show_savior_stat", True))
-        fn = lambda d=0: jh_savior.format_html(m, scale, self._thumb_path, d, cw, show_stat)
+        fn = lambda d=0: jh_savior.format_html(m, scale, self._thumb_path, d, cw)
         fn.wide = wide
         fn.width_px = width_px
+        fn.place = (dict(y_frac=jh_savior.WIDE_TOP_FRAC, x_frac=jh_savior.WIDE_X_FRAC, width_frac=jh_savior.WIDE_WIDTH_FRAC,
+                         min_top_frac=jh_savior.WIDE_TOP_FRAC)
+                    if wide else dict(y_frac=jh_savior.TOOLTIP_TOP_FRAC, x_frac=jh_savior.TOOLTIP_X_FRAC, width_px=width_px))
         fn.max_detail = jh_savior.MAX_DETAIL                       # 썸네일을 끝까지 유지하는 단계(0~2) 뒤 마지막 수단(3)까지
         return fn
 
@@ -2353,19 +2455,13 @@ class MouseHoverManager(QWidget):
             if self._equip_click():
                 self.tooltip.hide_and_clear()
                 return
-            eqh = self._equip_hover_html(get_game_window_rect())
-            if eqh:
-                self.tooltip.show_html(eqh, y_frac=jh_equip.TOOLTIP_TOP_FRAC, x_frac=jh_equip.TOOLTIP_X_FRAC, width_px=eqh.width_px)
-                return
-            sv = self._savior_hover_html(get_game_window_rect(), QCursor.pos())
-            if sv:
-                if getattr(sv, "wide", False):               # 2세트 구원자: 좌측 스탯 패널까지 넓게(이름 블록 아래, 우측 편성 카드 왼쪽까지)
-                    self.tooltip.show_html(sv, y_frac=jh_savior.WIDE_TOP_FRAC, x_frac=jh_savior.WIDE_X_FRAC,
-                                           width_frac=jh_savior.WIDE_WIDTH_FRAC, min_top_frac=jh_savior.WIDE_TOP_FRAC)
-                else:
-                    self.tooltip.show_html(sv, y_frac=jh_savior.TOOLTIP_TOP_FRAC, x_frac=jh_savior.TOOLTIP_X_FRAC,
-                                           width_px=getattr(sv, "width_px", None))
-                return
+            rect = get_game_window_rect()
+            for build in (lambda: self._equip_hover_html(rect), lambda: self._stat_hover_html(rect),
+                          lambda: self._savior_hover_html(rect, QCursor.pos())):
+                fn = build()                                    # 장비 / 여정 스탯 우선순위 / 구원자 추천 아르카나: 화면이 서로 달라 하나만 뜬다(앞에서 뜨면 뒤는 부르지 않는다)
+                if fn:
+                    self.tooltip.show_html(fn, **fn.place)
+                    return
         # DB에 없는 제목(예: '계승')은 상단바 문구로만 알리고 툴팁은 띄우지 않는다(선택지가 있는 이벤트만 툴팁)
         if self._hidden or self._loading_screen or not self.in_journey or not self.matched or not is_game_hovered_or_active():
             self.tooltip.hide_and_clear()
@@ -2475,7 +2571,7 @@ class MouseHoverManager(QWidget):
             lang_menu.addAction(a)
         for text, key in ((tr("잠재력/버프 설명 표시"), "show_info"), (tr("📅 일정 미리보기 [베타] (좌측 상단 날짜에 마우스)"), "show_schedule"),
                           (tr("🃏 구원자 추천 아르카나 (여정 시작 화면에서 표시)"), "show_savior_reco"),
-                          (tr("📊 여정 스탯 우선순위 (구원자 추천 아래에 표시)"), "show_savior_stat"),
+                          (tr("📊 여정 스탯 우선순위 (인자 고르기 화면에서 표시)"), "show_savior_stat"),
                           (tr("🛡️ 구원자 PVE 추천 장비 (구원자 장비 화면에서 표시)"), "show_savior_equip"),
                           (tr("⚡ 저사양 모드 (OCR 주기 늘림)"), "low_spec_mode"),
                           (tr("상단바 위치 고정"), "status_badge_locked"),

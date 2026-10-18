@@ -63,7 +63,8 @@ powershell -File tools\build_release.ps1 -Deploy -UpdateHandoff  # 이후: 동�
 | `jh_savior.py` | 구원자 식별(이름+부제 OCR)·추천 아르카나 툴팁(디펜더 2세트 포함) |
 | `jh_relic.py` | '훈련의 방향성' 선택지별 특수 잠재력(AX~XX) 안내 + 구원자별 추천 |
 | `jh_equip.py` | 구원자 '장비' 화면: 화면 판별(머리글 '구원자' + 제목 '장비' + 버튼), 구원자 식별 상태기계(`EquipTracker`), PVE 추천 장비 툴팁. 좌표는 `EQUIP_REGIONS`(스크린샷 2장으로 보정, `tests/test_equip.py`) |
-| `jh_common.py` | 보상 줄 정규식(결과 태그·택1·난이도)과 툴팁 HTML 조각(`span`, 색 상수): `jh_db`/`jh_schedule`/`jh_v2`/`jh_relic` 공용 |
+| `jh_common.py` | 보상 줄 정규식(결과 태그·택1·난이도)과 툴팁 HTML 부품(`span`, `spacer`, `img_tag`, `grid_table`(구분선·좌우 열·가로 전체 줄), `source_html`, `savior_meta`, 색 상수): 모든 툴팁 모듈 공용. 새 툴팁은 이 부품을 먼저 쓴다 |
+| `jh_seticons.py` | 장비 세트 아이콘(12종) 지연 다운로드·캐시(`IconStore`, 카드 썸네일과 같은 서킷브레이커/상한 규칙), 세트 문자열 분해 |
 | `jh_schedule.py` | 턴별 일정(내장 데이터), 고정 이벤트 주요 보상 요약, 랜덤 이벤트 증감 요약 |
 | `jh_buffs.py` | 새 DB에 없는 여정 버프 설명 보충 |
 | `jh_net.py` | 네트워크 제한(backoff, 서킷브레이커, 시간당 상한) |

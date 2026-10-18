@@ -73,7 +73,9 @@ def test_route_choice_names_exist_in_bundled_v2_seed():
 def test_codes_are_in_a_table_so_wrapped_text_stays_aligned():
     html = jh_relic.section(OPT("공격에 도움이 되는 응원"))
     assert html.count("<table") == 1 and html.count("<tr>") >= 5              # 코드 칸 + 설명 칸, 행 사이 구분선
-    assert jh_relic._COL_DIVIDER in html                                        # 구분선 색은 구원자 툴팁과 같은 값
+    import jh_common
+    import jh_savior
+    assert jh_common.COL_DIVIDER in html and jh_savior.COL_DIVIDER == jh_common.COL_DIVIDER      # 구분선 색은 모든 툴팁이 공용 값 하나
 
 
 def test_clear_savior_drops_previous_journey_recommendation():

@@ -47,8 +47,21 @@ SAVIOR_HOVER = (0.03, 0.19, 0.27, 0.34)
 TOOLTIP_TOP_FRAC = 0.20        # 툴팁 시작 높이(게임 창 비율)
 TOOLTIP_X_FRAC = 0.245         # 툴팁 시작 가로 위치: 좌측 스탯 패널(~0.235) 오른쪽, 우측 편성 카드(0.53~) 왼쪽 = 구원자 일러스트 위
 
+# '인자 고르기' 화면(머리글은 같은 '여정 시작'): 좌측 스탯 아래 '여정 시작 정보' 버튼과 우측 아래 '자동 장착' / '확인' 버튼 (스크린샷 3장으로 보정).
+# 구원자 추천 아르카나 툴팁이 뜨는 '편성 화면'과는 다른 화면이라 여정 스탯 우선순위는 여기에서만 띄운다.
+INJA_REGIONS = {
+    "inja_info": {"top": 0.675, "left": 0.06, "width": 0.26, "height": 0.045},
+    "inja_auto": {"top": 0.835, "left": 0.80, "width": 0.12, "height": 0.055},
+    "inja_ok": {"top": 0.915, "left": 0.85, "width": 0.10, "height": 0.055},
+}
+INJA_KINDS = {"inja_info": "info", "inja_auto": "auto", "inja_ok": "ok"}
+INJA_PHRASE = {"info": ("여정시작정보",), "auto": ("자동장착", "자동착장"), "ok": ("확인",)}
+STAT_TOOLTIP_TOP_FRAC = 0.20      # 스탯 우선순위 툴팁 위치: 이름 블록 오른쪽, 좌측 스탯 패널(~0.2) 오른쪽, 인자 슬롯(y 0.5~) 위
+STAT_TOOLTIP_X_FRAC = 0.245
+STAT_WIDE_W_FRAC = 0.42           # 좌우 2열(디펜더)일 때 폭: x 0.245 부터 0.665 까지(열마다 '힘 > 체력 > 인내 > 집중 = 보호' 한 줄이 들어가야 함), 인자 슬롯(y 0.5~) 위
+
 HEADER_PHRASE = "여정시작"
-ELEMENT_KO = {"sun": "태양", "moon": "달", "star": "별", "order": "질서", "chaos": "혼돈"}
+ELEMENT_KO = jh_common.ELEMENT_KO
 NAME_MIN = 0.66          # 이름 유사도 하한 (2~4글자라 한 글자 오인식도 허용)
 SUB_MIN = 0.70
 SUB_MARGIN = 0.08
@@ -86,6 +99,19 @@ def load_reco(path=None):
 
 
 # ---------------------------------------------------------------- 화면 판별 / 식별
+def match_inja_screen(text, kind):
+    """OCR 문자열이 인자 고르기 화면의 고정 글자(kind: info/auto/ok)인가."""
+    ko = re.sub(r"[^가-힣]", "", text or "")
+    if len(ko) < 2:
+        return False
+    return any(p in ko or (len(p) >= 4 and len(ko) >= len(p) - 1 and _sim(ko[:len(p)], p) >= 0.75) for p in INJA_PHRASE[kind])      # 한 글자 오인식까지만 허용
+
+
+def inja_screen_hit(found):
+    """인자 고르기 화면 확정 조건: '여정 시작 정보' + 우측 아래 버튼('자동 장착'/'확인') 중 하나."""
+    return "info" in found and bool(set(found) - {"info"})
+
+
 def match_header(text):
     """OCR 문자열이 '여정 시작' 머리글인가 (뒤에 붙는 '?' 아이콘 잡음은 허용)."""
     ko = re.sub(r"[^가-힣]", "", text or "")
@@ -176,17 +202,7 @@ def thumb_ids(savior):
     return ids
 
 
-def png_size(path):
-    """PNG 헤더에서 (폭, 높이). 못 읽으면 None."""
-    try:
-        with open(path, "rb") as f:
-            head = f.read(24)
-        if head[:8] != b"\x89PNG\r\n\x1a\n":
-            return None
-        w, h = struct.unpack(">II", head[16:24])
-        return (w, h) if w > 0 and h > 0 else None
-    except Exception:
-        return None
+png_size = jh_common.png_size
 
 
 def _thumb(opt, thumb_path, h):
@@ -198,11 +214,7 @@ def _thumb(opt, thumb_path, h):
         p = thumb_path(aid)
     except Exception:
         return ""
-    sz = png_size(p) if p and os.path.exists(p) else None
-    if not sz:
-        return ""
-    w = max(1, round(h * sz[0] / sz[1]))
-    return f'<img src="{_html.escape(p.replace(os.sep, "/"))}" width="{w}" height="{h}" style="vertical-align:middle;">'
+    return jh_common.img_tag(p, h)
 
 
 def replaced_target(note):
@@ -216,7 +228,7 @@ def replaced_target(note):
 # 툴팁 색/구분선 상수 (한 곳에 모아 1세트·2세트가 같은 값을 쓴다)
 COL_ALT, COL_MUTED, COL_NAME, COL_UNRES = "#ffd27f", "#90a4ae", "#ffffff", "#ffcc80"     # 대체/소제목, 보조 글씨, 카드 이름, 해석 못 한 이름
 COL_NUM = "#00e5ff"            # 슬롯 번호
-COL_DIVIDER = "#26323a"        # 슬롯 사이 구분선 색
+COL_DIVIDER = jh_common.COL_DIVIDER        # 슬롯 사이 구분선 색
 DIVIDER_PX = 1                 # 구분선 두께
 COL_LOOSE_HEAD = "#9fe8ff"     # '그 밖의 대체' 소제목
 COL_EMPTY = "#78909c"          # '(비움)'
@@ -458,33 +470,60 @@ def _grid_table(columns, thumb_path, P):
     return out
 
 
-def stat_priority_html(savior, P):
-    """여정 스탯 우선순위 구역 HTML (데이터가 없으면 ''). 같은 묶음은 '=', 묶음 사이는 '>'. 디펜더는 퓨어탱커/공격력 탱커 두 줄."""
-    rows = savior.get("statPriority") or []
+def stat_usable(matches):
+    """스탯 우선순위 툴팁을 띄울 수 있는 식별 결과인가: 구원자 한 명, 신규(데이터 없음) 아님, 데이터 있음."""
+    if not matches or len(matches) != 1:
+        return False
+    s = matches[0] or {}
+    return bool(s.get("statPriority")) and not s.get("unknown")
+
+
+def _stat_seq(groups, px):
+    """[[스탯..]..] -> '힘 > 체력 = 인내 > ...' HTML (같은 묶음은 '=', 묶음 사이는 '>')"""
+    seq = []
+    for gi, group in enumerate(groups or []):
+        if gi:
+            seq.append(jh_common.span("&nbsp;&gt;&nbsp;", COL_MUTED, px))
+        for si, stat in enumerate(group):
+            if si:
+                seq.append(jh_common.span("&nbsp;=&nbsp;", COL_MUTED, px))
+            seq.append(jh_common.span(_html.escape(stat), jh_common.COL_WHITE, px, bold=True))
+    return "".join(seq)
+
+
+def stat_two_columns(savior):
+    """퓨어탱커/공격력 탱커처럼 기준이 둘 이상이면 좌우로 나눠 보여 준다."""
+    return len((savior or {}).get("statPriority") or []) > 1
+
+
+def stat_geometry(rect, scale, two_columns):
+    """-> (유효 배율, 툴팁 가로 px). 한 줄짜리는 기본 폭, 좌우 2열은 창 너비의 42%(이름 블록 오른쪽부터 인자 슬롯 위까지)."""
+    eff, w, _ = tooltip_geometry(rect, scale, False)
+    if two_columns:
+        w = max(w, round(rect["width"] * STAT_WIDE_W_FRAC))
+    return eff, w
+
+
+def format_stat_html(savior, scale=1.0):
+    """인자 고르기 화면용 여정 스탯 우선순위 툴팁 HTML (데이터가 없으면 ''). 기준이 둘(디펜더)이면 좌우로 나눈다."""
+    rows = (savior or {}).get("statPriority") or []
     if not rows:
         return ""
     esc = _html.escape
-    px, small = P["px"], P["small"]
-    out = [jh_common.span("📊 여정 스탯 우선순위", COL_LOOSE_HEAD, small + 1, bold=True)]
-    for r in rows:
-        seq = []
-        for gi, group in enumerate(r.get("groups") or []):
-            if gi:
-                seq.append(jh_common.span("&nbsp;&gt;&nbsp;", COL_MUTED, px))
-            for si, stat in enumerate(group):
-                if si:
-                    seq.append(jh_common.span("&nbsp;=&nbsp;", COL_MUTED, px))
-                seq.append(jh_common.span(esc(stat), jh_common.COL_WHITE, px, bold=True))
-        label = jh_common.span(f"▌{esc(r['label'])}&nbsp;&nbsp;", COL_ALT, px, bold=True) if r.get("label") else ""
-        out.append(label + "".join(seq))
-        if r.get("note"):
-            out.append(jh_common.span(f"&nbsp;&nbsp;└ {esc(r['note'])}", COL_HINT, small))
-    if savior.get("statNote"):
-        out.append(jh_common.span(f"※ {esc(savior['statNote'])}", COL_HINT, small))
-    return '<div style="font-size:8px;">&nbsp;</div>' + "<br>".join(out)
+    px, small = max(10, round(15 * scale)), max(9, round(12 * scale))
+    head = (jh_common.span(f"📊 <b>{esc(savior.get('name') or '')}</b> 여정 스탯 우선순위", COL_ALT, px + 1) + "<br>"
+            + jh_common.span(esc(jh_common.savior_meta(savior)), COL_MUTED, small))
+    note = lambda r: ("<br>" + jh_common.span("└ " + esc(r["note"]), COL_HINT, small)) if r.get("note") else ""
+    if len(rows) > 1:
+        heads = [jh_common.span("▌" + esc(r.get("label") or ""), COL_ALT, px, bold=True) for r in rows]
+        body = jh_common.grid_table([("", [_stat_seq(r.get("groups"), px) + note(r) for r in rows])], heads=heads)
+    else:
+        body = _stat_seq(rows[0].get("groups"), px) + note(rows[0])
+    tail = (("<br>" + jh_common.span("※ " + esc(savior["statNote"]), COL_HINT, small)) if savior.get("statNote") else "")
+    return head + jh_common.spacer(6) + body + tail + jh_common.spacer(6) + jh_common.source_html(small)
 
 
-def format_reco_html(savior, scale=1.0, thumb_path=None, detail=0, content_w=None, show_stat=True):
+def format_reco_html(savior, scale=1.0, thumb_path=None, detail=0, content_w=None):
     """구원자 추천 아르카나 툴팁 HTML.
     thumb_path: arcanaId -> 캐시된 PNG 경로 함수(없으면 썸네일 없이 텍스트만).
     detail: 0 풀 레이아웃(썸네일 40px) / 1 썸네일 30px·간격 축소 / 2 글자 15->13px·썸네일 26px / 3 썸네일 제거(마지막 수단).
@@ -493,23 +532,20 @@ def format_reco_html(savior, scale=1.0, thumb_path=None, detail=0, content_w=Non
     P = _profile(detail, scale, bool(thumb_path), content_w)
     px, small = P["px"], P["small"]
     name = esc(savior.get("name") or "")
-    meta = " · ".join(x for x in (savior.get("subtitle"), ELEMENT_KO.get(savior.get("element"), savior.get("element")),
-                                   savior.get("className")) if x)
+    meta = jh_common.savior_meta(savior)
     if savior.get("unknown"):
         return (f'🃏 <b>{name}</b><br><span style="color:{COL_HINT}; font-size:{small}px;">'
                 '아직 추천 아르카나 데이터가 없습니다 (신규 구원자이거나 데이터 갱신 전)</span>')
     one_line = detail >= 1 or bool(savior.get("sets"))          # 넓은 모드(2세트)는 머리 줄을 한 줄로
     head = (f'<span style="font-size:{px + 1}px;">🃏 <b>{name}</b> 추천 아르카나</span>' + (" " if one_line else "<br>")
             + jh_common.span(esc(meta), COL_MUTED, small))
-    stat = stat_priority_html(savior, P) if show_stat else ""
-    foot = (stat + f'<div style="font-size:8px;">&nbsp;</div>'
-            + jh_common.span("출처: 스타세이비어 가이드(참고용, 절대적인 정답 아님)", COL_FOOT, small))
+    foot = jh_common.spacer(8) + jh_common.source_html(small)
     sets = savior.get("sets") or []
     if sets:
         return head + _grid_table(sets, thumb_path, P) + foot
     slots = savior.get("slots") or []
     if not any(slots):
-        return head + f'<br>{jh_common.span("등록된 추천 아르카나가 없습니다 (미정)", COL_HINT, small)}' + stat
+        return head + f'<br>{jh_common.span("등록된 추천 아르카나가 없습니다 (미정)", COL_HINT, small)}'
     if all((not sl) or all(o.get("common") for o in sl.get("options") or []) for sl in slots):
         return head + (f'<br>{jh_common.span("특정 추천 카드 없음 - 공용 아르카나로 자유롭게 편성", COL_COMMON, px)}{foot}')
     return head + _grid_table([{"label": "", "slots": slots, "alternatives": savior.get("alternatives") or []}], thumb_path, P) + foot
@@ -520,15 +556,15 @@ def format_candidates_html(matches, scale=1.0, thumb_path=None, detail=0):
     small = max(9, round(11 * scale))
     note = (f'<span style="color:{COL_WARN}; font-size:{small}px;">⚠️ 같은 이름 구원자가 {len(matches)}명입니다 '
             f'(부제를 읽지 못함) - 후보를 모두 표시합니다</span>')
-    return "<hr>".join([note] + [format_reco_html(s, scale, thumb_path, min(detail + 1, MAX_DETAIL), show_stat=False) for s in matches])
+    return "<hr>".join([note] + [format_reco_html(s, scale, thumb_path, min(detail + 1, MAX_DETAIL)) for s in matches])
 
 
-def format_html(matches, scale=1.0, thumb_path=None, detail=0, content_w=None, show_stat=True):
+def format_html(matches, scale=1.0, thumb_path=None, detail=0, content_w=None):
     if not matches:
         return ""
     try:
         if len(matches) == 1:
-            return format_reco_html(matches[0], scale, thumb_path, detail, content_w, show_stat)
+            return format_reco_html(matches[0], scale, thumb_path, detail, content_w)
         return format_candidates_html(matches, scale, thumb_path, detail)
     except Exception:
         return ""

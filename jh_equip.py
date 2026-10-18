@@ -11,6 +11,7 @@ import time
 
 import jh_common
 import jh_savior
+import jh_seticons
 
 # 클라이언트 영역 비율 (스크린샷 2장으로 보정: tests/test_equip.py). 머리글은 jh_savior 의 savior_header 영역을 그대로 쓴다.
 EQUIP_REGIONS = {
@@ -28,12 +29,15 @@ LOST = 3                         # 연속으로 못 읽으면 해제
 NOREAD_LOST = 4
 SCAN_SEC = 1.0
 TOOLTIP_TOP_FRAC = 0.20
+WIDE_TOP_FRAC = 0.34            # 디펜더(퓨어탱커/공격탱커 좌우): 레벨·전투력 숫자(~0.32) 아래
+WIDE_X_FRAC = 0.02
+WIDE_W_FRAC = 0.50
+ICON_H = 15                    # 세트 아이콘 높이(px, 배율 전)
 TOOLTIP_X_FRAC = 0.30            # 좌우 화살표(0.26 / 0.59) 사이, 우측 장비 패널(0.74~) 왼쪽
 TOOLTIP_MAX_W_FRAC = 0.28
 BASE_W = 430
 
-COL_LABEL, COL_VALUE, COL_NOTE, COL_HEAD, COL_FOOT = "#9fe8ff", jh_common.COL_WHITE, "#90a4ae", "#ffd27f", "#78909c"
-COL_DIVIDER = jh_savior.COL_DIVIDER
+COL_LABEL, COL_VALUE, COL_NOTE, COL_HEAD = jh_common.COL_CYAN, jh_common.COL_WHITE, jh_common.COL_GRAY, jh_common.COL_GOLD
 LABEL_W = 68                    # 항목 이름 칸 폭(px): '추천 세트' 가 두 줄로 꺾이지 않는 정도(글꼴이 달라도 넉넉하게)
 
 
@@ -161,60 +165,118 @@ def usable(matches):
     return bool(s.get("equipment")) and not s.get("unknown")
 
 
-def geometry(rect, scale):
-    """-> (유효 배율, 툴팁 가로 px, 안쪽 폭 px)"""
-    eff = scale * jh_savior.window_k(rect["height"])
-    w = max(220, min(round(BASE_W * eff), int(TOOLTIP_MAX_W_FRAC * rect["width"])))
-    return eff, w, w - 36
+def _tank_of(note):
+    """항목 메모로 운영 방식을 가른다: 'attack' 공격탱커 / 'pure' 퓨어탱커 / 'ex' EX 전용 / None 알 수 없음."""
+    n = note or ""
+    if "공격탱커" in n:
+        return "attack"
+    if "퓨어탱커" in n:
+        return "pure"
+    return "ex" if "EX" in n else None
 
 
-def _rows(equipment):
-    """장비 데이터 -> [(항목 이름, [(값, 메모)...], [아래 메모...])]  (값이 없는 항목은 뺀다)"""
-    out = []
-    for label, key in (("목걸이", "necklace"), ("반지", "ring"), ("추천 세트", "sets")):
-        vals = [(o["value"], o.get("note") or "") for o in equipment.get(key) or []]
-        if vals:
-            out.append((label, vals, equipment.get("setNotes") or [] if key == "sets" else []))
-    pot = equipment.get("potential")
-    if pot:
-        lines = [x.strip() for x in pot.split("\n") if x.strip()]
-        main = [(x, "") for x in lines if not x.startswith("※")]
-        out.append(("잠재력", main, [x for x in lines if x.startswith("※")]))
+def split_by_tank(equipment):
+    """디펜더 장비 -> {'necklace'|'ring'|'sets': (퓨어 항목들, 공격 항목들, EX 전용 항목들)}. 가를 수 없는 항목이 있으면 None(한 줄 목록으로 표시)."""
+    out = {}
+    for key in ("necklace", "ring", "sets"):
+        groups = {"pure": [], "attack": [], "ex": []}
+        for o in (equipment or {}).get(key) or []:
+            kind = _tank_of(o.get("note"))
+            if kind is None:
+                return None
+            groups[kind].append(o)
+        if not (groups["pure"] or groups["attack"]):
+            return None
+        out[key] = (groups["pure"], groups["attack"], groups["ex"])
     return out
 
 
-def format_html(savior, scale=1.0, detail=0):
-    """장비 추천 툴팁 HTML (장비 데이터가 없으면 ''). detail 0 보통 / 1 한 단계 작게."""
+def two_columns(savior):
+    """퓨어탱커/공격탱커를 좌우로 보여 줄 수 있는 디펜더인가."""
+    return bool((savior or {}).get("sets")) and split_by_tank((savior or {}).get("equipment")) is not None
+
+
+def wide(matches):
+    return usable(matches) and two_columns(matches[0])
+
+
+def geometry(rect, scale, is_wide=False):
+    """-> (유효 배율, 툴팁 가로 px, 안쪽 폭 px). 좌우 2열은 창 너비의 절반."""
+    eff = scale * jh_savior.window_k(rect["height"])
+    if is_wide:
+        w = round(rect["width"] * WIDE_W_FRAC)
+    else:
+        w = max(220, min(round(BASE_W * eff), int(TOOLTIP_MAX_W_FRAC * rect["width"])))
+    return eff, w, w - 36
+
+
+def _set_html(value, px, icon_path, th):
+    """'공격(4) + 투지(2)' -> 세트 아이콘 + 글자 (아이콘이 없으면 글자만)"""
+    esc = _html.escape
+    parts = jh_seticons.split_set(value)
+    if not parts:
+        return jh_common.span(esc(value), COL_VALUE, px, bold=True)
+    out = []
+    for i, (name, count, suffix) in enumerate(parts):
+        if i:
+            out.append(jh_common.span("&nbsp;+&nbsp;", COL_NOTE, px))
+        icon = jh_common.img_tag(icon_path(name), th) if (icon_path and name in jh_seticons.SET_NAMES) else ""
+        text = f"{name}({count})" + (f" {suffix}" if suffix else "")
+        out.append(icon + ("&nbsp;" if icon else "") + jh_common.span(esc(text), COL_VALUE, px, bold=True))
+    return "".join(out)
+
+
+def _item_html(item, px, small, is_set, icon_path, th):
+    value = _set_html(item["value"], px, icon_path, th) if is_set else jh_common.span(_html.escape(item["value"]), COL_VALUE, px, bold=True)
+    note = item.get("note")
+    return value + (("<br>" + jh_common.span("&nbsp;&nbsp;" + _html.escape(note), COL_NOTE, small)) if note else "")
+
+
+def _potential_html(equipment, px, small):
+    lines = [x.strip() for x in (equipment.get("potential") or "").split("\n") if x.strip()]
+    if not lines:
+        return ""
+    return "<br>".join(jh_common.span(_html.escape(x), COL_NOTE if x.startswith("※") else COL_VALUE, small if x.startswith("※") else px,
+                                      bold=not x.startswith("※")) for x in lines)
+
+
+def format_html(savior, scale=1.0, detail=0, icon_path=None):
+    """장비 추천 툴팁 HTML (장비 데이터가 없으면 ''). detail 0 보통 / 1 한 단계 작게. icon_path: 세트 이름 -> 캐시된 PNG 경로 함수."""
     eq = (savior or {}).get("equipment")
     if not eq:
         return ""
     esc = _html.escape
     px = max(10, round((14 if detail == 0 else 13) * scale))
     small = max(9, round((12 if detail == 0 else 11) * scale))
-    name = esc(savior.get("name") or "")
-    meta = " · ".join(x for x in (savior.get("subtitle"), jh_savior.ELEMENT_KO.get(savior.get("element"), savior.get("element")),
-                                   savior.get("className")) if x)
-    head = (jh_common.span(f"🛡️ <b>{name}</b> PVE 추천 장비", COL_HEAD, px + 1) + "<br>"
-            + jh_common.span(esc(meta) + " · 작전·회랑·코스모 게이트 기준", COL_NOTE, small))
-    div = f'<tr><td colspan="2" style="background-color:{COL_DIVIDER}; font-size:1px;">&nbsp;</td></tr>'
-    trs = []
-    rows = _rows(eq)
-    for i, (label, vals, notes) in enumerate(rows):
-        cell = []
-        for v, n in vals:
-            line = jh_common.span(esc(v), COL_VALUE, px, bold=True)
-            if n:
-                line += "<br>" + jh_common.span("&nbsp;&nbsp;" + esc(n), COL_NOTE, small)
-            cell.append(line)
-        body = "<br>".join(cell) + "".join("<br>" + jh_common.span(esc(n), COL_NOTE, small) for n in notes)
-        trs.append(f'<tr><td valign="top" width="{LABEL_W}" style="white-space:nowrap;">{jh_common.span(esc(label), COL_LABEL, small, bold=True)}</td>'
-                   f'<td valign="top">{body}</td></tr>')
-        if i < len(rows) - 1:
-            trs.append(div)
-    table = '<table cellspacing="0" cellpadding="3" width="100%">' + "".join(trs) + "</table>"
-    foot = jh_common.span("출처: 스타세이비어 가이드(참고용, 절대적인 정답 아님)", COL_FOOT, small)
-    return head + '<div style="font-size:6px;">&nbsp;</div>' + table + '<div style="font-size:6px;">&nbsp;</div>' + foot
+    th = max(10, round((ICON_H if detail == 0 else ICON_H - 2) * scale)) if icon_path else 0
+    head = (jh_common.span(f"🛡️ <b>{esc(savior.get('name') or '')}</b> PVE 추천 장비", COL_HEAD, px + 1) + "<br>"
+            + jh_common.span(esc(jh_common.savior_meta(savior, "작전·회랑·코스모 게이트 기준")), COL_NOTE, small))
+    label = lambda t: jh_common.span(esc(t), COL_LABEL, small, bold=True)
+    cat = (("목걸이", "necklace", False), ("반지", "ring", False), ("추천 세트", "sets", True))
+    heads, rows = None, []
+    groups = split_by_tank(eq) if savior.get("sets") else None
+    if groups:                                                       # 디펜더: 퓨어탱커 | 공격력 탱커 좌우, EX 전용은 아래 줄
+        heads = [jh_common.span("▌퓨어탱커", jh_common.COL_GOLD, px, bold=True), jh_common.span("▌공격력 탱커", jh_common.COL_GOLD, px, bold=True)]
+        for title, key, is_set in cat:
+            pure, attack, ex = groups[key]
+            cell = lambda items: "<br>".join(_item_html(o, px, small, is_set, icon_path, th) for o in items) or jh_common.span("-", COL_NOTE, px)
+            rows.append((label(title), [cell(pure), cell(attack)]))
+            if ex:
+                rows.append(("", [jh_common.span("EX&nbsp;&nbsp;", COL_LABEL, small, bold=True) + cell(ex)]))
+        if eq.get("setNotes"):
+            rows.append(("", ["<br>".join(jh_common.span(esc(n), COL_NOTE, small) for n in eq["setNotes"])]))
+    else:
+        for title, key, is_set in cat:
+            items = eq.get(key) or []
+            if items:
+                body = "<br>".join(_item_html(o, px, small, is_set, icon_path, th) for o in items)
+                if key == "sets" and eq.get("setNotes"):
+                    body += "".join("<br>" + jh_common.span(esc(n), COL_NOTE, small) for n in eq["setNotes"])
+                rows.append((label(title), [body]))
+    if eq.get("potential"):
+        rows.append((label("잠재력"), [_potential_html(eq, px, small)]))
+    return head + jh_common.spacer(6) + jh_common.grid_table(rows, LABEL_W, heads, pad=3) + jh_common.spacer(6) + jh_common.source_html(small)
 
 
-def format_matches_html(matches, scale=1.0, detail=0):
-    return format_html(matches[0], scale, detail) if usable(matches) else ""
+def format_matches_html(matches, scale=1.0, detail=0, icon_path=None):
+    return format_html(matches[0], scale, detail, icon_path) if usable(matches) else ""

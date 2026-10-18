@@ -375,7 +375,7 @@ class SettingsDialog(QDialog):
         self.chk_reco = self._check(lay, t("🃏 구원자 추천 아르카나"), "show_savior_reco",
                                     t("아르카나 편성 화면에서 추천·대체 카드를 보여줘요.\n카드 고르기 화면에서는 자동으로 숨겨요."))
         self.chk_stat = self._check(lay, t("📊 여정 스탯 우선순위"), "show_savior_stat",
-                                    t("구원자 추천 아르카나 아래에 힘·체력 같은 스탯 우선순위를 보여줘요.\n데이터가 없는 구원자는 표시하지 않아요."))
+                                    t("인자 고르기 화면에서 구원자의 힘·체력 같은 스탯 우선순위를 보여줘요.\n데이터가 없는 구원자는 표시하지 않아요."))
         self.chk_equip = self._check(lay, t("🛡️ 구원자 PVE 추천 장비"), "show_savior_equip",
                                      t("구원자 장비 화면에서 목걸이·반지·세트·잠재력 추천을 보여줘요.\n데이터가 없는 구원자는 표시하지 않아요."))
 

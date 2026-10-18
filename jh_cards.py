@@ -195,11 +195,19 @@ class CardStore:
         self._logged = set()            # 실패 원인을 이미 로그에 남긴 카드(반복 로그 방지)
         self._lock = threading.Lock()
 
+    REF_W = _REF_W                      # 캐시에 저장하는 이미지 폭 (하위 클래스에서 바꾼다)
+
+    def _file(self, aid):
+        return f"{int(aid)}.png"
+
+    def _url(self, aid):
+        return CARD_URL.format(id=int(aid))
+
     def _path(self, aid):
-        return os.path.join(self.cache_dir, f"{int(aid)}.png")
+        return os.path.join(self.cache_dir, self._file(aid))
 
     def _fetch(self, aid):
-        req = urllib.request.Request(CARD_URL.format(id=int(aid)),
+        req = urllib.request.Request(self._url(aid),
                                      headers={"User-Agent": USER_AGENT})
         t0 = time.monotonic()
         chunks, got = [], 0
@@ -223,12 +231,12 @@ class CardStore:
                 pil = Image.open(io.BytesIO(data)).convert("RGB")
                 img = cv2.cvtColor(np.asarray(pil), cv2.COLOR_RGB2BGR)
             h, w = img.shape[:2]
-            img = cv2.resize(img, (_REF_W, max(1, int(h * _REF_W / w))), interpolation=cv2.INTER_AREA)
+            img = cv2.resize(img, (self.REF_W, max(1, int(h * self.REF_W / w))), interpolation=cv2.INTER_AREA)
         except Exception as e:
             raise LocalImageError(f"decode failed ({type(e).__name__})") from e
         try:
             os.makedirs(self.cache_dir, exist_ok=True)
-            fd, tmp = tempfile.mkstemp(suffix=".tmp.png", prefix=f"{int(aid)}.", dir=self.cache_dir)   # 스레드마다 고유 (경합 방지)
+            fd, tmp = tempfile.mkstemp(suffix=".tmp.png", prefix=f"{self._file(aid)}.", dir=self.cache_dir)   # 스레드마다 고유 (경합 방지)
             os.close(fd)
         except Exception as e:
             raise LocalImageError(f"save failed ({type(e).__name__})") from e
