@@ -1975,7 +1975,7 @@ class MouseHoverManager(QWidget):
         x0, x1 = rect["left"] + int(rect["width"] * l), rect["left"] + int(rect["width"] * r)
         y0, y1 = rect["top"] + int(rect["height"] * t), rect["top"] + int(rect["height"] * b)
         if x0 <= pos.x() <= x1 and y0 <= pos.y() <= y1:
-            return jh_schedule.format_schedule_html(self.schedule_row, self.settings["tooltip_font_scale"])
+            return jh_schedule.format_schedule_html(self.schedule_row, self.settings["tooltip_font_scale"], getattr(self, "db_event_cache", None))
         return None
 
     def on_arcana_screen_changed(self, on):
@@ -2328,7 +2328,7 @@ class MouseHoverManager(QWidget):
             a.triggered.connect(lambda _, v=val: self.on_language_selected(v))
             g3.addAction(a)
             lang_menu.addAction(a)
-        for text, key in ((tr("잠재력/버프 설명 표시"), "show_info"), (tr("📅 일정 미리보기 (좌측 상단 날짜에 마우스)"), "show_schedule"),
+        for text, key in ((tr("잠재력/버프 설명 표시"), "show_info"), (tr("📅 일정 미리보기 [베타] (좌측 상단 날짜에 마우스)"), "show_schedule"),
                           (tr("🃏 구원자 추천 아르카나 (여정 시작 화면에서 표시)"), "show_savior_reco"),
                           (tr("⚡ 저사양 모드 (OCR 주기 늘림)"), "low_spec_mode"),
                           (tr("상단바 위치 고정"), "status_badge_locked"),

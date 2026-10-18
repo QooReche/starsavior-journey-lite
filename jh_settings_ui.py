@@ -359,7 +359,7 @@ class SettingsDialog(QDialog):
         self._desc(lay, t("체크한 난이도의 수치는 툴팁에서 빼요."))
 
         self._section(lay, "🧩", t("기능"), "#a29bfe")
-        self.chk_sched = self._check(lay, t("📅 일정 미리보기"), "show_schedule",
+        self.chk_sched = self._check(lay, t("📅 일정 미리보기 [베타]"), "show_schedule",
                                      t("게임 좌측 상단 날짜에 마우스를 올리면 이번 턴 일정을 보여줘요."))
         self.chk_reco = self._check(lay, t("🃏 구원자 추천 아르카나"), "show_savior_reco",
                                     t("아르카나 편성 화면에서 추천·대체 카드를 보여줘요.\n카드 고르기 화면에서는 자동으로 숨겨요."))

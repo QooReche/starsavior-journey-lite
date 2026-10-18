@@ -152,6 +152,60 @@ def upcoming(row, limit=3):
     return out
 
 
+_COST_RE = re.compile(r"(사용\s*\d|필요$|^or$|^없음$|^(이지|노말|하드|쉬움|보통|어려움)\s)", re.I)
+_STAT_RE = re.compile(r"^(힘|체력|인내|집중|보호|스태미나|컨디션|오래된 (동전|주화))\s*[+-]")
+_PROMO_PREFIX = re.compile(r"^\([^)]*\)\s*")
+MAX_KEY_REWARDS = 3
+
+
+_IDX = (None, -1, {})        # (리스트 id, 길이, 색인) 마지막 한 번만 기억
+
+
+def _event_index(events):
+    """이벤트 캐시 -> {cleanTitle: event}. 같은 리스트면 다시 만들지 않는다."""
+    global _IDX
+    if not events:
+        return {}
+    if _IDX[0] != id(events) or _IDX[1] != len(events):
+        _IDX = (id(events), len(events), {e.get("cleanTitle"): e for e in events if not e.get("isArcana")})
+    return _IDX[2]
+
+
+def key_rewards(event, limit=MAX_KEY_REWARDS):
+    """이벤트의 선택지 보상 중 '주요 보상'만 요약: 비용/요구/난이도/스탯 줄은 빼고 아이템·버프·유물을 앞에, 잠재력 포인트를 뒤에."""
+    keys, poten = [], []
+    for o in event.get("options") or []:
+        for v in (o.get("variants") or [o])[:1]:
+            for line in (v.get("reward") or "").split("\n"):
+                line = re.sub(r"^\[(SUCCESS|FAIL)\]\s*", "", line.strip())
+                line = re.sub(r"^(이지|노말|하드|Easy|Normal|Hard)\s+", "", line)
+                if not line or _COST_RE.search(line) or _STAT_RE.match(line):
+                    continue
+                if line.startswith("잠재력 포인트"):
+                    if line not in poten:
+                        poten.append(line)
+                elif line not in keys:
+                    keys.append(line)
+    return (keys + poten[:1])[:limit]
+
+
+def _reward_line(contents, events, size):
+    """고정 이벤트 항목 아래에 붙일 '주요 보상' 줄 HTML 목록"""
+    idx = _event_index(events)
+    out = []
+    if not idx:
+        return out
+    import jh_db
+    for c in contents:
+        ev = idx.get(jh_db.clean_title(_PROMO_PREFIX.sub("", c)))
+        kr = key_rewards(ev) if ev else []
+        if kr:
+            who = f"{_PROMO_PREFIX.sub('', c)}: " if len(contents) > 1 else ""        # 한 줄에 이벤트가 여럿이면 이름을 붙인다
+            out.append(f'<span style="color:#a5d6a7; font-size:{size}px;">&nbsp;&nbsp;└ {_html.escape(who)}주요 보상: </span>'
+                       f'<span style="color:#e8f5e9; font-size:{size}px;">{_html.escape(" · ".join(kr))}</span>')
+    return out
+
+
 def _line(ev, size):
     region, occur, typ, contents = ev
     color, label = OCCUR_STYLE.get(occur, ("#b0bec5", occur))
@@ -162,20 +216,24 @@ def _line(ev, size):
             f'<span style="color:#90a4ae; font-size:{size}px;">({_html.escape(typ)})</span>')
 
 
-def format_schedule_html(row, scale=1.0):
-    """현재 턴의 일정 툴팁 HTML."""
+def format_schedule_html(row, scale=1.0, events=None):
+    """현재 턴의 일정 툴팁 HTML. events(이벤트 캐시)가 있으면 고정 이벤트 아래에 주요 보상을 붙인다."""
     esc = _html.escape
     px = max(10, round(13 * scale))
     small = max(9, round(11 * scale))
     turn, time_label, title, befores, currents, afters = row
     goal = _next_turn_to_goal(row)
-    head = f'📅 <b>{esc(time_label)}</b>'
+    head = f'📅 <b>{esc(time_label)}</b> <span style="color:#ffcc00; font-size:{small}px;">[베타]</span>'
     sub = f'{esc(title)} · 턴 {turn}/{TOTAL_TURNS}' + (f' · 평가전까지 {goal}턴' if goal else '')
     parts = [head + f'<br><span style="color:#90a4ae; font-size:{small}px;">{sub}</span>']
     for label, evs in (("이번 턴 훈련 전", befores), ("이번 턴", currents), ("이번 턴 훈련 후", afters)):
         if evs:
-            parts.append(f'<span style="color:#9fe8ff; font-size:{small}px;"><b>{label}</b></span><br>'
-                         + "<br>".join(_line(e, px) for e in evs))
+            rows = []
+            for e in evs:
+                rows.append(_line(e, px))
+                if e[1] == "고정":
+                    rows.extend(_reward_line(e[3], events, small))
+            parts.append(f'<span style="color:#9fe8ff; font-size:{small}px;"><b>{label}</b></span><br>' + "<br>".join(rows))
     if not (befores or currents or afters):
         parts.append(f'<span style="color:#888888; font-size:{small}px;">이번 턴에는 알려진 고정 일정이 없습니다</span>')
     nxt = upcoming(row)

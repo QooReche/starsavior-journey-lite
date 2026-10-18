@@ -86,3 +86,30 @@ def test_ocr_reads_real_game_date_crops(path):
             got = js.parse_date(text)
             break
     assert got == want.replace("월", "월 ")
+
+
+# ---- 일정 툴팁: 베타 표시 + 고정 이벤트 주요 보상 (2026-10-18) ----
+def _ev(title, rewards):
+    import jh_db
+    return {"rawTitle": title, "cleanTitle": jh_db.clean_title(title), "isArcana": False,
+            "options": [{"choice": "a", "reward": r, "variants": [], "info": []} for r in rewards]}
+
+
+def test_key_rewards_skips_costs_stats_and_difficulty():
+    ev = _ev("테스트", ["이지 오래된 동전 사용 50\n스태미나 +15 or 스태미나 +20\n정체불명의 유물\nor\n노말 보호 70 필요\n잠재력 포인트 +15", "없음"])
+    assert js.key_rewards(ev) == ["정체불명의 유물", "잠재력 포인트 +15"]
+
+
+def test_schedule_tooltip_is_beta_and_shows_key_rewards_for_fixed_events():
+    events = [_ev("미궁 탐사", ["정체불명의 유물\n잠재력 포인트 +15"])]
+    row = js.find_turn("7월 중순")
+    html = js.format_schedule_html(row, 1.0, events)
+    assert "[베타]" in html and "주요 보상" in html and "정체불명의 유물" in html
+    assert "주요 보상" not in js.format_schedule_html(row)                      # 이벤트 캐시가 없으면 기존 표시 그대로
+
+
+def test_multiple_contents_get_event_name_prefix_and_random_events_have_no_rewards():
+    events = [_ev("토벌의 전리품", ["아이템A"]), _ev("리세트의 유혹", ["아이템B"]), _ev("여가 시간", ["아이템C"])]
+    html = js.format_schedule_html(js.find_turn("6월 하순"), 1.0, events)
+    assert "토벌의 전리품: " in html and "리세트의 유혹: " in html
+    assert "아이템C" not in js.format_schedule_html(js.find_turn("3월 중순"), 1.0, events)   # 랜덤 이벤트는 보상 줄 없음
