@@ -174,3 +174,31 @@ def test_thumb_thread_continues_past_404(tmp_path, monkeypatch):
     monkeypatch.setattr(jh_cards, "cached_path", lambda aid, store=None: os.path.exists(st._path(aid)) and st._path(aid))
     jhm.ThumbThread([1, 2, 3, 4]).run()
     assert st.calls == 4                                     # 404 는 서킷에 안 들어가므로 일괄 다운로드가 계속됨
+
+
+# ---- 한글 경로에 실제로 저장되는지 (cv2.imwrite 는 비 ASCII 경로에 못 쓴다: 2026-10-18 실사용에서 발견) ----
+def test_card_image_is_saved_into_non_ascii_folder(tmp_path, monkeypatch):
+    import io
+    import cv2
+    import numpy as np
+    ok, buf = cv2.imencode(".png", np.full((60, 30, 3), 120, np.uint8))
+    assert ok
+    data = buf.tobytes()
+
+    class Resp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(jh_cards.urllib.request, "urlopen", lambda req, timeout=None: Resp(data))
+    folder = tmp_path / "바탕 화면" / "여정 도우미" / "data" / "cache" / "cards"      # 실제 배포 환경처럼 한글 + 공백 경로
+    st = jh_cards.CardStore(str(folder), sleep=0)
+    img = st._fetch(7105601)                                                            # 가짜 네트워크, 저장은 진짜
+    assert img is not None
+    saved = folder / "7105601.png"
+    assert saved.exists() and saved.stat().st_size > 0
+    again = cv2.imdecode(np.fromfile(str(saved), np.uint8), cv2.IMREAD_COLOR)
+    assert again is not None and again.shape[1] == 176                                  # 폭 176 으로 줄여 저장됨
+    assert not [p for p in folder.iterdir() if p.name.endswith(".tmp.png")]            # 임시 파일 정리됨

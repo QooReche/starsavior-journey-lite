@@ -217,8 +217,11 @@ class CardStore:
         except Exception as e:
             raise LocalImageError(f"save failed ({type(e).__name__})") from e
         try:
-            if not cv2.imwrite(tmp, img):
-                raise LocalImageError("imwrite failed")
+            # cv2.imwrite 는 한글 등 비 ASCII 경로에 저장하지 못한다(읽기용 np.fromfile+imdecode 와 같은 이유). imencode+tofile 로 저장한다.
+            ok, buf = cv2.imencode(".png", img)
+            if not ok:
+                raise LocalImageError("png encode failed")
+            buf.tofile(tmp)
             os.replace(tmp, self._path(aid))
         except OSError as e:
             raise LocalImageError(f"save failed ({type(e).__name__})") from e
