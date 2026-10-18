@@ -45,6 +45,17 @@ def test_wrong_candidate_set_is_none(store):
     assert jc.identify(region("bird"), [BUGUL], store)[0] is None
 
 
+def test_soup_card_in_shifted_ui_position(store):
+    """실기 2026-10-18(1592x891 창): 카드가 기준 위치보다 약 8px 왼쪽·24px 위 -> 예전 +-2px 탐색은 0.28 대 0.24 로 오답 후보가 앞섰다."""
+    aid, score, margin = jc.identify(region("soup"), [7101101, 7105501], store)
+    assert aid == 7105501 and score > 0.6 and margin > 0.3
+    assert jc.identify(region("soup"), [7105501, 7101101], store)[0] == 7105501
+    for f in (0.7, 1.4):                                    # 창이 작거나 커도(해상도 차이) 밀린 카드를 찾는다
+        r = cv2.resize(region("soup"), None, fx=f, fy=f, interpolation=cv2.INTER_LINEAR)
+        assert jc.identify(r, [7101101, 7105501], store)[0] == 7105501
+    assert jc.identify(region("soup"), [BUGUL, GONGNYEO], store)[0] is None         # 후보에 없으면 넓은 탐색도 채택하지 않는다
+
+
 def test_scale_robustness(store):
     for f in (0.8, 1.25):
         r = cv2.resize(region("head"), None, fx=f, fy=f, interpolation=cv2.INTER_LINEAR)
@@ -106,9 +117,9 @@ def test_strong_margin_accepts_lower_score(monkeypatch):
     """실기: 정답이 뚜렷(격차 0.28)한데 점수 0.37 이라 식별 실패하던 경우를 채택한다."""
     import numpy as np
     img = np.zeros((10, 10, 3), np.uint8)
-    monkeypatch.setattr(jc, "score_candidates", lambda r, ids, store=None: {1: 0.37, 2: 0.09})
+    monkeypatch.setattr(jc, "score_candidates", lambda r, ids, store=None, wide=False: {1: 0.37, 2: 0.09})
     assert jc.identify(img, [1, 2])[0] == 1
-    monkeypatch.setattr(jc, "score_candidates", lambda r, ids, store=None: {1: 0.37, 2: 0.25})   # 격차 작음 -> 거부
+    monkeypatch.setattr(jc, "score_candidates", lambda r, ids, store=None, wide=False: {1: 0.37, 2: 0.25})   # 격차 작음 -> 거부
     assert jc.identify(img, [1, 2])[0] is None
-    monkeypatch.setattr(jc, "score_candidates", lambda r, ids, store=None: {1: 0.25, 2: 0.01})   # 점수 너무 낮음 -> 거부
+    monkeypatch.setattr(jc, "score_candidates", lambda r, ids, store=None, wide=False: {1: 0.25, 2: 0.01})   # 점수 너무 낮음 -> 거부
     assert jc.identify(img, [1, 2])[0] is None

@@ -68,3 +68,9 @@ def test_route_choice_names_exist_in_bundled_v2_seed():
     ev = json.load(open(base, encoding="utf-8"))["훈련의 방향성"][0]
     names = [c["name"]["ko-KR"] for c in ev["choices"]]
     assert set(names) == set(jh_relic.ROUTES)                                   # DB 가 선택지를 바꾸면 이 테스트가 알려 준다
+
+
+def test_codes_are_in_a_table_so_wrapped_text_stays_aligned():
+    html = jh_relic.section(OPT("공격에 도움이 되는 응원"))
+    assert html.count("<table") == 1 and html.count("<tr>") >= 5              # 코드 칸 + 설명 칸, 행 사이 구분선
+    assert jh_relic._COL_DIVIDER in html                                        # 구분선 색은 구원자 툴팁과 같은 값

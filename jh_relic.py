@@ -8,6 +8,12 @@
 import html as _html
 import re
 
+try:
+    from jh_savior import COL_DIVIDER as _COL_DIVIDER      # 구분선 색은 구원자 툴팁과 한 곳(공용 스타일)
+except Exception:
+    _COL_DIVIDER = "#26323a"
+CODE_W = 34                                                 # 코드 칸 폭(px): XX1 이 한 줄에 들어가는 정도
+
 # 선택지 이름 -> [(코드, 효과 요약)]. 번호가 붙는 AX1~8 등은 '의뢰토벌 증거품 n호'로 정해지므로 여기서는 알파벳만 쓴다.
 ROUTES = {
     "공격에 도움이 되는 응원": [
@@ -62,6 +68,20 @@ def recommend_lines(route, savior):
     return out
 
 
+def _table(rows, small, col_head, col_body):
+    """[(코드, 설명)] -> 코드 칸 + 설명 칸 표. 설명이 길어 줄바꿈돼도 코드 칸 아래로 말려 들어가지 않고, 행 사이에 구분선(구원자 툴팁과 같은 색)."""
+    esc = _html.escape
+    div = (f'<tr><td colspan="2" style="background-color:{_COL_DIVIDER}; font-size:1px;">&nbsp;</td></tr>')
+    trs = []
+    for i, (c, d) in enumerate(rows):
+        head = f'<span style="color:{col_head}; font-size:{small}px;"><b>{esc(c)}</b></span>' if c else ""
+        trs.append(f'<tr><td valign="top" width="{CODE_W if c else 1}">{head}</td>'
+                   f'<td valign="top"><span style="color:{col_body}; font-size:{small}px;">{esc(d)}</span></td></tr>')
+        if i < len(rows) - 1:
+            trs.append(div)
+    return '<table cellspacing="0" cellpadding="2" width="100%">' + "".join(trs) + "</table>"
+
+
 def section(option, scale=1.0, detail=0, savior=None):
     """선택지 툴팁 끝에 붙일 HTML (해당 선택지가 아니면 빈 문자열)"""
     route = route_for(option)
@@ -75,17 +95,13 @@ def section(option, scale=1.0, detail=0, savior=None):
                 f' <span style="color:#ffffff; font-size:{max(10, round(14 * scale))}px;"><b>{esc(codes)}</b></span>')
     if detail >= 1:
         return out
-    lines = []
-    for c, d in route:
-        lines.append(f'<span style="color:#9fe8ff; font-size:{small}px;"><b>{esc(c)}</b></span>'
-                     f'<span style="color:#cfd8dc; font-size:{small}px;"> {esc(d)}</span>')
-    out += "<br>" + "<br>".join(lines)
+    out += _table([(c, d) for c, d in route], small, "#9fe8ff", "#cfd8dc")
     sv = savior if savior is not None else _savior
     rec = recommend_lines(route, sv) if sv else []
     if rec:
         who = f'{sv.get("name", "")}({sv.get("subtitle", "")})' if sv.get("subtitle") else sv.get("name", "")
-        out += (hr + f'<span style="color:#a5d6a7; font-size:{small}px;"><b>⭐ {esc(who)} 추천</b></span><br>'
-                + "<br>".join(f'<span style="color:#e8f5e9; font-size:{small}px;">{esc(x)}</span>' for x in rec)
+        out += (hr + f'<span style="color:#a5d6a7; font-size:{small}px;"><b>⭐ {esc(who)} 추천</b></span>'
+                + _table([("", x) for x in rec], small, "#a5d6a7", "#e8f5e9")
                 + f'<br><span style="color:#90a4ae; font-size:{max(9, small - 1)}px;">{esc(HO_LEGEND)}</span>')
     out += hr + f'<span style="color:#ffd27f; font-size:{small}px;">{esc(TIP)}</span>'
     return out

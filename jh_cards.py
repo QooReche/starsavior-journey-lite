@@ -43,8 +43,16 @@ CARD_QUAD_FRAC = tuple((x / _REGION_REF[0], y / _REGION_REF[1]) for x, y in _QUA
 # 정규화 아트 크기 / 프레임 안쪽 여백(비율)
 _W, _H = 52, 96
 _INSET_X, _INSET_Y = 0.09, 0.06
-# 위치 지터 탐색(정규화 영역 px) - UI 스케일/반올림 오차 흡수
-_JITTER = (-2.0, 0.0, 2.0)
+# 위치·크기 탐색(영역 130x160 기준 px, 배율) - UI 스케일/반올림 오차와 창 비율에 따른 카드 위치 이동을 흡수.
+# 실기(2026-10-18, 1592x891 창): 기준(1616x939)보다 카드가 약 8px 왼쪽·24px 위에 있어 +-2px 탐색으로는 점수 0.28(오답 후보가 더 높음) -> 넓게 훑으면 0.78
+_DX = tuple(range(-16, 9, 4))
+_DY = tuple(range(-36, 9, 4))
+_SCALES = (0.9, 1.0, 1.1)
+_SEARCH = tuple((dx, dy, sc) for sc in _SCALES for dx in _DX for dy in _DY)
+_NARROW = tuple((dx, dy, 1.0) for dx in (-2.0, 0.0, 2.0) for dy in (-2.0, 0.0, 2.0))   # 1단계: 기준 위치 근처만
+# 2단계(넓은 탐색)는 오답 후보도 어긋난 위치에서 점수를 얻기 쉬워(공녀/부굴 사례 0.43) 더 엄격한 기준을 쓴다
+WIDE_MIN_SCORE = 0.60
+WIDE_MIN_MARGIN = 0.30
 
 # 판정 규칙
 MIN_SCORE = 0.50      # 1위 점수 하한
@@ -134,12 +142,16 @@ def _reference_descriptor(ref_bgr):
     return _descriptor(cv2.resize(art, (_W, _H), interpolation=cv2.INTER_AREA))
 
 
-def _warp_art(region_bgr, dx=0.0, dy=0.0):
+def _warp_art(region_bgr, dx=0.0, dy=0.0, scale=1.0):
     """영역 이미지에서 카드 아트 부분을 (_H x _W)로 편다(기울기 보정)."""
     rw, rh = _REGION_REF
     reg = cv2.resize(region_bgr, (int(rw), int(rh)), interpolation=cv2.INTER_AREA
                      if region_bgr.shape[1] >= rw else cv2.INTER_CUBIC)
-    q = np.float32([[x * rw + dx, y * rh + dy] for x, y in CARD_QUAD_FRAC])
+    q = np.float32([[x * rw, y * rh] for x, y in CARD_QUAD_FRAC])
+    if scale != 1.0:                                           # 카드 중심 기준 확대/축소
+        c = q.mean(axis=0)
+        q = c + (q - c) * scale
+    q = q + np.float32([dx, dy])
     tl, tr, br, bl = q
     # 프레임 안쪽 여백만큼 안으로
     def lerp(p, r, t):
@@ -153,8 +165,8 @@ def _warp_art(region_bgr, dx=0.0, dy=0.0):
                                borderMode=cv2.BORDER_REPLICATE)
 
 
-def extract_card_features(region_bgr, dx=0.0, dy=0.0):
-    return _descriptor(_warp_art(region_bgr, dx, dy))
+def extract_card_features(region_bgr, dx=0.0, dy=0.0, scale=1.0):
+    return _descriptor(_warp_art(region_bgr, dx, dy, scale))
 
 
 # ---------------------------------------------------------------- 카드 저장소
@@ -310,10 +322,10 @@ def _store():
 
 
 # ---------------------------------------------------------------- 식별
-def score_candidates(region_bgr, candidate_ids, store=None):
-    """{arcana_id: score} (참조를 못 구한 후보는 제외). 위치 지터 중 최고 점수 사용."""
+def score_candidates(region_bgr, candidate_ids, store=None, wide=False):
+    """{arcana_id: score} (참조를 못 구한 후보는 제외). 탐색 위치 중 최고 점수 사용(wide: 위치·크기를 넓게 탐색)."""
     store = store or _store()
-    feats = [extract_card_features(region_bgr, dx, dy) for dx in _JITTER for dy in _JITTER]
+    feats = [extract_card_features(region_bgr, dx, dy, sc) for dx, dy, sc in (_SEARCH if wide else _NARROW)]
     out = {}
     for aid in candidate_ids:
         ref = store.get_descriptor(aid)
@@ -340,18 +352,30 @@ def identify(card_bgr_crop, candidate_arcana_ids, store=None,
     if len(ids) > 1 and len(sc) < len(ids):
         # 참조 이미지를 하나라도 못 구했으면 남은 후보 하나를 그대로 채택하지 않는다 (호출 측은 전부 표시로 폴백)
         return None, max(sc.values()), 0.0
+    res = _decide(sc, min_score, min_margin)
+    if res[0] is not None:
+        LAST_SCORES.clear()
+        LAST_SCORES.update(sc)
+        return res
+    wsc = score_candidates(card_bgr_crop, ids, store, wide=True)      # 창 비율이 달라 카드가 밀린 경우 구제
+    wres = _decide(wsc, max(min_score, WIDE_MIN_SCORE), max(min_margin, WIDE_MIN_MARGIN), strong=False)
+    best_sc = wsc if wres[0] is not None or max(wsc.values()) > res[1] else sc
+    LAST_SCORES.clear()
+    LAST_SCORES.update(best_sc)
+    return wres if wres[0] is not None else res
+
+
+def _decide(sc, min_score, min_margin, strong=True):
+    """점수 dict -> (id | None, best, margin). strong: 격차가 매우 크면 점수 하한을 낮춘다(1단계 전용)."""
     ranked = sorted(sc.items(), key=lambda kv: kv[1], reverse=True)
     best_id, best = ranked[0]
     margin = best - ranked[1][1] if len(ranked) > 1 else best
-    LAST_SCORES.clear()
-    LAST_SCORES.update(sc)
-    strong = len(ranked) > 1 and margin >= STRONG_MARGIN
-    if best < (min(min_score, MIN_SCORE_STRONG) if strong else min_score):
+    is_strong = strong and len(ranked) > 1 and margin >= STRONG_MARGIN
+    if best < (min(min_score, MIN_SCORE_STRONG) if is_strong else min_score):
         return None, best, margin
     if len(ranked) > 1 and margin < min_margin:
         return None, best, margin
     return best_id, best, margin
-
 
 
 def identify_stable(grab, candidate_arcana_ids, store=None, need=2, max_tries=8, sleep=time.sleep, interval=0.25):
