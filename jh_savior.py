@@ -211,7 +211,17 @@ def replaced_target(note):
 
 # 글자 크기(px, scale 1.0 기준)와 썸네일 높이는 detail 단계마다 줄이되, 썸네일은 마지막 단계(3) 전까지 끝까지 유지한다.
 #  d0 풀 레이아웃 -> d1 썸네일 소형·간격 축소 -> d2 글자 15->13px -> d3 썸네일 제거(마지막 수단)
-COL_ALT, COL_MUTED, COL_NAME, COL_UNRES = "#ffd27f", "#90a4ae", "#ffffff", "#ffcc80"
+# 툴팁 색/구분선 상수 (한 곳에 모아 1세트·2세트가 같은 값을 쓴다)
+COL_ALT, COL_MUTED, COL_NAME, COL_UNRES = "#ffd27f", "#90a4ae", "#ffffff", "#ffcc80"     # 대체/소제목, 보조 글씨, 카드 이름, 해석 못 한 이름
+COL_NUM = "#00e5ff"            # 슬롯 번호
+COL_DIVIDER = "#26323a"        # 슬롯 사이 구분선 색
+DIVIDER_PX = 1                 # 구분선 두께
+COL_LOOSE_HEAD = "#9fe8ff"     # '그 밖의 대체' 소제목
+COL_EMPTY = "#78909c"          # '(비움)'
+COL_FOOT = "#78909c"           # 출처 문구
+COL_HINT = "#888888"           # 데이터 없음/미정 안내
+COL_WARN = "#ffcc00"           # 같은 이름 구원자 경고
+COL_COMMON = "#cfd8dc"         # 공용 아르카나 안내
 PROFILES = (
     # th: 슬롯 썸네일, th2: 대체 썸네일, px: 본문, small: 보조, alt: 대체 이름, pad: 셀 패딩, gap: 슬롯 사이 간격(px)
     {"th": 40, "th2": 30, "px": 15, "small": 12, "alt": 14, "pad": 2, "gap": 4},
@@ -308,6 +318,7 @@ def _num_td(num_html, valign="middle"):
 
 
 BLANK_TD = f'<td width="{NUM_W}"></td>'
+INDENT_TD = '<td width="10"></td>'            # 슬롯 칸 안에서 대체 줄 들여쓰기
 
 
 def _opts_table(items, P, avail, px, th, first="", blank="", lead="", lead_w=0):
@@ -329,13 +340,14 @@ def _opts_table(items, P, avail, px, th, first="", blank="", lead="", lead_w=0):
         return _tbl("<tr>" + "".join(cells) + "</tr>", pad)
     rows = []
     f = first
-    if lead:
-        rows.append(f'<tr>{first}<td colspan="2" valign="middle">{lead}</td></tr>')
+    head_tbl = ""
+    if lead:                                    # 머리 줄은 별도 표로(colspan 이 썸네일 칸 폭을 늘려 항목이 오른쪽으로 밀리는 것 방지)
+        head_tbl = _tbl(f'<tr>{first}<td valign="middle">{lead}</td></tr>', pad)
         f = blank
     for k, (o, img, _) in enumerate(items):
         rows.append(f'<tr>{f if k == 0 else blank}{_img_td(img, th)}<td valign="middle">'
                     f'{_name_html(o, px, "" if k == 0 else _or_prefix(small))}</td></tr>')
-    return _tbl("".join(rows), pad)
+    return head_tbl + _tbl("".join(rows), pad)
 
 
 def _alt_lead(a, small, prefix="", short=False):
@@ -371,66 +383,74 @@ def _gap(P):
     return f'<div style="font-size:{P["gap"]}px;">&nbsp;</div>' if P["gap"] else ""
 
 
-def _slots_table(slots, alts, thumb_path, P):
-    """PVE 슬롯. 슬롯마다 [번호][썸][이름] 한 줄(A or B 는 한 줄에 이어 붙임), 그 슬롯의 대체는 바로 아래 한 줄. 대상이 없는 대체는 '그 밖의 대체'."""
-    px, small, th = P["px"], P["small"], P["th"]
-    by_slot, loose = _split_alts(alts, len(slots))
-    out = []
-    for i, sl in enumerate(slots):
-        num = _num_td(f'<span style="color:#00e5ff; font-size:{px}px;"><b>{i + 1}</b></span>')
-        items = _items((sl or {}).get("options"), thumb_path, th, px)
-        if items:
-            out.append(_opts_table(items, P, P["avail"], px, th, num, BLANK_TD))
-        else:
-            out.append(_tbl(f'<tr>{num}<td valign="middle"><span style="color:#78909c; font-size:{small}px;">(비움)</span></td></tr>', P["pad"]))
-        if sl and sl.get("note"):
-            out.append(_tbl(f'<tr>{BLANK_TD}<td><span style="color:{COL_MUTED}; font-size:{small}px;">{_html.escape(sl["note"])}</span></td></tr>', P["pad"]))
-        out.extend(_alt_block(a, P, thumb_path, P["avail"]) for a in by_slot.get(i, []))
-        out.append(_gap(P))
-    if loose:
-        out.append(f'<span style="color:#9fe8ff; font-size:{small + 1}px;"><b>그 밖의 대체</b></span>')
-        out.extend(_alt_block(a, P, thumb_path, P["avail"]) for a in loose)
-    return "".join(out)
+def _num_span(i, px):
+    return f'<span style="color:{COL_NUM}; font-size:{px}px;"><b>{i + 1}</b></span>'
 
 
-def _two_col_table(sets, thumb_path, P):
-    """디펜더 2세트: 슬롯 1~5 를 행으로, 퓨어탱커/공격탱커를 좌우 2열로(칸마다 `[썸][이름]` 한 줄, 그 슬롯의 대체는 칸 안에 `↳ [썸]이름`).
-    그 밖의 대체/대체불가 안내는 아래에 압축."""
+def _divider_row(ncols):
+    """슬롯 사이 가는 구분선 (1세트/2세트 공통 한 곳)."""
+    return f'<tr><td colspan="{1 + ncols}" style="background-color:{COL_DIVIDER}; font-size:{DIVIDER_PX}px;">&nbsp;</td></tr>'
+
+
+def _slot_cell(sl, alt_list, thumb_path, P, Pc, col_avail, short_alt):
+    """한 슬롯의 한 열 칸: 옵션(`[썸][이름]`, 'A · B' 는 폭이 허용하는 만큼 한 줄, 아니면 줄바꿈 + `또는`), 메모, 그 슬롯의 대체.
+    대체 표기만 열 수에 따라 다르다: 열 1개(폭 넓음) = `↳ X 없으면 → [썸]Y`, 열 2개 이상 = `↳ [썸]Y`."""
     px, small, th = P["px"], P["small"], P["th"]
-    n = max(len(st.get("slots") or []) for st in sets)
-    col_avail = (P["content_w"] - NUM_W - 14) / len(sets) - 14
-    splits = [_split_alts(st.get("alternatives"), n) for st in sets]
-    Pc = dict(P, pad=0)                  # 칸 안 표는 촘촘하게(행 높이 절약)
-    cw = f'{100 // len(sets)}%'
-    head = "".join(f'<td width="{cw}" valign="middle"><span style="color:{COL_ALT}; font-size:{px + 1}px;"><b>▌{_html.escape(st.get("label") or "")}</b></span></td>'
-                   for st in sets)
-    rows = [f'<tr>{BLANK_TD}{head}</tr>']
+    opts = (sl or {}).get("options")
+    its, tcell = _items(opts, thumb_path, th, px), th
+    if len(its) > 1 and th and sum(w for _, _, w in its) + SEP_W * (len(its) - 1) > col_avail:
+        small_th = round(th * 0.7)                               # 안 들어가면 소형 썸네일로 'A · B' 를 한 줄에 이어 붙여 본다
+        its2 = _items(opts, thumb_path, small_th, px)
+        if sum(w for _, _, w in its2) + SEP_W * (len(its2) - 1) <= col_avail:
+            its, tcell = its2, small_th
+    if its:
+        parts = [_opts_table(its, Pc, col_avail, px, tcell)]
+    else:
+        parts = [f'<span style="color:{COL_EMPTY}; font-size:{small}px;">(비움)</span>']
+    if sl and sl.get("note"):
+        parts.append(f'<span style="color:{COL_MUTED}; font-size:{small}px;">{_html.escape(sl["note"])}</span>')
+    parts += [_alt_block(a, Pc, thumb_path, col_avail, short=short_alt, first=INDENT_TD, blank=INDENT_TD) for a in alt_list]
+    return "".join(parts)
+
+
+def _grid_table(columns, thumb_path, P):
+    """슬롯 1~5 를 행으로, 세트(열)를 좌우로 놓는 하나의 격자. 1세트는 열이 1개인 격자로 같은 코드가 처리한다.
+    - 번호 칸은 위쪽 정렬(첫 줄에 맞춤), 슬롯 사이에 같은 구분선, 같은 패딩/'또는' 표시
+    - 열이 2개 이상일 때만 열 머리(▌퓨어탱커/▌공격탱커)
+    - '그 밖의 대체'(대상 슬롯이 없는 대체)와 대체불가 안내는 아래에 압축
+    columns: [{"label", "slots", "alternatives"}]"""
+    px, small = P["px"], P["small"]
+    ncols = len(columns)
+    n = max(len(c.get("slots") or []) for c in columns)
+    col_avail = (P["content_w"] - NUM_W - 14) / ncols - (14 if ncols > 1 else 0)
+    if ncols == 1:
+        col_avail = P["avail"]
+    splits = [_split_alts(c.get("alternatives"), n) for c in columns]
+    Pc = dict(P, pad=0)                                          # 칸 안 표는 촘촘하게(행 높이 절약)
+    cw = f'{100 // ncols}%'
+    rows = []
+    if ncols > 1:
+        head = "".join(f'<td width="{cw}" valign="middle"><span style="color:{COL_ALT}; font-size:{px + 1}px;"><b>▌{_html.escape(c.get("label") or "")}</b></span></td>'
+                       for c in columns)
+        rows.append(f'<tr>{BLANK_TD}{head}</tr>')
     for i in range(n):
         cells = ""
-        for st, (by_slot, _) in zip(sets, splits):
-            sl = (st.get("slots") or [])[i] if i < len(st.get("slots") or []) else None
-            opts = (sl or {}).get("options")
-            its, tcell = _items(opts, thumb_path, th, px), th
-            if len(its) > 1 and th and sum(w for _, _, w in its) + SEP_W * (len(its) - 1) > col_avail:
-                small_th = round(th * 0.7)                       # 안 들어가면 소형 썸네일로 'A · B' 를 한 줄에 이어 붙여 본다
-                its2 = _items(opts, thumb_path, small_th, px)
-                if sum(w for _, _, w in its2) + SEP_W * (len(its2) - 1) <= col_avail:
-                    its, tcell = its2, small_th
-            parts = [_opts_table(its, Pc, col_avail, px, tcell)]
-            parts += [_alt_block(a, Pc, thumb_path, col_avail, short=True, first="", blank="") for a in by_slot.get(i, [])]
-            cells += f'<td width="{cw}" valign="top">{"".join(parts)}</td>'
-        num_span = '<span style="color:#00e5ff; font-size:%dpx;"><b>%d</b></span>' % (px, i + 1)
-        rows.append(f'<tr>{_num_td(num_span, "top")}{cells}</tr>')
-        if i < n - 1:       # 슬롯 사이 가는 구분선(번호가 첫 줄에 붙어 어느 카드가 몇 번인지 헷갈리지 않게)
-            rows.append(f'<tr><td colspan="{1 + len(sets)}" style="background-color:#26323a; font-size:1px;">&nbsp;</td></tr>')
+        for c, (by_slot, _) in zip(columns, splits):
+            slots = c.get("slots") or []
+            sl = slots[i] if i < len(slots) else None
+            cells += f'<td width="{cw}" valign="top">{_slot_cell(sl, by_slot.get(i, []), thumb_path, P, Pc, col_avail, ncols > 1)}</td>'
+        rows.append(f'<tr>{_num_td(_num_span(i, px), "top")}{cells}</tr>')
+        if i < n - 1:
+            rows.append(_divider_row(ncols))
         elif P["gap"]:
-            rows.append(f'<tr><td colspan="{1 + len(sets)}" style="font-size:{P["gap"]}px;">&nbsp;</td></tr>')
+            rows.append(f'<tr><td colspan="{1 + ncols}" style="font-size:{P["gap"]}px;">&nbsp;</td></tr>')
     out = f'<table cellspacing="0" cellpadding="{min(P["pad"], 1)}" width="100%">' + "".join(rows) + "</table>"
     extra = []
-    for st, (_, loose) in zip(sets, splits):
-        extra += [_alt_block(a, P, thumb_path, P["avail"], prefix=f"{st.get('label') or ''} · ", first="", blank="") for a in loose]
+    for c, (_, loose) in zip(columns, splits):
+        prefix = f"{c.get('label') or ''} · " if ncols > 1 else ""
+        extra += [_alt_block(a, P, thumb_path, P["avail"], prefix=prefix, first=INDENT_TD, blank=INDENT_TD) for a in loose]
     if extra:
-        out += f'<span style="color:#9fe8ff; font-size:{small + 1}px;"><b>그 밖의 대체</b></span>' + "".join(extra)
+        out += f'<span style="color:{COL_LOOSE_HEAD}; font-size:{small + 1}px;"><b>그 밖의 대체</b></span>' + "".join(extra)
     return out
 
 
@@ -446,28 +466,28 @@ def format_reco_html(savior, scale=1.0, thumb_path=None, detail=0, content_w=Non
     meta = " · ".join(x for x in (savior.get("subtitle"), ELEMENT_KO.get(savior.get("element"), savior.get("element")),
                                    savior.get("className")) if x)
     if savior.get("unknown"):
-        return (f'🃏 <b>{name}</b><br><span style="color:#888888; font-size:{small}px;">'
+        return (f'🃏 <b>{name}</b><br><span style="color:{COL_HINT}; font-size:{small}px;">'
                 '아직 추천 아르카나 데이터가 없습니다 (신규 구원자이거나 데이터 갱신 전)</span>')
     one_line = detail >= 1 or bool(savior.get("sets"))          # 넓은 모드(2세트)는 머리 줄을 한 줄로
     head = (f'<span style="font-size:{px + 1}px;">🃏 <b>{name}</b> 추천 아르카나</span>' + (" " if one_line else "<br>")
             + f'<span style="color:{COL_MUTED}; font-size:{small}px;">{esc(meta)}</span>')
     foot = (f'<div style="font-size:8px;">&nbsp;</div>'
-            f'<span style="color:#78909c; font-size:{small}px;">출처: 스타세이비어 가이드(참고용, 절대적인 정답 아님)</span>')
+            f'<span style="color:{COL_FOOT}; font-size:{small}px;">출처: 스타세이비어 가이드(참고용, 절대적인 정답 아님)</span>')
     sets = savior.get("sets") or []
     if sets:
-        return head + _two_col_table(sets, thumb_path, P) + foot
+        return head + _grid_table(sets, thumb_path, P) + foot
     slots = savior.get("slots") or []
     if not any(slots):
-        return head + f'<br><span style="color:#888888; font-size:{small}px;">등록된 추천 아르카나가 없습니다 (미정)</span>'
+        return head + f'<br><span style="color:{COL_HINT}; font-size:{small}px;">등록된 추천 아르카나가 없습니다 (미정)</span>'
     if all((not sl) or all(o.get("common") for o in sl.get("options") or []) for sl in slots):
-        return head + (f'<br><span style="color:#cfd8dc; font-size:{px}px;">특정 추천 카드 없음 - 공용 아르카나로 자유롭게 편성</span>{foot}')
-    return head + _slots_table(slots, savior.get("alternatives") or [], thumb_path, P) + foot
+        return head + (f'<br><span style="color:{COL_COMMON}; font-size:{px}px;">특정 추천 카드 없음 - 공용 아르카나로 자유롭게 편성</span>{foot}')
+    return head + _grid_table([{"label": "", "slots": slots, "alternatives": savior.get("alternatives") or []}], thumb_path, P) + foot
 
 
 def format_candidates_html(matches, scale=1.0, thumb_path=None, detail=0):
     """이름은 같은데 부제를 못 읽어 하나로 못 정한 경우: 후보를 모두 표시(속성·직업 병기)."""
     small = max(9, round(11 * scale))
-    note = (f'<span style="color:#ffcc00; font-size:{small}px;">⚠️ 같은 이름 구원자가 {len(matches)}명입니다 '
+    note = (f'<span style="color:{COL_WARN}; font-size:{small}px;">⚠️ 같은 이름 구원자가 {len(matches)}명입니다 '
             f'(부제를 읽지 못함) - 후보를 모두 표시합니다</span>')
     return "<hr>".join([note] + [format_reco_html(s, scale, thumb_path, min(detail + 1, MAX_DETAIL)) for s in matches])
 

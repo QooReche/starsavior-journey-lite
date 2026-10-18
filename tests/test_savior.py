@@ -737,3 +737,23 @@ def test_tooltip_limit_allows_pushing_up_to_below_top_bar():
     assert y >= 470 + int(930 * jh.TOOLTIP_MIN_TOP_FRAC) and clip is None               # 위로 밀되 상단바 아래까지만
     assert y + 790 + 10 <= 1400
     assert jh.place_tooltip(rect, avail, 400, False, 0.20, 0.245)[1] == 470 + int(930 * 0.20)    # 맞으면 그대로
+
+
+def test_single_and_two_set_share_one_grid_renderer(saviors):
+    """1세트·2세트가 같은 격자 코드를 쓴다: 슬롯 수-1 개의 같은 구분선, 위쪽 정렬 번호 칸, 열 머리는 2열 이상에서만, 대체 표기 길이만 다르다."""
+    divider = f'style="background-color:{sv.COL_DIVIDER}; font-size:{sv.DIVIDER_PX}px;"'
+    num_td = f'<td valign="top" align="center" width="{sv.NUM_W}">'
+    one = next(x for x in saviors if x["key"] == "lydia")
+    two = next(x for x in saviors if x["key"] == "haydee")
+    for d in range(sv.MAX_DETAIL + 1):
+        h1, h2 = sv.format_reco_html(one, 1.0, None, d), sv.format_reco_html(two, 1.0, None, d, 764)
+        assert h1.count(divider) == len(one["slots"]) - 1 == 4 and h2.count(divider) == len(two["sets"][0]["slots"]) - 1 == 4
+        assert h1.count(num_td) == 5 and h2.count(num_td) == 5
+        assert "▌" not in h1 and h2.count("▌") == 2                                      # 열 머리는 열이 2개 이상일 때만
+    h1, h2 = sv.format_reco_html(one, 1.0, None, 0), sv.format_reco_html(two, 1.0, None, 0, 764)
+    assert "↳ 단점 보완 맞춤 훈련 없으면 →" in text_of(h1) and "없으면 →" not in text_of(h2).split("그 밖의 대체")[0]   # 1열: 긴 형식, 2열: 짧은 형식 `↳ 이름`
+    assert "↳" in text_of(h2)
+    import re as _re
+    consts = [n for n in dir(sv) if n.startswith("COL_")]
+    src = open(sv.__file__, encoding="utf-8").read()
+    assert len(consts) >= 10 and not _re.search(r'color:#[0-9a-fA-F]{6}', src.split("def format_candidates_html")[0].split("COL_COMMON")[1])
