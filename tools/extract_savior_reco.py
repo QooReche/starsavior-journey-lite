@@ -30,7 +30,7 @@ SCHEMA_VERSION = 3
 STAT_NOTES = {"waltz-asherah": "왈츠 오브 스타라이트 아세라는 힘 1,000 / 체력 1,000을 목표로 세팅 권장"}
 COMMON = "공용 아르카나"
 # 포팅한 app.js/app-core.js 패치 대상. 이 밖의 구원자를 사이트가 따로 패치하면 경고한다(포팅 누락 감지).
-PORTED_PATCH_IDS = {"gwen", "clarissa", "roberta", "lydia", "lydia-moon-caster", "waltz-asherah"}
+PORTED_PATCH_IDS = {"gwen", "clarissa", "roberta", "lydia", "lydia-moon-caster", "waltz-asherah", "seira"}
 
 # '노 페인' 처럼 note 가 비어 있을 때, 사이트의 공통 자동 대체 규칙(buildAlternativeArcana)이 쓰는 대체 대상 (표시용 추정)
 DEFAULT_TARGETS = {"노 페인, 노 게인": "단점 보완 맞춤 훈련", "메이드 바이 페트라♡": "꽃들에게 죽음을", "별을 보며 꿈을": "꽃들에게 죽음을",
@@ -346,6 +346,12 @@ def apply_load_time_patches(saviors, consts):
             {"name": "메이드 바이 페트라♡ or 별을 보며 꿈을", "note": "꽃들에게 죽음을 대체"},
             {"name": "하얀 달의 온기는 햇빛처럼 or 어느 한 기사의 맹세", "note": "탐닉자의 유흥거리 대체"},
             {"name": "영원 속박의 굴레", "note": "하얀 달의 온기는 햇빛처럼 대체"}, None]
+    se = by_id.get("seira")                                   # app-core.js 5902~: 스트라이커 변환 뒤에 5번째 칸과 대체 목록만 덮어쓴다 (2026-10-24 추가)
+    if se is not None and (se.get("detail") or {}).get("arcana"):
+        arc = se["detail"]["arcana"]
+        arc["pve"][4] = {"name": "수마의 나들이", "note": ""}
+        arc["alternatives"][2] = {"name": "하얀 달의 온기는 햇빛처럼 or 어느 한 기사의 맹세 or 완벽한 바니걸 or 자칭 베테랑 탐정의 수사법", "note": "부족한 자리 대체"}
+        arc["alternatives"][3] = None
     # --- app.js ---
     r = by_id.get("roberta")
     if r is not None and (r.get("detail") or {}).get("arcana"):

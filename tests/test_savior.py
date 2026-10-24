@@ -35,7 +35,7 @@ def find(saviors, name, subtitle):
 
 
 # ------------------------------------------------------------------ 슬림 JSON 변환 (사이트 로직 포팅)
-SITE_DIR = os.path.join(HERE, "..", "..", "..", "temp", "journeyhelper", "work", "site_2026-10-18")      # 사이트 사본(저장소 밖, 없으면 건너뜀)
+SITE_DIR = os.path.join(HERE, "..", "..", "..", "temp", "journeyhelper", "work", "site_2026-10-24")      # 사이트 사본(저장소 밖, 없으면 건너뜀)
 SITE_ENV = os.environ.get("JH_SITE_DIR") or SITE_DIR
 needs_site = pytest.mark.skipif(not os.path.exists(os.path.join(SITE_ENV, "app-core.js")), reason="사이트 사본 없음")
 
