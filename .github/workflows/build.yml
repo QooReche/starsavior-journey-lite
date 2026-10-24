@@ -1,0 +1,75 @@
+# Windows 빌드(테스트 -> PyInstaller -> 배포 폴더). 공개 저장소의 표준 러너는 무료.
+# SignPath Foundation 승인 후: 저장소 Variables 에 SIGNPATH_ENABLED=true, SIGNPATH_ORGANIZATION_ID, SIGNPATH_PROJECT_SLUG,
+# SIGNPATH_SIGNING_POLICY_SLUG 를, Secrets 에 SIGNPATH_API_TOKEN 을 넣으면 서명 단계가 켜진다. 그 전에는 서명 없이 빌드만 한다.
+# 버전 날짜는 커밋된 jh_version.py 를 그대로 쓴다(로컬 build_release.ps1 처럼 날짜를 덮어쓰지 않음).
+name: build
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: 의존성 설치
+        shell: pwsh
+        run: |
+          python -m pip install -r requirements-dev.txt
+          # PyInstaller 분석 단계가 PyQt5 를 먼저 import 하면 onnxruntime 이 죽는다 -> onnxruntime 을 먼저 import 시키는 .pth
+          $site = python -c "import sysconfig;print(sysconfig.get_paths()['purelib'])"
+          Set-Content -Encoding ascii "$site\zz_ort_first.pth" "import onnxruntime"
+          "SITE_PACKAGES=$site" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+
+      - name: 테스트
+        shell: pwsh
+        run: python -X utf8 -m pytest -q
+
+      - name: 빌드
+        shell: pwsh
+        run: |
+          python -X utf8 tools/make_version_info.py version_info.txt
+          if ($LASTEXITCODE -ne 0) { throw "버전 정보 생성 실패" }
+          python -I -m PyInstaller journey_helper.spec --noconfirm --distpath dist --workpath build
+          if ($LASTEXITCODE -ne 0) { throw "PyInstaller 실패" }
+          python -X utf8 tools/check_dist_deps.py dist/JourneyNavigator
+          if ($LASTEXITCODE -ne 0) { throw "VC++ 런타임 누락" }
+          python -X utf8 tools/collect_licenses.py dist/JourneyNavigator --site $env:SITE_PACKAGES --src .
+          if ($LASTEXITCODE -ne 0) { throw "라이선스 고지문 생성 실패" }
+
+      - id: upload-unsigned
+        uses: actions/upload-artifact@v4
+        with:
+          name: JourneyNavigator-unsigned
+          path: dist/JourneyNavigator
+
+      - name: SignPath 서명 요청
+        if: ${{ vars.SIGNPATH_ENABLED == 'true' }}
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          github-artifact-id: ${{ steps.upload-unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed
+
+      - name: 서명본 업로드
+        if: ${{ vars.SIGNPATH_ENABLED == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: JourneyNavigator-signed
+          path: signed
