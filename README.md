@@ -123,6 +123,20 @@ https://github.com/RapidAI/RapidOCR
 게임과 이미지·데이터의 권리는 STUDIOBSIDE와 각 제공자에게 있음.  
 요청이 있으면 수정하거나 내림.
 
+[코드 서명 정책 / Code signing policy]
+
+현재 배포 파일은 코드 서명이 없음.
+윈도우 11의 스마트 앱 컨트롤이 켜져 있으면 실행이 차단될 수 있음(끄면 윈도우를 다시 설치하기 전에는 다시 켤 수 없음).
+무료 코드 서명(SignPath Foundation, 오픈소스용)을 신청하는 중이며, 승인되면 서명된 배포 파일로 바꿀 예정. 승인 여부와 시기는 정해지지 않음.
+
+승인되면 적용할 내용
+- 서명 대상: 이 저장소의 소스를 GitHub Actions 에서 빌드한 JourneyNavigator.exe 만
+- 서명 문구: Free code signing provided by SignPath.io, certificate by SignPath Foundation
+- 역할: 제작자 QooReche 가 코드 작성, 검토, 서명 승인을 모두 맡음(1인 프로젝트)
+- 개인 정보: 이 프로그램은 개인 정보를 다른 시스템으로 보내지 않음.
+  시작할 때 GitHub 에서 최신 버전 번호를 확인하고(설정창에서 끌 수 있음), 이벤트·추천 데이터와 카드 그림을 공개 사이트에서 내려받음.
+  화면 캡처는 컴퓨터 안에서만 처리하고 저장하거나 보내지 않음.
+
 [라이선스]
 
 이 프로그램의 코드는 GPL-3.0 (LICENSE 파일 참고).  
