@@ -314,6 +314,15 @@ class DbStore:
         except Exception as e:
             return UpdateResult("offline", False, f"V2 갱신 예외: {type(e).__name__} {str(e)[:100]}")
 
+    def update_reco(self, manual=False):
+        """구원자 추천 데이터(savior_reco.json) 원격 갱신. 예외를 내지 않고 UpdateResult 를 돌려준다. 새 데이터는 다음 load_reco 부터."""
+        try:
+            import jh_reco
+            return jh_reco.RecoStore(self.cache_dir, session=self._session, clock=self.clock,
+                                     user_agent=self.user_agent).update(manual=manual)
+        except Exception as e:
+            return UpdateResult("offline", False, f"추천 데이터 갱신 예외: {type(e).__name__} {str(e)[:100]}")
+
     # 새 DB 사이트의 구조가 바뀌거나 내용이 크게 줄어든 응답이 정상 캐시를 덮어쓰지 않게 하는 안전장치
     _GUARD_KEYS = {"journey": ("events", "arcana"), "arcanas": ("arcanas", "potentials")}
     GUARD_MIN_RATIO = 0.5

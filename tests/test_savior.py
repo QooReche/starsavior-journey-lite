@@ -35,7 +35,7 @@ def find(saviors, name, subtitle):
 
 
 # ------------------------------------------------------------------ 슬림 JSON 변환 (사이트 로직 포팅)
-SITE_DIR = os.path.join(HERE, "..", "..", "..", "temp", "journeyhelper", "work", "site_2026-10-24")      # 사이트 사본(저장소 밖, 없으면 건너뜀)
+SITE_DIR = os.path.join(HERE, "..", "..", "..", "temp", "journeyhelper", "work", "site_2026-10-29")      # 사이트 사본(저장소 밖, 없으면 건너뜀)
 SITE_ENV = os.environ.get("JH_SITE_DIR") or SITE_DIR
 needs_site = pytest.mark.skipif(not os.path.exists(os.path.join(SITE_ENV, "app-core.js")), reason="사이트 사본 없음")
 
@@ -137,8 +137,10 @@ def test_extract_main_writes_file(tmp_path):
     (d / "app.js").write_text(APP, encoding="utf-8")
     (d / "arcanas.json").write_text(json.dumps(ARCANAS), encoding="utf-8")
     out = tmp_path / "o" / "r.json"
-    assert ex.main(["x", str(d), "--out", str(out)]) == 0
-    assert len(sv.load_reco(str(out))) == 5
+    assert ex.main(["x", str(d), "--out", str(out)]) == 2                      # 폴더 이름에서 날짜를 못 얻으면 --generated 필수(생략하지 않는다)
+    assert not out.exists()
+    assert ex.main(["x", str(d), "--out", str(out), "--generated", "2026-10-29"]) == 0
+    assert len(sv.load_reco(str(out))) == 5 and json.load(open(out, encoding="utf-8"))["generated"] == "2026-10-29"
 
 
 def test_extract_bad_input_raises_clearly():
@@ -181,13 +183,13 @@ def test_other_saviors_match_site_logic(saviors):
     assert [_names(x)[0] for x in smile["slots"]] == ["단점 보완 맞춤 훈련", "허수의 개척자", "꽃들에게 죽음을", "종말은 소녀의 얼굴을 하고 있다.", "휴가 준비는 쇼핑에서부터!"]
     assert [(a["pos"], _names(a)[0], a["slot"]) for a in smile["alternatives"]] == [
         (0, "노 페인, 노 게인", 0), (1, "메이드 바이 페트라♡", 2), (2, "하얀 달의 온기는 햇빛처럼", 3), (3, "불굴의 역작", 1)]
-    sup = next(s for s in saviors if s["key"] == "frey")                              # 서포터: 공통 자동 대체 + 프로페셔널, 영원 속박 제외
+    sup = next(s for s in saviors if s["key"] == "frey")                              # 서포터(10.29 표준 서포터 세팅): 사이트가 넣은 대체 목록 그대로
     assert [(_names(a)[0], a["note"]) for a in sup["alternatives"]] == [
-        ("어느 한 기사의 맹세", "하얀 달의 온기는 햇빛처럼 대체"), ("누구보다 프로페셔널", "공녀, 왕좌에 오르다 대체"), ("언더커버 캅", "본 투 비 와일드 대체")]
-    lugh = next(s for s in saviors if s["key"] == "lugh")                             # 슬롯이 '공용 아르카나' -> 공용 5장 펼침 + 영원 속박 덧붙임
-    assert lugh["commonSet"] and [_names(x)[0] for x in lugh["slots"]] == [
-        "단점 보완 맞춤 훈련", "불굴의 역작", "꽃들에게 죽음을", "완벽한 바니걸", "하얀 달의 온기는 햇빛처럼"]
-    assert [_names(a)[0] for a in lugh["alternatives"]] == ["노 페인, 노 게인", "메이드 바이 페트라♡", "어느 한 기사의 맹세", "영원 속박의 굴레"]
+        ("어느 한 기사의 맹세", "하얀 달의 온기는 햇빛처럼 대체"), ("누구보다 프로페셔널", "공녀, 왕좌에 오르다 대체"), ("언더커버 캅", "본 투 비 와일드 대체"), ("하늘의 시련", "부족한 자리 대체")]   # 10.29: 표준 서포터 일괄 세팅(대체 목록을 그대로 씀)
+    lugh = next(s for s in saviors if s["key"] == "lugh")                             # 10.29 리워크: 더는 '공용 아르카나'가 아니라 전용 5장 + 사이트 대체 목록 그대로
+    assert not lugh.get("commonSet") and [_names(x)[0] for x in lugh["slots"]] == [
+        "단점 보완 맞춤 훈련", "불굴의 역작", "탐닉자의 유흥거리", "꽃들에게 죽음을", "영원 속박의 굴레"]
+    assert [_names(a)[0] for a in lugh["alternatives"]] == ["노 페인, 노 게인", "메이드 바이 페트라♡", "하얀 달의 온기는 햇빛처럼"]
     haydee = next(s for s in saviors if s["key"] == "haydee")                         # 디펜더: 퓨어탱커/공격탱커 프리셋
     assert [x["label"] for x in haydee["sets"]] == ["퓨어탱커", "공격탱커"] and haydee["slots"] == []
     assert [_names(x)[0] for x in haydee["sets"][0]["slots"]] == ["조용한 휴식 시간", "꽃들에게 죽음을", "한여름밤의 하늘", "본 투 비 와일드", "하얀 달의 온기는 햇빛처럼"]
@@ -205,7 +207,9 @@ def test_regenerating_from_site_copy_equals_bundled_json():
     data, rs = ex.build(rd("app-core.js"), rd("app.js"), json.loads(rd("arcanas.json")))
     assert data["unportedPatches"] == [] and rs.stats["unresolved"] == 0
     shipped = json.load(open(sv.default_data_path(), encoding="utf-8-sig"))
-    assert data == shipped
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", shipped["generated"])         # 원격 갱신이 비교하는 날짜(추출기가 사본 폴더 이름에서 넣는다)
+    assert ex.stamp(data, shipped["generated"]) == shipped
+    assert ex.site_date("x/site_2026-10-29") == "2026-10-29" and ex.site_date("x/other") is None
 
 
 @needs_site

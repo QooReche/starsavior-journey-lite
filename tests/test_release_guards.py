@@ -143,7 +143,7 @@ def test_version_info_resource_has_product_and_version(tmp_path):
     txt = out.read_text(encoding="utf-8")
     for need in ("여정 내비게이터", "JourneyNavigator.exe", APP_VERSION, "GPL-3.0", "'041204b0'"):
         assert need in txt, need
-    assert "filevers=(1, 0, 3, 0)" in txt                           # 숫자 버전은 16비트라 빌드 날짜를 못 담는다
+    assert "filevers=(1, 0, 4, 0)" in txt                          # 숫자 버전은 16비트라 빌드 날짜를 못 담는다
 
 
 # 툴팁 글자색·크기는 jh_common.span() 으로 만든다. 인라인 <span style="color:..."> 줄 수는 늘리지 않고 줄여 나간다(래칫).

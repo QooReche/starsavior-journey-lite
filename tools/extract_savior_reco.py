@@ -2,7 +2,8 @@
 """구원자 추천 아르카나 슬림 JSON 추출기 (오프라인 재현 가능).
 
 입력: 가이드 사이트 사본(app-core.js, app.js, arcanas.json) -> 출력: src/assets/savior_reco.json
-사용: python -X utf8 tools/extract_savior_reco.py <사이트사본폴더> [--out src/assets/savior_reco.json]
+사용: python -X utf8 tools/extract_savior_reco.py <사이트사본폴더> [--out src/assets/savior_reco.json] [--generated YYYY-MM-DD]
+출력 최상위에 항상 'generated'(YYYY-MM-DD)가 들어간다: 기본은 사본 폴더 이름(site_YYYY-MM-DD)의 날짜, 폴더 이름이 다르면 --generated 필수(원격 갱신 때 더 새것을 고르는 기준).
       (사이트 재다운로드는 하지 않는다. 다시 받을 때는 docs/arcana_setting_research_2026-10-16.md 의 UA·요청 최소화 방식을 따른다.)
 
 사이트가 구원자 상세 화면(createDetailMarkup)에서 실제로 보여 주는 '최종' PVE 5슬롯 + 대체 슬롯을 그대로 재현한다.
@@ -108,13 +109,18 @@ def parse_savior_block(core_js):
 
 
 def parse_site_constants(core_js):
-    return {
+    consts = {
         "common": _literal_after(core_js, r"const\s+COMMON_ARCANA_SLOTS\s*=\s*\[", "[", "]"),
         "defender_pure": _literal_after(core_js, r"const\s+DEFENDER_PURE_TANK_ARCANA\s*=\s*Object\.freeze\(\s*\{", "{", "}"),
         "defender_attack": _literal_after(core_js, r"const\s+DEFENDER_ATTACK_TANK_ARCANA\s*=\s*Object\.freeze\(\s*\{", "{", "}"),
         "swap_ids": set(_literal_after(core_js, r"const\s+STRIKER_ARCANA_SWAP_IDS\s*=\s*new\s+Set\(\s*\[", "[", "]")),
         "target_ids": set(_literal_after(core_js, r"const\s+STRIKER_ARCANA_TARGET_IDS\s*=\s*new\s+Set\(\s*\[", "[", "]")),
     }
+    try:
+        consts["std_supporter_ids"] = set(_literal_after(core_js, r"const\s+STANDARD_SUPPORTER_BUILD_IDS\s*=\s*new\s+Set\(\s*\[", "[", "]"))
+    except ValueError:                                        # 옛 사이트 사본에는 선언이 없다
+        consts["std_supporter_ids"] = set()
+    return consts
 
 
 # ---------------------------------------------------------------- 여정 스탯 우선순위 / PVE 장비
@@ -328,6 +334,21 @@ def _pad5(lst):
 def apply_load_time_patches(saviors, consts):
     """app-core.js 5857~5920 + app.js 로드 후 패치. saviors 를 제자리에서 바꾼다."""
     by_id = {s.get("id"): s for s in saviors}
+    for s in saviors:                                         # app-core.js STANDARD_SUPPORTER_BUILD_IDS 일괄 세팅 (2026-10-29 추가)
+        if s.get("id") in consts.get("std_supporter_ids", ()):
+            det = s.get("detail") or {}
+            s["detail"] = {**det,
+                           "equipment": {**(det.get("equipment") or {}),
+                                         "pve": {"necklace": "속도", "ring": "생명력%", "sets": ["생명(4) + 장벽(2)"], "potential": "BX", "note": ""}},
+                           "arcana": {**(det.get("arcana") or {}),
+                                      "pve": [{"name": n, "note": ""} for n in
+                                              ("스트라니스의 영애", "가혹한 시련", "공녀, 왕좌에 오르다 or 본 투 비 와일드 or 완벽한 바니걸",
+                                               "하얀 달의 온기는 햇빛처럼", "꽃들에게 죽음을")],
+                                      "alternatives": [
+                                          {"name": "어느 한 기사의 맹세", "note": "하얀 달의 온기는 햇빛처럼 대체"},
+                                          {"name": "누구보다 프로페셔널", "note": "공녀, 왕좌에 오르다 대체"},
+                                          {"name": "언더커버 캅", "note": "본 투 비 와일드 대체"},
+                                          {"name": "하늘의 시련 or 금단의 기록물 Vol. 1", "note": "부족한 자리 대체"}, None]}}
     g = by_id.get("gwen")
     if g is not None:
         g["detail"] = {"equipment": {"pve": {"necklace": "속도", "ring": "공격력%", "sets": ["통찰(4) + 투지(2)", "파괴(4) + 투지(2)"],
@@ -400,8 +421,8 @@ def unported_patches(core_js, app_js):
 def build_alternative_arcana(savior, pve, existing, R, consts):
     """사이트 buildAlternativeArcana (app.js 가 lydia 계열만 감싼 것 포함). 항목은 {name, note} 또는 None 인 리스트."""
     sid = savior.get("id")
-    if sid in ("lydia", "lydia-moon-caster") or sid in consts["target_ids"] or sid == "clarissa":
-        return _pad5(existing)
+    if sid in ("lydia", "lydia-moon-caster") or sid in consts["target_ids"] or sid in ("clarissa", "lugh", "wedding-carmen") or sid in consts.get("std_supporter_ids", ()):
+        return _pad5(existing)                                # lugh/wedding-carmen/표준 서포터: 2026-10-29 사이트 분기 추가
     result, seen = [], set()
 
     def add(name, note=""):
@@ -586,6 +607,17 @@ def has_reco(s):
     return any(s.get("slots") or []) or bool(s.get("sets"))
 
 
+def site_date(folder):
+    """사이트 사본 폴더 이름 'site_YYYY-MM-DD' -> 'YYYY-MM-DD' (아니면 None)"""
+    m = re.fullmatch(r"site_(\d{4}-\d{2}-\d{2})", os.path.basename(os.path.normpath(folder or "")))
+    return m.group(1) if m else None
+
+
+def stamp(data, generated):
+    """최상위에 'generated' 를 version 바로 뒤에 넣은 새 dict (원격 갱신 때 더 새것을 고르는 기준)"""
+    return {"version": data["version"], "generated": generated, **{k: v for k, v in data.items() if k != "version"}}
+
+
 def main(argv):
     if len(argv) < 2:
         print(__doc__)
@@ -594,11 +626,16 @@ def main(argv):
     out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets", "savior_reco.json")
     if "--out" in argv:
         out_path = argv[argv.index("--out") + 1]
+    generated = argv[argv.index("--generated") + 1] if "--generated" in argv else site_date(d)
+    if not (generated and re.fullmatch(r"\d{4}-\d{2}-\d{2}", generated)):
+        print("오류: 사이트 사본 폴더 이름(site_YYYY-MM-DD)에서 날짜를 얻지 못했습니다. --generated YYYY-MM-DD 를 지정하세요.")
+        return 2
 
     def rd(n):
         with open(os.path.join(d, n), "r", encoding="utf-8-sig") as f:
             return f.read()
     data, R = build(rd("app-core.js"), rd("app.js"), json.loads(rd("arcanas.json")))
+    data = stamp(data, generated)
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     with open(out_path, "w", encoding="utf-8", newline="\n") as f:
         json.dump(data, f, ensure_ascii=False, separators=(",", ":"))

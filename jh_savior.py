@@ -85,17 +85,36 @@ def default_data_path():
     return os.path.join(base, DATA_FILE)
 
 
+def _load_file(path):
+    with open(path, "r", encoding="utf-8-sig") as f:
+        data = json.load(f)
+    out = [s for s in data.get("saviors", []) if isinstance(s, dict) and s.get("name")]
+    for s in out:
+        s["_n_name"], s["_n_sub"] = _norm(s.get("name")), _norm(s.get("subtitle"))
+    return out
+
+
 def load_reco(path=None):
-    """슬림 JSON -> 구원자 리스트. 없거나 깨졌으면 [] (기능만 꺼진다)."""
+    """슬림 JSON -> 구원자 리스트. 없거나 깨졌으면 [] (기능만 꺼진다).
+    path 가 없으면 원격에서 받아 둔 유효한 캐시(jh_reco) > 번들 assets 순으로 읽고, 캐시가 깨졌으면 번들로 폴백한다."""
+    if path:
+        try:
+            return _load_file(path)
+        except Exception:
+            return []
     try:
-        with open(path or default_data_path(), "r", encoding="utf-8-sig") as f:
-            data = json.load(f)
-        out = [s for s in data.get("saviors", []) if isinstance(s, dict) and s.get("name")]
-        for s in out:
-            s["_n_name"], s["_n_sub"] = _norm(s.get("name")), _norm(s.get("subtitle"))
-        return out
+        import jh_reco
+        paths = jh_reco.preferred_path(bundle=default_data_path())
     except Exception:
-        return []
+        paths = [default_data_path()]
+    for p in paths:
+        try:
+            out = _load_file(p)
+            if out:
+                return out
+        except Exception:
+            continue
+    return []
 
 
 # ---------------------------------------------------------------- 화면 판별 / 식별

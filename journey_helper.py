@@ -1521,6 +1521,13 @@ class DbThread(QThread):
             changed = changed or bool(r2 and r2.changed)
         except Exception as e:
             log(f"[V2 갱신 예외] {e}\n{traceback.format_exc()}")
+        try:                                        # 구원자 추천 데이터 갱신(백그라운드): 새 데이터는 다음 실행부터 사용, 실패는 로그만
+            upd_reco = getattr(self.store, "update_reco", None)
+            r3 = upd_reco(manual=self.manual and status != "cooldown") if upd_reco else None
+            if r3 is not None and r3.status in ("updated", "offline", "skipped_version"):
+                log(f"[추천 데이터] {r3.status}: {r3.message}")
+        except Exception as e:
+            log(f"[추천 데이터 갱신 예외] {type(e).__name__}")
         if sent_cache and not changed:
             return                                  # 이미 캐시를 보냈고 바뀐 것이 없음
         try:
