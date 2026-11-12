@@ -1,0 +1,76 @@
+# 구원자 추천 JSON(assets/savior_reco.json) 자동 갱신.
+# 가이드 사이트를 하루 한 번 받아 추출하고, 앱 검증과 테스트를 통과하면 main 에 커밋한다(앱은 실행 때 이 파일을 받아 쓰므로 재배포 불필요).
+# 실패하면 데이터는 그대로 두고 이슈를 남긴다. 상세: tools/auto_update_reco.py
+name: reco-update
+
+on:
+  schedule:
+    - cron: "0 9 * * *"        # 매일 09:00 UTC = 18:00 KST
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: reco-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 의존성
+        run: python -m pip install --quiet pytest numpy opencv-python-headless
+
+      - name: 사이트 받아 추출·검증
+        id: extract
+        run: |
+          set +e
+          python -X utf8 tools/auto_update_reco.py --work "$RUNNER_TEMP/site_copy" | tee "$RUNNER_TEMP/extract.log"
+          code=${PIPESTATUS[0]}
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: 테스트 (갱신됐을 때만)
+        id: tests
+        if: steps.extract.outputs.code == '10'
+        run: |
+          set +e
+          JH_SITE_DIR="$RUNNER_TEMP/site_copy" python -X utf8 -m pytest tests/test_savior.py -q 2>&1 | tail -30 | tee "$RUNNER_TEMP/test.log"
+          echo "code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: main 에 커밋
+        if: steps.extract.outputs.code == '10' && steps.tests.outputs.code == '0'
+        run: |
+          git config user.name "reco-update[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add assets/savior_reco.json
+          msg="$(tail -1 "$RUNNER_TEMP/extract.log")"
+          git commit -m "구원자 추천 자동 갱신: ${msg}"
+          git push origin HEAD:main
+
+      - name: 실패하면 이슈로 알림
+        if: steps.extract.outputs.code != '0' && !(steps.extract.outputs.code == '10' && steps.tests.outputs.code == '0')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="구원자 추천 자동 갱신 실패"
+          body="실행: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"$'\n\n'"추출 종료코드 ${{ steps.extract.outputs.code }}, 테스트 종료코드 ${{ steps.tests.outputs.code }}"$'\n\n```\n'"$(tail -20 "$RUNNER_TEMP/extract.log" 2>/dev/null)"$'\n'"$(cat "$RUNNER_TEMP/test.log" 2>/dev/null)"$'\n```'
+          if [ -z "$(gh issue list --state open --search "$title in:title" --json number --jq '.[0].number')" ]; then
+            gh issue create --title "$title" --body "$body"
+          else
+            echo "이미 열린 이슈가 있어 새로 만들지 않음"
+          fi
