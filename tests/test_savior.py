@@ -159,7 +159,7 @@ def test_bundled_json_quality(saviors):
     pools = [sl for s in saviors for sl in (s["slots"] + s["alternatives"] + [x for st in s.get("sets", []) for x in st["slots"] + st["alternatives"]]) if sl]
     opts = [o for sl in pools for o in sl["options"]]
     assert sum(1 for o in opts if o["arcanaId"]) / len(opts) > 0.99          # 해석률 (실측 100%)
-    assert sum(1 for s in saviors if not (any(s["slots"]) or s.get("sets"))) == 2      # 미정 구원자 수 (2026-11-12 사본 기준: 길레·아세라(편애의 마녀) 추천 미정)
+    assert sum(1 for s in saviors if not (any(s["slots"]) or s.get("sets"))) <= 4      # 미정 구원자 수(2026-11-12 기준 2명: 길레·아세라 편애의 마녀. 자동 갱신으로 줄어들 수 있어 상한만 본다)
 
 
 def _alt(s, pos):

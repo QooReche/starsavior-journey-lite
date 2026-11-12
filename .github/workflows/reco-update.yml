@@ -1,6 +1,6 @@
 # 구원자 추천 JSON(assets/savior_reco.json) 자동 갱신.
 # 가이드 사이트를 하루 한 번 받아 추출하고, 앱 검증과 테스트를 통과하면 main 에 커밋한다(앱은 실행 때 이 파일을 받아 쓰므로 재배포 불필요).
-# 실패하면 데이터는 그대로 두고 이슈를 남긴다. 상세: tools/auto_update_reco.py
+# 테스트는 구조·일관성 검증만 게이트로 쓴다(특정 구원자 슬롯 값을 고정한 테스트는 사이트 수정에 막히므로 제외). 실패하면 데이터는 그대로 두고 이슈를 남긴다. 상세: tools/auto_update_reco.py
 name: reco-update
 
 on:
@@ -48,7 +48,7 @@ jobs:
         if: steps.extract.outputs.code == '10'
         run: |
           set +e
-          JH_SITE_DIR="$RUNNER_TEMP/site_copy" python -X utf8 -m pytest tests/test_savior.py -q 2>&1 | tail -30 | tee "$RUNNER_TEMP/test.log"
+          JH_SITE_DIR="$RUNNER_TEMP/site_copy" python -X utf8 -m pytest tests/test_savior.py -q -k "regenerating or stat_priority_and_equipment or bundled_json_quality or port_equals" 2>&1 | tail -30 | tee "$RUNNER_TEMP/test.log"
           echo "code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
           exit 0
 
