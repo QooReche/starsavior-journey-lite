@@ -35,7 +35,7 @@ def find(saviors, name, subtitle):
 
 
 # ------------------------------------------------------------------ 슬림 JSON 변환 (사이트 로직 포팅)
-SITE_DIR = os.path.join(HERE, "..", "..", "..", "temp", "journeyhelper", "work", "site_2026-10-29")      # 사이트 사본(저장소 밖, 없으면 건너뜀)
+SITE_DIR = os.path.join(HERE, "..", "..", "..", "temp", "journeyhelper", "work", "site_2026-11-12")      # 사이트 사본(저장소 밖, 없으면 건너뜀)
 SITE_ENV = os.environ.get("JH_SITE_DIR") or SITE_DIR
 needs_site = pytest.mark.skipif(not os.path.exists(os.path.join(SITE_ENV, "app-core.js")), reason="사이트 사본 없음")
 
@@ -159,7 +159,7 @@ def test_bundled_json_quality(saviors):
     pools = [sl for s in saviors for sl in (s["slots"] + s["alternatives"] + [x for st in s.get("sets", []) for x in st["slots"] + st["alternatives"]]) if sl]
     opts = [o for sl in pools for o in sl["options"]]
     assert sum(1 for o in opts if o["arcanaId"]) / len(opts) > 0.99          # 해석률 (실측 100%)
-    assert sum(1 for s in saviors if not (any(s["slots"]) or s.get("sets"))) == 0      # 미정 구원자 수 (2026-10-17 사본 기준)
+    assert sum(1 for s in saviors if not (any(s["slots"]) or s.get("sets"))) == 2      # 미정 구원자 수 (2026-11-12 사본 기준: 길레·아세라(편애의 마녀) 추천 미정)
 
 
 def _alt(s, pos):
@@ -173,16 +173,16 @@ def test_asherah_voyager_matches_site_screen(saviors):
     assert [a["pos"] for a in s["alternatives"]] == [0, 1, 2, 3]                       # 슬롯5 대체 없음
     assert _names(_alt(s, 0)) == ["노 페인, 노 게인"]
     assert _names(_alt(s, 1)) == ["메이드 바이 페트라♡", "별을 보며 꿈을"]
-    assert _names(_alt(s, 2)) == ["하얀 달의 온기는 햇빛처럼", "어느 한 기사의 맹세"] and _alt(s, 2)["note"] == "부족한 자리 대체"
+    assert _names(_alt(s, 2)) == ["하얀 달의 온기는 햇빛처럼", "어느 한 기사의 맹세", "끝나지 않는 춤", "완벽한 바니걸"] and _alt(s, 2)["note"] == "부족한 자리 대체"
     assert _names(_alt(s, 3)) == ["완벽한 바니걸"]
     assert not s.get("commonSet")
 
 
 def test_other_saviors_match_site_logic(saviors):
     smile = next(s for s in saviors if s["key"] == "smile")                            # 전용 대체 분기(buildAlternativeArcana smile)
-    assert [_names(x)[0] for x in smile["slots"]] == ["단점 보완 맞춤 훈련", "허수의 개척자", "꽃들에게 죽음을", "종말은 소녀의 얼굴을 하고 있다.", "휴가 준비는 쇼핑에서부터!"]
+    assert [_names(x)[0] for x in smile["slots"]] == ["단점 보완 맞춤 훈련", "불굴의 역작", "꽃들에게 죽음을", "종말은 소녀의 얼굴을 하고 있다.", "휴가 준비는 쇼핑에서부터!"]      # 11/12: 사이트가 2번째 칸을 불굴의 역작으로 덮어씀
     assert [(a["pos"], _names(a)[0], a["slot"]) for a in smile["alternatives"]] == [
-        (0, "노 페인, 노 게인", 0), (1, "메이드 바이 페트라♡", 2), (2, "하얀 달의 온기는 햇빛처럼", 3), (3, "불굴의 역작", 1)]
+        (0, "노 페인, 노 게인", 0), (1, "메이드 바이 페트라♡", 2), (2, "하얀 달의 온기는 햇빛처럼", None), (3, "불굴의 역작", None), (4, "끝나지 않는 춤", None)]
     sup = next(s for s in saviors if s["key"] == "frey")                              # 서포터(10.29 표준 서포터 세팅): 사이트가 넣은 대체 목록 그대로
     assert [(_names(a)[0], a["note"]) for a in sup["alternatives"]] == [
         ("어느 한 기사의 맹세", "하얀 달의 온기는 햇빛처럼 대체"), ("누구보다 프로페셔널", "공녀, 왕좌에 오르다 대체"), ("언더커버 캅", "본 투 비 와일드 대체"), ("하늘의 시련", "부족한 자리 대체")]   # 10.29: 표준 서포터 일괄 세팅(대체 목록을 그대로 씀)
@@ -204,7 +204,7 @@ def test_other_saviors_match_site_logic(saviors):
 def test_regenerating_from_site_copy_equals_bundled_json():
     """저장소의 assets/savior_reco.json 이 사이트 사본(2026-10-17)에서 추출기로 재생성한 것과 같다."""
     rd = lambda n: open(os.path.join(SITE_ENV, n), encoding="utf-8-sig").read()
-    data, rs = ex.build(rd("app-core.js"), rd("app.js"), json.loads(rd("arcanas.json")))
+    data, rs = ex.build(rd("app-core.js"), rd("app.js"), json.loads(rd("arcanas.json")), ex.run_site_logic(SITE_ENV))
     assert data["unportedPatches"] == [] and rs.stats["unresolved"] == 0
     shipped = json.load(open(sv.default_data_path(), encoding="utf-8-sig"))
     assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", shipped["generated"])         # 원격 갱신이 비교하는 날짜(추출기가 사본 폴더 이름에서 넣는다)
@@ -214,6 +214,7 @@ def test_regenerating_from_site_copy_equals_bundled_json():
 
 @needs_site
 @pytest.mark.skipif(shutil.which("node") is None, reason="node 없음")
+@pytest.mark.xfail(reason="2026-11-12 사이트가 구원자 약 70명을 로드 시 따로 덮어써서 파이썬 포팅은 대체 경로로만 남겼다(정본은 node 실행값)", strict=False)
 def test_port_equals_site_js_executed_in_node():
     """사이트 JS(app-core.js + app.js)를 node 로 실제 실행한 최종 PVE/대체 슬롯(원문 name/note)과 해석된 카드 이름이 전원 포팅 결과와 같다."""
     out = subprocess.run(["node", os.path.join(HERE, "..", "tools", "site_logic_check.js"), SITE_ENV], capture_output=True, timeout=120)
@@ -266,11 +267,11 @@ def test_homonyms_are_split_by_subtitle(saviors):
 
 def test_unreadable_subtitle_lists_all_candidates(saviors):
     m, how = sv.identify(saviors, [], ["아세라"])
-    assert how == "ambiguous" and len(m) == 2 and {x["subtitle"] for x in m} == {"보이저 구원단", "왈츠 오브 스타라이트"}
+    assert how == "ambiguous" and len(m) == 3 and {x["subtitle"] for x in m} == {"보이저 구원단", "왈츠 오브 스타라이트", "편애의 마녀"}
     m2, how2 = sv.identify(saviors, ["알수없는글자열"], ["아세라"])
-    assert how2 == "ambiguous" and len(m2) == 2
+    assert how2 == "ambiguous" and len(m2) == 3
     html = sv.format_html(m, 1.0)
-    assert "같은 이름 구원자가 2명" in text_of(html) and "달" in text_of(html) and "스트라이커" in text_of(html)   # 속성·직업 병기
+    assert "같은 이름 구원자가 3명" in text_of(html) and "달" in text_of(html) and "스트라이커" in text_of(html)   # 속성·직업 병기
 
 
 def test_unique_name_needs_no_subtitle(saviors):

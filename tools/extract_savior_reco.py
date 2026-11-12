@@ -2,7 +2,7 @@
 """구원자 추천 아르카나 슬림 JSON 추출기 (오프라인 재현 가능).
 
 입력: 가이드 사이트 사본(app-core.js, app.js, arcanas.json) -> 출력: src/assets/savior_reco.json
-사용: python -X utf8 tools/extract_savior_reco.py <사이트사본폴더> [--out src/assets/savior_reco.json] [--generated YYYY-MM-DD]
+사용: python -X utf8 tools/extract_savior_reco.py <사이트사본폴더> [--out src/assets/savior_reco.json] [--generated YYYY-MM-DD] [--no-node]
 출력 최상위에 항상 'generated'(YYYY-MM-DD)가 들어간다: 기본은 사본 폴더 이름(site_YYYY-MM-DD)의 날짜, 폴더 이름이 다르면 --generated 필수(원격 갱신 때 더 새것을 고르는 기준).
       (사이트 재다운로드는 하지 않는다. 다시 받을 때는 docs/arcana_setting_research_2026-10-16.md 의 UA·요청 최소화 방식을 따른다.)
 
@@ -24,6 +24,8 @@ SAVIORS 하드코딩 값을 그대로 쓰면 틀리므로, 사이트의 아래 �
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 
 SCHEMA_VERSION = 3
@@ -510,6 +512,21 @@ def final_build(savior, R, consts):
     return "normal", pve, add_eternal_bond(savior, pve, alts, R)
 
 
+def run_site_logic(folder):
+    """사이트 JS 를 node 로 실제 실행한 최종 PVE/대체 슬롯 {id: {kind, pve, alt, ...}}. node 가 없거나 실패하면 None.
+    사이트가 로드 시 구원자별로 덮어쓰는 패치를 파이썬으로 포팅하지 않아도 되게 하는 정본 경로다."""
+    node = shutil.which("node")
+    if not node:
+        return None
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "site_logic_check.js")
+    try:
+        r = subprocess.run([node, script, folder], capture_output=True, timeout=180)
+        res = json.loads(r.stdout.decode("utf-8-sig"))
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    return res if isinstance(res, dict) and len(res) >= 50 else None
+
+
 # ---------------------------------------------------------------- 슬림 변환
 def _is_pending(name):
     return (name or "").strip() in ("미정", "")
@@ -562,16 +579,21 @@ def _slim_set(label, pve, alts, R):
     return {"label": label, "slots": slots, "alternatives": _slim_alts(alts, slots, R)}
 
 
-def build(core_js, app_js, arcanas_json):
+def build(core_js, app_js, arcanas_json, site_logic=None):
+    """site_logic: run_site_logic() 결과. 주면 구원자별 최종 슬롯을 사이트 JS 실행값으로 쓰고(파이썬 포팅은 대체 경로), 없으면 포팅값."""
     saviors = parse_savior_block(core_js)
     consts = parse_site_constants(core_js)
-    warn = unported_patches(core_js, app_js)
+    warn = [] if site_logic else unported_patches(core_js, app_js)
     apply_load_time_patches(saviors, consts)
     R = Resolver(arcanas_json.get("arcanas", []), parse_detail_ids(core_js), parse_arcana_library(core_js), consts["common"])
     sp_patterns, sp_exceptions = parse_stat_priority(core_js)
     out = []
     for s in saviors:
-        kind, pve, alts = final_build(s, R, consts)
+        node_s = (site_logic or {}).get(s.get("id"))
+        if node_s and "error" not in node_s and node_s.get("pve") is not None:
+            kind, pve, alts = node_s["kind"], node_s["pve"], node_s["alt"]
+        else:
+            kind, pve, alts = final_build(s, R, consts)
         entry = {"key": s.get("id"), "name": s.get("name"), "subtitle": s.get("subtitle") or "", "affiliation": s.get("affiliation") or "",
                  "grade": s.get("grade") or "", "element": s.get("element") or "", "className": s.get("className") or "",
                  "slots": [], "alternatives": []}
@@ -634,7 +656,9 @@ def main(argv):
     def rd(n):
         with open(os.path.join(d, n), "r", encoding="utf-8-sig") as f:
             return f.read()
-    data, R = build(rd("app-core.js"), rd("app.js"), json.loads(rd("arcanas.json")))
+    logic = None if "--no-node" in argv else run_site_logic(d)
+    print("최종 슬롯:", "사이트 JS 를 node 로 실행한 값" if logic else "파이썬 포팅값(node 없음/실패/--no-node; 사이트 로드 시 패치 누락 가능)")
+    data, R = build(rd("app-core.js"), rd("app.js"), json.loads(rd("arcanas.json")), logic)
     data = stamp(data, generated)
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     with open(out_path, "w", encoding="utf-8", newline="\n") as f:
