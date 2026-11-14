@@ -169,12 +169,11 @@ def _alt(s, pos):
 def test_asherah_voyager_matches_site_screen(saviors):
     """사용자가 준 사이트 화면의 아세라(보이저) = 스트라이커 9명 규칙(최종 5슬롯 + 대체)."""
     s = find(saviors, "아세라", "보이저 구원단")
-    assert [_names(x) for x in s["slots"]] == [["단점 보완 맞춤 훈련"], ["불굴의 역작"], ["꽃들에게 죽음을"], ["음독의 각오"], ["자칭 베테랑 탐정의 수사법"]]
-    assert [a["pos"] for a in s["alternatives"]] == [0, 1, 2, 3]                       # 슬롯5 대체 없음
+    assert [_names(x) for x in s["slots"]] == [["단점 보완 맞춤 훈련"], ["불굴의 역작"], ["꽃들에게 죽음을"], ["음독의 각오"], ["끝나지 않는 춤"]]      # 11/12 오후 사이트 개편: 슬롯5 가 끝나지 않는 춤으로 바뀜
+    assert [a["pos"] for a in s["alternatives"]] == [0, 1, 2]                          # 슬롯5 대체 없음
     assert _names(_alt(s, 0)) == ["노 페인, 노 게인"]
     assert _names(_alt(s, 1)) == ["메이드 바이 페트라♡", "별을 보며 꿈을"]
-    assert _names(_alt(s, 2)) == ["하얀 달의 온기는 햇빛처럼", "어느 한 기사의 맹세", "끝나지 않는 춤", "완벽한 바니걸"] and _alt(s, 2)["note"] == "부족한 자리 대체"
-    assert _names(_alt(s, 3)) == ["완벽한 바니걸"]
+    assert _names(_alt(s, 2)) == ["하얀 달의 온기는 햇빛처럼", "어느 한 기사의 맹세", "완벽한 바니걸", "자칭 베테랑 탐정의 수사법"] and _alt(s, 2)["note"] == "부족한 자리 대체"
     assert not s.get("commonSet")
 
 
@@ -182,7 +181,7 @@ def test_other_saviors_match_site_logic(saviors):
     smile = next(s for s in saviors if s["key"] == "smile")                            # 전용 대체 분기(buildAlternativeArcana smile)
     assert [_names(x)[0] for x in smile["slots"]] == ["단점 보완 맞춤 훈련", "불굴의 역작", "꽃들에게 죽음을", "종말은 소녀의 얼굴을 하고 있다.", "휴가 준비는 쇼핑에서부터!"]      # 11/12: 사이트가 2번째 칸을 불굴의 역작으로 덮어씀
     assert [(a["pos"], _names(a)[0], a["slot"]) for a in smile["alternatives"]] == [
-        (0, "노 페인, 노 게인", 0), (1, "메이드 바이 페트라♡", 2), (2, "하얀 달의 온기는 햇빛처럼", None), (3, "불굴의 역작", None), (4, "끝나지 않는 춤", None)]
+        (0, "노 페인, 노 게인", 0), (1, "메이드 바이 페트라♡", 2), (2, "하얀 달의 온기는 햇빛처럼", None)]      # 11/12 오후: 대체 목록이 3칸으로 줄고 항목이 늘어남
     sup = next(s for s in saviors if s["key"] == "frey")                              # 서포터(10.29 표준 서포터 세팅): 사이트가 넣은 대체 목록 그대로
     assert [(_names(a)[0], a["note"]) for a in sup["alternatives"]] == [
         ("어느 한 기사의 맹세", "하얀 달의 온기는 햇빛처럼 대체"), ("누구보다 프로페셔널", "공녀, 왕좌에 오르다 대체"), ("언더커버 캅", "본 투 비 와일드 대체"), ("하늘의 시련", "부족한 자리 대체")]   # 10.29: 표준 서포터 일괄 세팅(대체 목록을 그대로 씀)
@@ -245,7 +244,7 @@ def test_stat_priority_and_equipment_equal_site_js_executed_in_node():
     out = subprocess.run(["node", os.path.join(HERE, "..", "tools", "site_logic_check.js"), SITE_ENV], capture_output=True, timeout=120)
     node = json.loads(out.stdout.decode("utf-8-sig"))
     rd = lambda n: open(os.path.join(SITE_ENV, n), encoding="utf-8-sig").read()
-    data, _ = ex.build(rd("app-core.js"), rd("app.js"), json.loads(rd("arcanas.json")))
+    data, _ = ex.build(rd("app-core.js"), rd("app.js"), json.loads(rd("arcanas.json")), ex.run_site_logic(SITE_ENV))      # 11/12 부터 node 실행값이 정본(없으면 포팅 폴백과 비교하게 됨)
     strip = lambda x: re.sub(r"^[※-]\s*", "", x or "")
     for s in data["saviors"]:
         n = node[s["key"]]

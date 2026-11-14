@@ -44,7 +44,7 @@ def test_equipment_data_shape(saviors):
 def test_ready_made_lydia_has_equipment_from_site_patch(saviors):
     e = by_key(saviors, "lydia-moon-caster")["equipment"]
     assert e["necklace"][0]["value"] == "속도" and e["ring"][0]["value"] == "공격력%"
-    assert e["sets"][0]["value"] == "파괴(4) + 투지(2)" and e["potential"] == "AX"
+    assert e["sets"][0]["value"] == "파괴(4) + 투지(2)" and e["potential"].startswith("AX1 - ")      # 11/12 사이트가 app.js 에서 AX1/AX6 문구로 덮어씀
 
 
 # ------------------------------------------------------------------ 툴팁 HTML

@@ -606,14 +606,17 @@ def build(core_js, app_js, arcanas_json, site_logic=None):
             st = _slim_set("", pve, alts, R)
             if any(st["slots"]):
                 entry["slots"], entry["alternatives"] = _pad_none(st["slots"]), st["alternatives"]
-        pot = str((((s.get("detail") or {}).get("equipment") or {}).get("pve") or {}).get("potential") or "").strip()
+        eq_pve = (((s.get("detail") or {}).get("equipment") or {}).get("pve") or {})
+        if node_s and "error" not in node_s and node_s.get("equipPve") is not None:
+            eq_pve = node_s["equipPve"]                         # 11/12 이후 사이트가 app.js 에서 장비·잠재력을 따로 덮어쓰므로(리디아·세레스·길레·아세라 등) 실행값이 정본
+        pot = str(eq_pve.get("potential") or "").strip()
         if pot and "엑셀에 없음" not in pot:
             entry["potential"] = pot                            # PVE 특수 잠재력(AX5 등) 추천 문구 (훈련의 방향성 툴팁용)
         if sp_patterns:
             entry["statPriority"] = stat_priority(s, sp_patterns, sp_exceptions)   # 여정 시작(인자 고르기) 화면용
             if s.get("id") in STAT_NOTES:
                 entry["statNote"] = STAT_NOTES[s["id"]]
-        eq = slim_equipment((((s.get("detail") or {}).get("equipment") or {}).get("pve")))
+        eq = slim_equipment(eq_pve)
         if eq:
             entry["equipment"] = eq                                                  # 장비 화면용 PVE 추천 세팅
         out.append(entry)
