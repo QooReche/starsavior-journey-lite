@@ -44,7 +44,7 @@ try {
         Step "pytest"
         $last = & $py -m pytest -q -p no:cacheprovider 2>&1 | Select-Object -Last 1
         Write-Output $last
-        if ($last -notmatch "passed" -or $last -match "failed|error") { throw "테스트가 통과하지 않아 중단합니다." }
+        if ($last -notmatch "passed" -or $last -match "(?<!x)failed|error") { throw "테스트가 통과하지 않아 중단합니다." }      # xfailed(예상된 실패)는 통과로 본다
     }
 
     Step "버전 정보(파일 속성) 생성"

@@ -1950,6 +1950,7 @@ class MouseHoverManager(QWidget):
         self.matched = None
         self.not_found = ""
         self.ambig = []
+        self.narrowed_titles = set()    # 카드로 후보를 좁힌 뒤, 흔들리는 OCR 이 같은 후보군이면 같은 이벤트로 본다
         self.zones = []
         self.options = []
         self.card_id = None
@@ -2385,6 +2386,8 @@ class MouseHoverManager(QWidget):
             return False
         if not cands or cands[0][1] < 0.65:                     # 약한 매칭은 같은 이벤트로 확신하지 않는다
             return False
+        if getattr(self, "narrowed_titles", None) and cands[0][0].get("cleanTitle", "") in self.narrowed_titles:
+            return True
         return cands[0][0].get("cleanTitle", "") == self.matched.get("cleanTitle", None) and bool(self.ambig) == (len(amb) > 1)
 
     def on_title(self, titles, kind=None):
@@ -2403,6 +2406,7 @@ class MouseHoverManager(QWidget):
             log(f"[완료 이벤트 잠금 해제] 다른 제목 {cands_txt}")
             self.choice_lock.release()
         self.current_title, self.matched, self.zones, self.options, self.ambig = title, None, [], [], []
+        self.narrowed_titles = set()
         self.not_found = ""
         self.tooltip.hide_and_clear()
         if len(jh_db.clean_title(title)) < 2 or not self.db_event_cache:
@@ -2426,7 +2430,14 @@ class MouseHoverManager(QWidget):
         log(f"[매칭] {cands_txt} -> '{best['rawTitle']}' ({score:.2f}){run}" + (f" 모호:{[e['rawTitle'] for e in self.ambig]}" if self.ambig else ""))
         self.zones = self.estimate_zones(len(self.options)) if len(self.options) >= 2 else []
         ids = jh_db.arcana_ids_of(best)
-        if len(ids) >= 2 and not self.ambig:
+        if self.ambig:                      # 제목이 비슷한 후보들(연극 관람 / 연극관람 2): 카드로 아르카나를 알아내면 후보를 좁힌다
+            amb_ids = list(dict.fromkeys(i for e in self.ambig for i in jh_db.arcana_ids_of(e)))
+            if len(amb_ids) >= 2:
+                t = CardThread(title, amb_ids, save_debug=bool(self.settings.get("show_capture_debug")))
+                t.resolved.connect(self.on_card_resolved)
+                self._card_threads = [x for x in self._card_threads if x.isRunning()] + [t]
+                t.start()
+        elif len(ids) >= 2:
             log(f"[카드] '{best['rawTitle']}' 아르카나 {len(ids)}곳에 있음 {ids} -> 카드 썸네일로 식별 시도 (그동안 전부 표시)")
             t = CardThread(title, ids, save_debug=bool(self.settings.get("show_capture_debug")))
             t.resolved.connect(self.on_card_resolved)
@@ -2441,6 +2452,19 @@ class MouseHoverManager(QWidget):
             log(f"[카드] 식별 실패/모호 ({info}) -> 모든 아르카나 표시")
             return
         self.card_id = aid
+        if self.ambig:
+            keep = [e for e in self.ambig if aid in jh_db.arcana_ids_of(e)]
+            if not keep:
+                log(f"[카드] 후보 {[e['rawTitle'] for e in self.ambig]} 중 arcanaId={aid} 없음 -> 후보 유지")
+                return
+            self.narrowed_titles = {e.get("cleanTitle", "") for e in self.ambig}
+            self.ambig = keep if len(keep) > 1 else []
+            self.matched = keep[0]
+            self.options = self.matched.get("options", [])
+            self.zones = self.estimate_zones(len(self.options)) if len(self.options) >= 2 else []
+            log(f"[카드] 모호한 제목 후보를 arcanaId={aid} 로 좁힘 -> {[e['rawTitle'] for e in keep]}")
+            if len(keep) > 1:
+                return
         self.matched = jh_db.filter_event_by_arcana(self.matched, aid)
         self.options = self.matched.get("options", [])
         self.zones = self.estimate_zones(len(self.options)) if len(self.options) >= 2 else []

@@ -472,6 +472,8 @@ def _entry_to_line_and_info(x, idx):
         name = label.split("·", 1)[-1].strip() if "·" in label else label
         if not desc and idx is not None:
             desc = idx.bdesc(x.get("sourceId"))
+        if not desc and idx is not None and name:       # rewardId 없이 이름만 있는 보상(연극관람 2 '찰나의 행복'): 이름으로 찾는다
+            desc = (idx.by_name.get(name) or {}).get("desc", "")
         return (f"{idx.s['buff']} {name} {value}".strip(),
                 ({"name": name, "desc": desc, "kind": idx.s["buff"]} if desc else None))
     if t == "RT_SE_POTEN":
@@ -1224,11 +1226,16 @@ def _char_cost(a, b):
     return 1.0
 
 
+def _junk_cost(ch):
+    """질의 양끝의 군더더기 글자 비용. 숫자는 '연극관람 2' 같은 번호 제목을 가르는 글자라 쓰레기로 보지 않는다."""
+    return _INS_COST if ch.isdigit() else _JUNK_COST
+
+
 def match_cost(q, c):
     n, m = len(q), len(c)
     D = [[0.0] * (m + 1) for _ in range(n + 1)]
     for i in range(1, n + 1):
-        D[i][0] = i * _JUNK_COST
+        D[i][0] = D[i - 1][0] + _junk_cost(q[i - 1])
     for j in range(1, m + 1):
         D[0][j] = j * _MISS_COST
     for i in range(1, n + 1):
@@ -1236,7 +1243,7 @@ def match_cost(q, c):
             D[i][j] = min(D[i - 1][j - 1] + _char_cost(q[i - 1], c[j - 1]),
                           D[i - 1][j] + _INS_COST,
                           D[i][j - 1] + _MISS_COST)
-    return min(D[i][m] + (n - i) * _JUNK_COST for i in range(n + 1))
+    return min(D[i][m] + sum(_junk_cost(ch) for ch in q[i:]) for i in range(n + 1))
 
 
 MIN_LEN_RATIO = 0.6     # 질의와 제목의 길이 비율이 이보다 작으면 다른 제목
